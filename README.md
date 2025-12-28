@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/0ddb726b-738a-44cb-8015-f7eeb0fe2325" alt="LUME Logo" width="200">
+</p>
+
 # LUME — AI LED Strip Controller
 
 > Tell your LEDs what to do. In plain English.
@@ -7,6 +11,10 @@ ESP32-S3 + FastLED firmware with modern Web UI, API, sACN, OTA, and natural-lang
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32--S3-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Status](https://img.shields.io/badge/status-active%20development-brightgreen)
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/64ef8967-df5d-48bd-b54d-8d7a314b29e8" alt="LUME Web UI" width="400">
+</p>
 
 ---
 
