@@ -1,0 +1,18 @@
+# GitHub Copilot Ignore File
+# Prevents Copilot from reading these files/patterns
+
+# Secrets and credentials
+src/secrets.h
+*.key
+*.pem
+*.env
+.env*
+
+# Build artifacts
+.pio/
+build/
+dist/
+
+# Other sensitive files (add as needed)
+credentials/
+private/
