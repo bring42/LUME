@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/24a7b730-099f-4a7c-b635-7a351b6ab7d1" alt="LUME Logo" width="800">
+  <img src="https://github.com/user-attachments/assets/2dc66001-6dd6-4d1a-9cac-4835a006be74" alt="LUME Logo" width="800">
 </p>
 
 # LUME — AI LED Strip Controller
