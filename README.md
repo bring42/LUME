@@ -43,7 +43,7 @@ ESP32-S3 + FastLED firmware with modern Web UI, API, sACN, OTA, and natural-lang
 
 ### What You Need
 
-- **LILYGO T-Display S3** (or compatible ESP32-S3)
+- **ESP32-S3 Board** (T-Display S3, DevKitC-1, or any S3 with PSRAM)
 - **WS2812B LED Strip** (default: GPIO 21 — set `LED_DATA_PIN` in [constants.h](src/constants.h))
 - **5V Power Supply** (sized for your LED count)
 
@@ -59,7 +59,7 @@ That's it. No config files needed.
 
 ### First Boot
 
-1. **Power on** the T-Display S3
+1. **Power on** your ESP32-S3 board
 2. **Connect** to WiFi network `LUME-Setup` (password: `ledcontrol`)
 3. **Open** `http://192.168.4.1`
 4. **Configure** your home WiFi, LED count, and [OpenRouter API key](https://openrouter.ai/)
