@@ -6,13 +6,16 @@
 
 **Access:** `http://lume.local` | **AP Mode:** `LUME-Setup` (password: `ledcontrol`)
 
-## Architecture
+## Architecture (v2)
 
 **Component Boundaries:**
 - `main.cpp`: WiFi setup (dual AP/STA), async web server routes, OTA, event loop coordination, watchdog
-- `led_controller.*`: FastLED wrapper, 10 built-in effects, palette management, frame updates (non-blocking)
+- `core/controller.*`: LumeController - owns LED array, segments, protocols, frame updates
+- `core/segment.*`: Segment class with effect binding, scratchpad, and parameters
+- `core/effect_registry.h`: Effect function registry with metadata
+- `effects/*.cpp`: One file per effect (solid, rainbow, fire, confetti, gradient, pulse)
+- `protocols/sacn.*`: sACN/E1.31 protocol adapter using Protocol interface
 - `anthropic_client.*`: FreeRTOS task for async LLM calls, JSON effect spec parsing
-- `sacn_receiver.*`: UDP multicast listener for E1.31 packets, DMX-to-RGB mapping
 - `storage.*`: NVS (Non-Volatile Storage) wrapper for config/scenes/LED state persistence
 - `web_ui.h`: Single-file embedded HTML/CSS/JS (PROGMEM constant, ~1200 lines)
 - `constants.h`: All magic numbers centralized (timeouts, buffer sizes, ports, limits)
@@ -20,9 +23,9 @@
 
 **Data Flow:**
 ```
-Web UI → JSON POST → main.cpp handler → ledController.stateFromJson() → FastLED
-AI Prompt → anthropic_client task → JSON spec → ledController.applyEffectSpec()
-sACN network → sacnReceiver.update() → DMX channels → CRGB array → FastLED
+Web UI → JSON POST → main.cpp handler → lume::controller → Segment → Effect
+AI Prompt → anthropic_client task → JSON spec → applyEffectSpec() → Segment
+sACN network → SacnProtocol → ProtocolBuffer → controller.update() → FastLED
 ```
 
 **Critical: Async Body Handling Pattern**  
@@ -30,8 +33,6 @@ ESP async web server requires buffering request bodies manually. Every POST hand
 1. Validate `total > MAX_REQUEST_BODY_SIZE` at `index == 0` → return 413
 2. Accumulate chunks in global buffer (e.g., `configBodyBuffer`)
 3. Process only when `index + len >= total`
-
-See [handleApiLedPost](src/main.cpp#L560) for the canonical pattern.
 
 ## Build & Deployment
 
@@ -73,7 +74,7 @@ constexpr uint32_t PROMPT_RATE_LIMIT_MS = 3000;
 
 **Rate Limiting:** `/api/prompt` has 3-second cooldown to prevent API key exhaustion.
 
-**sACN Priority:** When `config.sacnEnabled` and data flows, LED updates skip normal effects. Timeout after 5s returns to effects.
+**sACN Priority:** When protocol data flows, LED updates skip normal effects. Timeout after 5s returns to effects.
 
 **LED Pin:** Set `LED_DATA_PIN` in `constants.h`. Compile-time only (FastLED requirement).
 
@@ -84,9 +85,10 @@ constexpr uint32_t PROMPT_RATE_LIMIT_MS = 3000;
 ## Common Tasks
 
 **Add new effect:**
-1. Add enum to `Effect` in `led_controller.h`
-2. Implement in `LedController::update()` switch case
-3. Update `effectFromString()` parser
+1. Create `src/effects/myeffect.cpp`
+2. Implement effect function with signature: `void effectMyEffect(SegmentView&, const EffectParams&, uint32_t frame, bool firstFrame)`
+3. Register with `REGISTER_EFFECT("myeffect", "My Effect", EffectCategory::Animated, effectMyEffect)`
+4. Include in `effects/effects.h`
 
 **Add new constant:** Always in `constants.h` with descriptive name (e.g., `_MS`, `_SIZE` suffix)
 
@@ -94,7 +96,7 @@ constexpr uint32_t PROMPT_RATE_LIMIT_MS = 3000;
 
 ## Hardware Notes
 
-- **GPIO 21:** Default LED data pin (compile-time only, see FastLED limitation above)
+- **GPIO 21:** Default LED data pin (configured in `constants.h`, compile-time only)
 - **Power:** External 5V supply (~60mA/LED). ESP32 GND must connect to strip GND.
 - **Watchdog:** 30s timeout auto-resets if main loop hangs
 - **PSRAM:** Enabled (`-DBOARD_HAS_PSRAM`)
@@ -105,6 +107,7 @@ Base URL: `http://<device-ip>` (AP mode: `http://192.168.4.1`)
 
 | Endpoint | Method | Body Example |
 |----------|--------|--------------|
+| `/api/segments` | GET | Returns all segments, effects, capabilities |
 | `/api/pixels` | POST | `{"fill": [255,0,0]}` or `{"rgb": [r,g,b,...]}` |
 | `/api/prompt` | POST | `{"prompt": "warm sunset fading to purple"}` |
 | `/api/prompt/status` | GET | Returns: `idle\|queued\|running\|done\|error` |

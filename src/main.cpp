@@ -24,7 +24,6 @@
 #include "storage.h"
 #include "anthropic_client.h"
 #include "web_ui.h"
-#include "sacn_receiver.h"
 #include "constants.h"
 #include "logging.h"
 #include <esp_task_wdt.h>
@@ -401,7 +400,7 @@ void setup() {
     if (devPass.length() > 0) config.wifiPassword = devPass;
     if (devKey.length() > 0) config.apiKey = devKey;
     config.openRouterModel = DEV_OPENROUTER_MODEL;
-    // Note: LED pin is hardcoded to GPIO 21 in led_controller.cpp
+    // Note: LED pin is configured in constants.h (LED_DATA_PIN)
     config.ledCount = DEV_LED_COUNT;
     config.defaultBrightness = DEV_DEFAULT_BRIGHTNESS;
 #endif
@@ -420,8 +419,6 @@ void setup() {
         mainSegment->setEffect("rainbow");  // Default effect
         LOG_INFO(LogTag::LED, "Created main segment (0-%d) with rainbow effect", config.ledCount - 1);
     }
-    
-    // NOTE: Old ledController removed - using new v2 controller exclusively
     
     // Initialize OpenRouter client
     openRouterClient.begin();

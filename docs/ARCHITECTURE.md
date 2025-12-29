@@ -587,13 +587,13 @@ src/
 
 **Success criteria:** sACN works with new architecture
 
-### Phase 5: Cleanup
+### Phase 5: Cleanup ✅ COMPLETE
 **Goal:** Remove old code, polish
 
-- [ ] Delete old `led_controller.*`
-- [ ] Refactor `main.cpp`
-- [ ] Update documentation
-- [ ] Update AI prompt schema for segments
+- [x] Delete old `led_controller.*`
+- [x] Refactor `main.cpp` (cleaned up comments, removed old references)
+- [x] Update documentation (copilot-instructions.md, DEVELOPMENT.md, HARDWARE.md, secrets.h.example)
+- [x] Update AI prompt schema (simplified to match available effects: solid, rainbow, confetti, fire, gradient, pulse)
 
 **Success criteria:** Clean codebase, all features working
 
