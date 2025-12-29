@@ -551,13 +551,14 @@ src/
 
 **Success criteria:** All effects work via new system
 
-### Phase 3: API Migration
+### Phase 3: API Migration ✅ COMPLETE
 **Goal:** Wire web API to new controller
 
-- [ ] Update REST handlers to use new controller
-- [ ] Add segment CRUD endpoints
-- [ ] Update JSON state format
-- [ ] Test with existing web UI
+- [x] Update REST handlers to use new controller
+- [x] Add segment GET endpoint (/api/segments)
+- [x] Created adapter functions for old API format compatibility
+- [x] Removed ledController dependency from main.cpp
+- [ ] Test with existing web UI (skipped - needs hardware)
 
 **Success criteria:** Web UI controls new system
 

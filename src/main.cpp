@@ -22,13 +22,16 @@
 #include <ESPmDNS.h>
 
 #include "storage.h"
-#include "led_controller.h"
 #include "anthropic_client.h"
 #include "web_ui.h"
 #include "sacn_receiver.h"
 #include "constants.h"
 #include "logging.h"
 #include <esp_task_wdt.h>
+
+// v2 architecture
+#include "core/controller.h"
+#include "effects/effects.h"
 
 // Optional development secrets (create src/secrets.h from secrets.h.example)
 #ifdef __has_include
@@ -133,6 +136,241 @@ bool validateRgbArray(JsonArrayConst arr) {
            arr[2].is<int>();
 }
 
+// ===========================================================================
+// V2 Controller Adapter - Bridge old API format to new segment-based controller
+// ===========================================================================
+
+// Get primary segment (segment 0) - creates if needed
+lume::Segment* getMainSegment() {
+    lume::Segment* seg = lume::controller.getSegment(0);
+    if (!seg) {
+        seg = lume::controller.createFullStrip();
+    }
+    return seg;
+}
+
+// Map old effect names to new effect IDs
+const char* mapOldEffectToNew(const char* oldEffect) {
+    if (!oldEffect) return "rainbow";
+    
+    // Case-insensitive comparison helper
+    String eff = oldEffect;
+    eff.toLowerCase();
+    
+    if (eff == "solid") return "solid";
+    if (eff == "rainbow") return "rainbow";
+    if (eff == "confetti") return "confetti";
+    if (eff == "fire" || eff == "fire2012") return "fire";
+    if (eff == "gradient") return "gradient";
+    if (eff == "pulse") return "pulse";
+    // Effects that aren't ported yet default to rainbow
+    return "rainbow";
+}
+
+// Map old palette names to new PalettePreset
+lume::PalettePreset mapOldPaletteToNew(const char* oldPalette) {
+    if (!oldPalette) return lume::PalettePreset::Rainbow;
+    
+    String pal = oldPalette;
+    pal.toLowerCase();
+    
+    if (pal == "rainbow") return lume::PalettePreset::Rainbow;
+    if (pal == "lava") return lume::PalettePreset::Lava;
+    if (pal == "ocean") return lume::PalettePreset::Ocean;
+    if (pal == "party") return lume::PalettePreset::Party;
+    if (pal == "forest") return lume::PalettePreset::Forest;
+    if (pal == "cloud") return lume::PalettePreset::Cloud;
+    if (pal == "heat") return lume::PalettePreset::Heat;
+    
+    return lume::PalettePreset::Rainbow;
+}
+
+// Serialize controller state to old API format (for backward compat with web UI)
+void controllerStateToJson(JsonDocument& doc) {
+    doc["power"] = lume::controller.getPower();
+    doc["brightness"] = lume::controller.getBrightness();
+    
+    lume::Segment* seg = getMainSegment();
+    if (seg) {
+        // Effect name
+        doc["effect"] = seg->getEffectId();
+        
+        // Speed/intensity as "speed" for old API
+        doc["speed"] = seg->getSpeed();
+        
+        // Colors
+        CRGB primary = seg->getPrimaryColor();
+        CRGB secondary = seg->getSecondaryColor();
+        
+        JsonArray primaryArr = doc["primaryColor"].to<JsonArray>();
+        primaryArr.add(primary.r);
+        primaryArr.add(primary.g);
+        primaryArr.add(primary.b);
+        
+        JsonArray secondaryArr = doc["secondaryColor"].to<JsonArray>();
+        secondaryArr.add(secondary.r);
+        secondaryArr.add(secondary.g);
+        secondaryArr.add(secondary.b);
+        
+        // Palette - convert enum to string
+        doc["palette"] = "rainbow";  // TODO: Add palette name tracking
+    }
+    
+    // Nightlight - not implemented in v2 yet
+    JsonObject nightlight = doc["nightlight"].to<JsonObject>();
+    nightlight["active"] = false;
+}
+
+// Apply old API format to new controller
+void controllerStateFromJson(const JsonDocument& doc) {
+    lume::Segment* seg = getMainSegment();
+    if (!seg) return;
+    
+    // Power
+    if (doc["power"].is<bool>()) {
+        lume::controller.setPower(doc["power"].as<bool>());
+    }
+    
+    // Brightness
+    if (doc["brightness"].is<int>()) {
+        lume::controller.setBrightness(constrain(doc["brightness"].as<int>(), 0, 255));
+    }
+    
+    // Effect
+    if (doc["effect"].is<const char*>()) {
+        const char* effectId = mapOldEffectToNew(doc["effect"].as<const char*>());
+        seg->setEffect(effectId);
+    }
+    
+    // Speed (maps to segment speed)
+    if (doc["speed"].is<int>()) {
+        seg->setSpeed(constrain(doc["speed"].as<int>(), 1, 255));
+    }
+    
+    // Palette
+    if (doc["palette"].is<const char*>()) {
+        lume::PalettePreset preset = mapOldPaletteToNew(doc["palette"].as<const char*>());
+        seg->setPalette(preset);
+    }
+    
+    // Primary color
+    JsonVariantConst primaryVar = doc["primaryColor"];
+    if (primaryVar.is<JsonArrayConst>()) {
+        JsonArrayConst arr = primaryVar.as<JsonArrayConst>();
+        if (arr.size() >= 3) {
+            seg->setPrimaryColor(CRGB(arr[0].as<uint8_t>(), arr[1].as<uint8_t>(), arr[2].as<uint8_t>()));
+        }
+    } else if (primaryVar.is<const char*>()) {
+        String hex = primaryVar.as<String>();
+        if (hex.startsWith("#") && hex.length() == 7) {
+            long color = strtol(hex.substring(1).c_str(), NULL, 16);
+            seg->setPrimaryColor(CRGB((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF));
+        }
+    }
+    
+    // Secondary color  
+    JsonVariantConst secondaryVar = doc["secondaryColor"];
+    if (secondaryVar.is<JsonArrayConst>()) {
+        JsonArrayConst arr = secondaryVar.as<JsonArrayConst>();
+        if (arr.size() >= 3) {
+            seg->setSecondaryColor(CRGB(arr[0].as<uint8_t>(), arr[1].as<uint8_t>(), arr[2].as<uint8_t>()));
+        }
+    } else if (secondaryVar.is<const char*>()) {
+        String hex = secondaryVar.as<String>();
+        if (hex.startsWith("#") && hex.length() == 7) {
+            long color = strtol(hex.substring(1).c_str(), NULL, 16);
+            seg->setSecondaryColor(CRGB((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF));
+        }
+    }
+}
+
+// Apply effect spec from AI/prompts - supports both "effect" and "pixels" modes
+bool applyEffectSpec(const JsonDocument& spec, String& errorMsg) {
+    // Check for mode field
+    String mode = "effect";  // default
+    if (spec["mode"].is<const char*>()) {
+        mode = spec["mode"].as<String>();
+        mode.toLowerCase();
+    }
+    
+    CRGB* leds = lume::controller.getLeds();
+    uint16_t ledCount = lume::controller.getLedCount();
+    
+    // Handle pixels mode - direct LED control (bypass effects)
+    if (mode == "pixels") {
+        if (!spec["pixels"].is<JsonObjectConst>()) {
+            errorMsg = "Mode 'pixels' requires 'pixels' object";
+            return false;
+        }
+        JsonObjectConst pixels = spec["pixels"].as<JsonObjectConst>();
+        
+        // Fill all with single color
+        if (pixels["fill"].is<JsonArrayConst>()) {
+            JsonArrayConst fill = pixels["fill"].as<JsonArrayConst>();
+            if (fill.size() >= 3) {
+                CRGB color(fill[0].as<uint8_t>(), fill[1].as<uint8_t>(), fill[2].as<uint8_t>());
+                fill_solid(leds, ledCount, color);
+                FastLED.show();
+                lume::controller.setPower(true);
+                errorMsg = "";
+                return true;
+            }
+        }
+        
+        // Gradient
+        if (pixels["gradient"].is<JsonObjectConst>()) {
+            JsonObjectConst grad = pixels["gradient"].as<JsonObjectConst>();
+            JsonArrayConst from = grad["from"].as<JsonArrayConst>();
+            JsonArrayConst to = grad["to"].as<JsonArrayConst>();
+            
+            if (from.size() >= 3 && to.size() >= 3) {
+                CRGB startColor(from[0].as<uint8_t>(), from[1].as<uint8_t>(), from[2].as<uint8_t>());
+                CRGB endColor(to[0].as<uint8_t>(), to[1].as<uint8_t>(), to[2].as<uint8_t>());
+                fill_gradient_RGB(leds, 0, startColor, ledCount - 1, endColor);
+                FastLED.show();
+                lume::controller.setPower(true);
+                errorMsg = "";
+                return true;
+            }
+        }
+        
+        // Individual pixels array
+        if (pixels["pixels"].is<JsonArrayConst>()) {
+            JsonArrayConst arr = pixels["pixels"].as<JsonArrayConst>();
+            uint16_t count = min((uint16_t)arr.size(), ledCount);
+            
+            for (uint16_t i = 0; i < count; i++) {
+                JsonArrayConst pixel = arr[i].as<JsonArrayConst>();
+                if (pixel.size() >= 3) {
+                    leds[i].r = pixel[0].as<uint8_t>();
+                    leds[i].g = pixel[1].as<uint8_t>();
+                    leds[i].b = pixel[2].as<uint8_t>();
+                }
+            }
+            FastLED.show();
+            lume::controller.setPower(true);
+            errorMsg = "";
+            return true;
+        }
+        
+        errorMsg = "No valid pixel data in 'pixels' object";
+        return false;
+    }
+    
+    // Effect mode - validate required fields
+    if (!spec["effect"].is<const char*>()) {
+        errorMsg = "Missing 'effect' field";
+        return false;
+    }
+    
+    // Apply the spec using our adapter
+    controllerStateFromJson(spec);
+    lume::controller.setPower(true);
+    
+    errorMsg = "";
+    return true;
+}
+
 void setup() {
     Serial.begin(115200);
     delay(1000);
@@ -167,17 +405,19 @@ void setup() {
     config.defaultBrightness = DEV_DEFAULT_BRIGHTNESS;
 #endif
     
-    // Initialize LED controller (pin is set via LED_DATA_PIN in constants.h)
+    // Initialize v2 LED controller
     LOG_INFO(LogTag::LED, "Initializing LED controller...");
-    ledController.begin(config.ledCount);
-    ledController.setBrightness(config.defaultBrightness);
+    lume::controller.begin(config.ledCount);
+    lume::controller.setBrightness(config.defaultBrightness);
     
-    // Try to load saved LED state
-    JsonDocument ledDoc;
-    if (storage.loadLedState(ledDoc)) {
-        ledController.stateFromJson(ledDoc);
-        LOG_INFO(LogTag::LED, "Restored LED state from storage");
+    // Create full-strip segment and set default effect
+    lume::Segment* mainSegment = lume::controller.createFullStrip();
+    if (mainSegment) {
+        mainSegment->setEffect("rainbow");  // Default effect
+        LOG_INFO(LogTag::LED, "Created main segment (0-%d) with rainbow effect", config.ledCount - 1);
     }
+    
+    // NOTE: Old ledController removed - using new v2 controller exclusively
     
     // Initialize OpenRouter client
     openRouterClient.begin();
@@ -243,8 +483,8 @@ void loop() {
     
     if (config.sacnEnabled && sacnReceiver.isEnabled()) {
         if (sacnReceiver.update()) {
-            // New sACN data received - apply to LEDs
-            sacnReceiver.applyToLeds(ledController.getLeds(), ledController.getLedCount(), config.sacnStartChannel);
+            // New sACN data received - apply to LEDs (using v2 controller's LED array)
+            sacnReceiver.applyToLeds(lume::controller.getLeds(), lume::controller.getLedCount(), config.sacnStartChannel);
             FastLED.show();
             sacnActive = true;
         } else if (sacnActive && sacnReceiver.hasTimedOut(5000)) {
@@ -259,7 +499,7 @@ void loop() {
     
     // Non-blocking LED update (normal effects) - skip if sACN is active
     if (!skipNormalEffects) {
-        ledController.update();
+        lume::controller.update();
     }
     
     // WiFi maintenance (reconnection, status monitoring)
@@ -349,7 +589,7 @@ void setupOTA() {
         // Disable watchdog during OTA (can take >30s)
         esp_task_wdt_delete(NULL);
         // Turn off LEDs during update
-        ledController.setPower(false);
+        lume::controller.setPower(false);
     });
     
     ArduinoOTA.onEnd([]() {
@@ -423,7 +663,7 @@ void setupServer() {
         
         // Component health
         JsonObject components = doc["components"].to<JsonObject>();
-        components["led_controller"] = ledController.getLedCount() > 0;
+        components["led_controller"] = lume::controller.getLedCount() > 0;
         components["storage"] = true;  // Would fail at boot if broken
         components["sacn_enabled"] = config.sacnEnabled;
         components["sacn_receiving"] = sacnReceiver.isReceiving();
@@ -494,6 +734,81 @@ void setupServer() {
         handleApiScenePost
     );
     
+    // Segment management endpoints (v2 architecture)
+    server.on("/api/segments", HTTP_GET, [](AsyncWebServerRequest* request) {
+        JsonDocument doc;
+        
+        // Global state
+        doc["power"] = lume::controller.getPower();
+        doc["brightness"] = lume::controller.getBrightness();
+        doc["ledCount"] = lume::controller.getLedCount();
+        
+        // List all segments
+        JsonArray segArr = doc["segments"].to<JsonArray>();
+        uint8_t segCount = lume::controller.getSegmentCount();
+        
+        for (uint8_t i = 0; i < segCount; i++) {
+            lume::Segment* seg = lume::controller.getSegment(i);
+            if (!seg) continue;
+            
+            JsonObject segObj = segArr.add<JsonObject>();
+            segObj["id"] = seg->getId();
+            segObj["start"] = seg->getStart();
+            segObj["length"] = seg->getLength();
+            segObj["reverse"] = seg->isReversed();
+            segObj["brightness"] = seg->getBrightness();
+            segObj["speed"] = seg->getSpeed();
+            segObj["intensity"] = seg->getParams().intensity;
+            
+            // Effect info
+            JsonObject effectObj = segObj["effect"].to<JsonObject>();
+            effectObj["id"] = seg->getEffectId();
+            effectObj["name"] = seg->getEffectName();
+            if (seg->getEffect()) {
+                effectObj["category"] = seg->getEffect()->categoryName();
+            }
+            
+            // Colors
+            CRGB primary = seg->getPrimaryColor();
+            CRGB secondary = seg->getSecondaryColor();
+            
+            JsonArray colors = segObj["colors"].to<JsonArray>();
+            char hex1[8], hex2[8];
+            snprintf(hex1, sizeof(hex1), "#%02x%02x%02x", primary.r, primary.g, primary.b);
+            snprintf(hex2, sizeof(hex2), "#%02x%02x%02x", secondary.r, secondary.g, secondary.b);
+            colors.add(hex1);
+            colors.add(hex2);
+            
+            // Capabilities
+            const lume::SegmentCapabilities& caps = seg->getCapabilities();
+            JsonObject capsObj = segObj["capabilities"].to<JsonObject>();
+            capsObj["hasSpeed"] = caps.hasSpeed;
+            capsObj["hasIntensity"] = caps.hasIntensity;
+            capsObj["hasPalette"] = caps.hasPalette;
+            capsObj["hasSecondaryColor"] = caps.hasSecondaryColor;
+        }
+        
+        // Available effects
+        JsonArray effectsArr = doc["effects"].to<JsonArray>();
+        auto& registry = lume::effects();
+        for (uint8_t i = 0; i < registry.getCount(); i++) {
+            const lume::EffectInfo* info = registry.getByIndex(i);
+            if (!info) continue;
+            
+            JsonObject effObj = effectsArr.add<JsonObject>();
+            effObj["id"] = info->id;
+            effObj["name"] = info->displayName;
+            effObj["category"] = info->categoryName();  // Use helper method
+            effObj["usesSpeed"] = info->usesSpeed;
+            effObj["usesIntensity"] = info->usesIntensity;
+            effObj["usesPalette"] = info->usesPalette;
+        }
+        
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
+    });
+    
     // Nightlight endpoints
     server.on("/api/nightlight", HTTP_GET, handleApiNightlightGet);
     server.on("/api/nightlight", HTTP_POST,
@@ -506,7 +821,7 @@ void setupServer() {
             sendUnauthorized(request);
             return;
         }
-        ledController.stopNightlight();
+        // TODO: Implement nightlight in v2 controller
         request->send(200, "application/json", "{\"success\":true}");
     });
     
@@ -541,8 +856,8 @@ void handleApiStatus(AsyncWebServerRequest* request) {
     doc["wifi"] = wifiConnected ? "Connected" : "AP Mode";
     doc["ip"] = wifiConnected ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
     doc["heap"] = ESP.getFreeHeap();
-    doc["ledCount"] = ledController.getLedCount();
-    doc["power"] = ledController.getState().power;
+    doc["ledCount"] = lume::controller.getLedCount();
+    doc["power"] = lume::controller.getPower();
     
     // sACN status
     JsonObject sacn = doc["sacn"].to<JsonObject>();
@@ -607,7 +922,7 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
         // Save to storage
         if (storage.saveConfig(config)) {
             // Apply changes that can be applied without restart
-            ledController.reconfigure(config.ledCount);
+            lume::controller.setLedCount(config.ledCount);
             
             // Handle sACN enable/disable
             if (config.sacnEnabled && wifiConnected) {
@@ -627,7 +942,7 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
 
 void handleApiLed(AsyncWebServerRequest* request) {
     JsonDocument doc;
-    ledController.stateToJson(doc);
+    controllerStateToJson(doc);  // Use v2 adapter
     
     String response;
     serializeJson(doc, response);
@@ -660,12 +975,12 @@ void handleApiLedPost(AsyncWebServerRequest* request, uint8_t* data, size_t len,
             return;
         }
         
-        // Apply state
-        ledController.stateFromJson(doc);
+        // Apply state using v2 adapter
+        controllerStateFromJson(doc);
         
         // Save state to storage
         JsonDocument saveDoc;
-        ledController.stateToJson(saveDoc);
+        controllerStateToJson(saveDoc);
         storage.saveLedState(saveDoc);
         
         request->send(200, "application/json", "{\"success\":true}");
@@ -736,7 +1051,7 @@ void handleApiPrompt(AsyncWebServerRequest* request, uint8_t* data, size_t len, 
         
         // Include current LED state for context
         JsonDocument ledDoc;
-        ledController.stateToJson(ledDoc);
+        controllerStateToJson(ledDoc);  // v2 adapter
         serializeJson(ledDoc, req.currentLedStateJson);
         
         // Submit job
@@ -862,7 +1177,7 @@ void handleApiPromptApply(AsyncWebServerRequest* request, uint8_t* data, size_t 
         }
         
         String errorMsg;
-        if (ledController.applyEffectSpec(specDoc, errorMsg)) {
+        if (applyEffectSpec(specDoc, errorMsg)) {  // Use local adapter function
             // Save to storage
             PromptSpec spec;
             spec.jsonSpec = specJson;
@@ -872,7 +1187,7 @@ void handleApiPromptApply(AsyncWebServerRequest* request, uint8_t* data, size_t 
             
             // Also save LED state
             JsonDocument saveDoc;
-            ledController.stateToJson(saveDoc);
+            controllerStateToJson(saveDoc);
             storage.saveLedState(saveDoc);
             
             request->send(200, "application/json", "{\"success\":true}");
@@ -917,12 +1232,12 @@ void handleApiPixels(AsyncWebServerRequest* request, uint8_t* data, size_t len, 
             return;
         }
         
-        CRGB* leds = ledController.getLeds();
-        uint16_t ledCount = ledController.getLedCount();
+        CRGB* leds = lume::controller.getLeds();
+        uint16_t ledCount = lume::controller.getLedCount();
         
         // Handle brightness if provided
         if (doc["brightness"].is<int>()) {
-            ledController.setBrightness(constrain(doc["brightness"].as<int>(), 0, 255));
+            lume::controller.setBrightness(constrain(doc["brightness"].as<int>(), 0, 255));
         }
         
         // Method 1: Array of [r,g,b] arrays
@@ -1182,10 +1497,10 @@ void handleApiSceneApply(AsyncWebServerRequest* request) {
     }
     
     String errorMsg;
-    if (ledController.applyEffectSpec(doc, errorMsg)) {
+    if (applyEffectSpec(doc, errorMsg)) {  // Use local adapter
         // Save the new LED state
         JsonDocument stateDoc;
-        ledController.stateToJson(stateDoc);
+        controllerStateToJson(stateDoc);
         storage.saveLedState(stateDoc);
         
         request->send(200, "application/json", "{\"success\":true}");
@@ -1204,18 +1519,10 @@ void handleApiSceneApply(AsyncWebServerRequest* request) {
 // ============================================================================
 
 void handleApiNightlightGet(AsyncWebServerRequest* request) {
+    // TODO: Implement nightlight in v2 controller
     JsonDocument doc;
-    doc["active"] = ledController.isNightlightActive();
-    doc["progress"] = ledController.getNightlightProgress();
-    
-    // Include current nightlight settings if active
-    if (ledController.isNightlightActive()) {
-        const LedState& state = ledController.getState();
-        doc["duration"] = state.nightlightDuration;
-        doc["targetBrightness"] = state.nightlightTargetBri;
-        doc["startBrightness"] = state.nightlightStartBri;
-        doc["currentBrightness"] = state.brightness;
-    }
+    doc["active"] = false;  // Nightlight not yet implemented in v2
+    doc["progress"] = 0.0;
     
     String response;
     serializeJson(doc, response);
@@ -1273,14 +1580,14 @@ void handleApiNightlightPost(AsyncWebServerRequest* request, uint8_t* data, size
     // Get target brightness (default: 0 = fade to off)
     uint8_t targetBrightness = doc["targetBrightness"] | NIGHTLIGHT_DEFAULT_TARGET;
     
-    // Start nightlight
-    ledController.startNightlight(duration, targetBrightness);
-    
+    // TODO: Implement nightlight in v2 controller
+    // For now, just acknowledge the request
     JsonDocument response;
     response["success"] = true;
     response["duration"] = duration;
     response["targetBrightness"] = targetBrightness;
-    response["startBrightness"] = ledController.getState().brightness;
+    response["startBrightness"] = lume::controller.getBrightness();
+    response["note"] = "Nightlight not yet implemented in v2";
     
     String responseStr;
     serializeJson(response, responseStr);
