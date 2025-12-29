@@ -129,20 +129,20 @@ To use a different GPIO pin:
 
 The firmware is configured for **WS2812B (GRB)** strips. To use other types:
 
-Edit [led_controller.cpp](../src/led_controller.cpp):
+Edit [core/controller.cpp](../src/core/controller.cpp):
 
 ```cpp
 // WS2812B (most common, GRB order)
-FastLED.addLeds<WS2812B, 21, GRB>(leds, ledCount);
+FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(leds_, ledCount_);
 
 // WS2811 (12V strips, RGB order)
-FastLED.addLeds<WS2811, 21, RGB>(leds, ledCount);
+FastLED.addLeds<WS2811, LED_DATA_PIN, RGB>(leds_, ledCount_);
 
 // SK6812 (RGBW - note: W channel not yet supported)
-FastLED.addLeds<SK6812, 21, GRB>(leds, ledCount);
+FastLED.addLeds<SK6812, LED_DATA_PIN, GRB>(leds_, ledCount_);
 
 // APA102/SK9822 (2-wire, needs clock pin)
-FastLED.addLeds<APA102, DATA_PIN, CLOCK_PIN, BGR>(leds, ledCount);
+FastLED.addLeds<APA102, DATA_PIN, CLOCK_PIN, BGR>(leds_, ledCount_);
 ```
 
 ---

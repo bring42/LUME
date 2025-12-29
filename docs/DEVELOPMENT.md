@@ -9,18 +9,39 @@ This guide covers architecture, building, debugging, and contributing.
 ```
 src/
 ├── main.cpp              # WiFi, web server, OTA, event loop
-├── led_controller.*      # FastLED wrapper, effects, palettes
 ├── anthropic_client.*    # FreeRTOS task for async LLM calls
-├── sacn_receiver.*       # E1.31 DMX protocol handler
 ├── storage.*             # NVS persistence layer
 ├── web_ui.h              # Embedded HTML/CSS/JS (PROGMEM)
 ├── constants.h           # All configurable values
 ├── logging.h             # Structured logging system
 ├── secrets.h             # Your credentials (gitignored)
-└── secrets.h.example     # Template for secrets
+├── secrets.h.example     # Template for secrets
+├── core/
+│   ├── controller.*      # LumeController - owns LED array, segments, protocols
+│   ├── segment.*         # Segment class with effect binding, scratchpad
+│   ├── segment_view.h    # SegmentView - virtual range over LED array
+│   ├── effect_registry.h # Effect function registry with metadata
+│   ├── effect_params.h   # Common effect parameters
+│   └── command_queue.h   # Thread-safe command queue
+├── effects/
+│   ├── effects.h         # All effect declarations
+│   ├── solid.cpp         # Solid color effect
+│   ├── rainbow.cpp       # Rainbow chase effect
+│   ├── fire.cpp          # Fire simulation
+│   ├── confetti.cpp      # Random confetti sparkles
+│   ├── gradient.cpp      # Static color gradient
+│   ├── pulse.cpp         # Color pulsing
+│   ├── meteor.cpp        # Meteor shower
+│   ├── twinkle.cpp       # Twinkling stars
+│   ├── candle.cpp        # Candle flicker
+│   ├── breathe.cpp       # Breathing pulse
+│   └── ... (23 total)    # See effects.h for full list
+└── protocols/
+    ├── protocol.h        # Protocol interface + ProtocolBuffer
+    └── sacn.*            # Self-contained sACN/E1.31 implementation
 ```
 
-### Architecture Overview
+### Architecture Overview (v2)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -33,33 +54,34 @@ src/
     ┌────┴────┬──────────────┬───────────────┬────────────────┐
     ▼         ▼              ▼               ▼                ▼
 ┌────────┐ ┌────────────┐ ┌─────────────┐ ┌────────────┐ ┌────────┐
-│ LED    │ │ Anthropic  │ │   sACN      │ │  Storage   │ │ Web UI │
-│ Control│ │  Client    │ │  Receiver   │ │  (NVS)     │ │(PROGMEM)│
+│ Lume   │ │ Anthropic  │ │   sACN      │ │  Storage   │ │ Web UI │
+│Controller│ │  Client  │ │  Protocol   │ │  (NVS)     │ │(PROGMEM)│
 └────────┘ └────────────┘ └─────────────┘ └────────────┘ └────────┘
+     │
+     ├── Segments (independent LED zones)
+     │   └── Effects (pure functions with scratchpad state)
+     └── Protocols (sACN, Art-Net, etc.)
 ```
 
 **Data Flow:**
 ```
-Web UI → JSON POST → main.cpp handler → ledController.stateFromJson() → FastLED
-AI Prompt → anthropic_client task → JSON spec → ledController.applyEffectSpec()
-sACN network → sacnReceiver.update() → DMX channels → CRGB array → FastLED
+Web UI → JSON POST → main.cpp handler → lume::controller → Segment → Effect
+AI Prompt → anthropic_client task → JSON spec → applyEffectSpec() → Segment
+sACN network → SacnProtocol (UDP, multicast, E1.31) → ProtocolBuffer → controller.update() → FastLED
 ```
 
-### Concurrency & LED Buffer Ownership
+### Concurrency & Single-Writer Model
 
-The LED buffer (`CRGB leds[]`) is owned by `LedController` and accessed from multiple contexts:
+The LED buffer (`CRGB leds_[]`) is owned by `LumeController`. All mutations flow through a single writer:
 
-- **Main loop** calls `ledController.update()` ~60 times/sec to render effects
-- **Web handlers** (async context) call `stateFromJson()` / `applyEffectSpec()`
-- **sACN receiver** writes directly to the buffer when DMX data arrives
-- **AI client** (FreeRTOS task on Core 0) calls `applyEffectSpec()` when generation completes
+- **Main loop** calls `controller.update()` ~60 times/sec
+- **Web handlers** and **protocols** enqueue commands or use atomic buffers
+- Effects are pure functions that write to their segment's view
 
-> ⚠️ **No mutex protection.** The LED buffer has no thread-safe guards. This works today because writes are small/atomic and sACN preempts effects entirely. If you add features with complex multi-step buffer manipulation, add a mutex.
-
-Why this is currently safe:
-1. Effect state changes are atomic (single values like brightness, effect enum)
-2. sACN has priority—when active, normal effect rendering is skipped entirely
-3. AI effect application happens infrequently and completes quickly
+**Thread-safety patterns:**
+1. **Protocol data:** Uses `ProtocolBuffer` with `std::atomic<bool>` flag. sACN implementation is self-contained with direct UDP socket management, multicast join/leave, E1.31 packet parsing, and source priority handling.
+2. **Effect state:** Segment scratchpad is reset on effect change (version counter)
+3. **sACN priority:** When protocol data flows, effects are skipped entirely
 
 ---
 
@@ -240,33 +262,73 @@ if (index + len >= total) {
 
 ## Adding a New Effect
 
-1. Add enum value to `Effect` in [led_controller.h](../src/led_controller.h):
-   ```cpp
-   enum class Effect : uint8_t {
-       // ...existing...
-       METEOR,
-   };
-   ```
+Effects are pure functions registered with metadata. Each effect lives in its own `.cpp` file:
 
-2. Add string mapping in `effectFromString()`:
+1. Create a new file `src/effects/meteor.cpp`:
    ```cpp
-   if (str == "meteor") return Effect::METEOR;
-   ```
-
-3. Implement in `LedController::update()`:
-   ```cpp
-   case Effect::METEOR:
-       effectMeteor();
-       break;
-   ```
-
-4. Create the effect method:
-   ```cpp
-   void LedController::effectMeteor() {
-       // Your effect code here
-       // Use member variables for state, not static
+   #include "effects.h"
+   #include "../core/effect_registry.h"
+   
+   namespace lume {
+   
+   void effectMeteor(SegmentView& view, const EffectParams& params, 
+                     uint32_t frame, bool firstFrame) {
+       // Access segment parameters
+       uint8_t speed = params.speed;
+       CRGB color = params.colors[0];
+       
+       // For stateful effects, use segment scratchpad
+       // (available via the segment, not shown here)
+       
+       // Write to LEDs via the view
+       for (uint16_t i = 0; i < view.length; i++) {
+           view[i] = color;  // Handles reversal automatically
+       }
    }
+   
+   // Register the effect with metadata
+   REGISTER_EFFECT("meteor", "Meteor", EffectCategory::Moving, effectMeteor);
+   
+   }  // namespace lume
    ```
+
+2. Add the include to `src/effects/effects.h`:
+   ```cpp
+   #include "meteor.cpp"
+   ```
+
+**Effect function signature:**
+- `SegmentView& view` - Virtual LED range (use `view[i]` to access LEDs)
+- `const EffectParams& params` - Speed, intensity, colors, palette
+- `uint32_t frame` - Frame counter for timing
+- `bool firstFrame` - True when effect just started (initialize state)
+
+**Using scratchpad for state:**
+```cpp
+struct MeteorState {
+    uint16_t position;
+    uint8_t trail[64];
+};
+
+void effectMeteor(SegmentView& view, const EffectParams& params, 
+                  uint32_t frame, bool firstFrame) {
+    // Validate scratchpad size (checked at registration time)
+    static_assert(sizeof(MeteorState) <= 512, "State too large");
+    
+    // Get typed pointer to scratchpad
+    auto* state = reinterpret_cast<MeteorState*>(params.scratchpad);
+    
+    if (firstFrame) {
+        state->position = 0;
+        memset(state->trail, 0, sizeof(state->trail));
+    }
+    
+    // Use state->position, state->trail, etc.
+}
+
+// Register with state size validation
+REGISTER_EFFECT("meteor", "Meteor", EffectCategory::Moving, effectMeteor);
+```
 
 ---
 
