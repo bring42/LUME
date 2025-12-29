@@ -12,20 +12,13 @@ static const char* ANTHROPIC_VERSION = "2023-06-01";
 static const char EFFECT_SCHEMA[] PROGMEM = R"json({
   "mode": "effect|pixels",
   
-  "effect": "solid|rainbow|confetti|fire|colorwaves|theater|gradient|sparkle|pulse|noise|meteor|twinkle|sinelon|candle|breathe|custom",
-  "palette": "rainbow|lava|ocean|party|forest|cloud",
+  "effect": "solid|rainbow|confetti|fire|gradient|pulse",
+  "palette": "rainbow|lava|ocean|party|forest|cloud|heat",
   "brightness": 0-255 (INTEGER),
-  "speed": 1-200 (INTEGER),
+  "speed": 1-255 (INTEGER),
   "primaryColor": [r,g,b] (ARRAY of 3 integers 0-255),
   "secondaryColor": [r,g,b] (ARRAY of 3 integers 0-255),
   "notes": "description",
-  "custom": {
-    "type": "wave_up|wave_down|wave_center|breathe|scanner|comet|rain|fire_up",
-    "param1": 0-255 (INTEGER),
-    "param2": 0-255 (INTEGER),
-    "param3": 0-255 (INTEGER),
-    "param4": 0-255 (INTEGER)
-  },
   
   "pixels": {
     "fill": [r,g,b],
@@ -50,30 +43,17 @@ SCHEMA:
 === MODE: "effect" ===
 Use for animated/continuous effects. Runs on-device.
 
-BUILT-IN EFFECTS (what they ACTUALLY do):
+AVAILABLE EFFECTS (what they ACTUALLY do):
 - solid: All LEDs same color (uses primaryColor)
 - rainbow: Smooth cycling rainbow, all LEDs shift through spectrum
-- confetti: Random pixels flash random colors briefly
-- fire: Realistic fire flicker simulation (orange/red/yellow)
-- colorwaves: Smooth waves of palette colors moving through strip
-- theater: Classic theater chase (groups of LEDs moving)
+- confetti: Random pixels flash random colors briefly (uses palette)
+- fire: Realistic fire flicker simulation (orange/red/yellow, speed affects intensity)
 - gradient: STATIC gradient from primaryColor (bottom) to secondaryColor (top)
-- sparkle: Random white sparkles on primaryColor background
 - pulse: All LEDs breathe/fade primaryColor in and out together
-- noise: Organic Perlin noise movement using palette colors
 
-CUSTOM EFFECTS (effect: "custom", set custom.type):
-- wave_up: A band of primaryColor rises from bottom to top, fades behind
-- wave_down: A band falls from top to bottom
-- wave_center: Waves expand outward from center
-- breathe: Smooth breathing, param1: 0=all together, 1=rising, 2=falling
-- scanner: Knight Rider/Cylon - single dot bounces back and forth with tail
-- comet: Comet with tail, param1: 0=upward, 1=downward
-- rain: Drops falling from top (like rain)
-- fire_up: Fire flames rising upward (inverted fire)
-
-Speed affects animation rate (1=slow, 200=fast).
-Palette affects multi-color effects (colorwaves, noise, confetti).
+Speed affects animation rate (1=slow, 255=fast).
+Palette affects palette-based effects (confetti).
+brightness controls global LED brightness.
 
 === MODE: "pixels" ===
 Use for CUSTOM STATIC FRAMES - direct pixel control. Better for:
@@ -90,10 +70,10 @@ Options (use ONE):
 1. If user asks for something the built-in effects can do, use mode:"effect"
 2. If user asks for a complex custom pattern, use mode:"pixels" with gradient or pixels array
 3. Be HONEST - if something isn't possible with these options, use the closest match
-4. "Glitchy" = confetti or sparkle with high speed
-5. "Breathing" = pulse or custom breathe
-6. "Futuristic" = cyan/purple colors, scanner or wave effects
-7. "Cozy/warm" = fire or gradient with warm colors
+4. "Glitchy" = confetti with high speed
+5. "Breathing" = pulse effect
+6. "Futuristic" = cyan/purple colors with gradient or rainbow
+7. "Cozy/warm" = fire or gradient with warm colors (oranges, reds, yellows)
 
 Current state: %s)prompt";
 
