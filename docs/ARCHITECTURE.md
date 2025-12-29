@@ -51,6 +51,7 @@ struct Command {
 };
 
 // Thread-safe queue (FreeRTOS xQueue or simple ring buffer)
+static constexpr size_t COMMAND_QUEUE_SIZE = 16;
 QueueHandle_t commandQueue;
 
 // Producers (any context)
@@ -59,6 +60,25 @@ void enqueueCommand(const Command& cmd);
 // Consumer (loop only)
 void processCommands();  // Called at start of each frame
 ```
+
+**Overflow policy:** Queue is fixed-size (16 commands). On overflow, **newest wins**—oldest command is dropped.
+
+```cpp
+// Correct "newest wins" implementation with FreeRTOS
+bool enqueueCommand(const Command& cmd) {
+    if (xQueueSend(commandQueue, &cmd, 0) != pdTRUE) {
+        // Queue full: drop oldest, then send new
+        Command discard;
+        xQueueReceive(commandQueue, &discard, 0);  // Drop oldest
+        xQueueSend(commandQueue, &cmd, 0);         // Add newest
+    }
+    return true;
+}
+```
+
+> **Note:** Using `xQueueSendToBack` with `xQueueOverwrite` won't work here—that's for single-item queues. The receive-then-send pattern is the correct way to implement "newest wins" on a multi-item queue.
+
+**Future consideration:** Coalescing spammy commands (brightness, speed) could reduce queue pressure, but not required for v2.
 
 **Rationale:** ESP32 + AsyncWebServer means handlers run on different tasks. Without a single-writer model, we get heisenbugs. Command queue keeps effects deterministic and mutations predictable.
 
@@ -85,8 +105,36 @@ T* getScratchpad(Segment& seg) {
 **Rules:**
 - Effects interpret the scratchpad bytes however they need
 * Segment clears/zeros scratchpad when effect changes (version bump)
-- No heap allocation for effect state
-- Effects must handle uninitialized state gracefully (first frame detection)
+* No heap allocation for effect state
+* `EffectInfo.stateSize` must be ≤ `SCRATCHPAD_SIZE` (validated at registration)
+
+**firstFrame derivation (no desync):**
+```cpp
+// In Segment
+uint8_t lastSeenVersion = 0;
+
+void update(uint32_t frame) {
+    bool firstFrame = (lastSeenVersion != scratchpadVersion);
+    if (firstFrame) {
+        lastSeenVersion = scratchpadVersion;
+    }
+    effect->fn(view, params, frame, firstFrame);
+}
+```
+
+**Validation at setEffect:**
+```cpp
+void setEffect(const EffectInfo* newEffect) {
+    if (newEffect->stateSize > SCRATCHPAD_SIZE) {
+        LOG_ERROR(LogTag::LED, "Effect %s requires %d bytes, max is %d",
+                  newEffect->id, newEffect->stateSize, SCRATCHPAD_SIZE);
+        return;  // Refuse invalid effect
+    }
+    effect = newEffect;
+    scratchpadVersion++;
+    memset(scratchpad, 0, SCRATCHPAD_SIZE);  // Or just stateSize
+}
+```
 
 **Rationale:** A union-based approach becomes fragile as effects grow. A fixed scratchpad with versioning is simpler, works for multi-segment, and avoids heap allocation.
 
@@ -182,6 +230,15 @@ struct SegmentView {
 Owns a view, effect binding, and scratchpad state:
 
 ```cpp
+// Cached "what's meaningful right now" for UI/Matter/AI
+struct SegmentCapabilities {
+    bool hasBrightness = true;   // Always true for segments
+    bool hasSpeed;               // Effect responds to speed
+    bool hasIntensity;           // Effect responds to intensity
+    bool hasPalette;             // Effect uses palette
+    bool hasSecondaryColor;      // Effect uses colors[1]
+};
+
 class Segment {
 public:
     // Identity (stable across deletions)
@@ -193,6 +250,7 @@ public:
     // Effect binding
     const EffectInfo* effect;   // Current effect (includes fn pointer)
     EffectParams params;        // Effect parameters
+    SegmentCapabilities caps;   // Cached from effect, updated on setEffect()
     
     // Per-segment state
     uint8_t brightness = 255;
@@ -208,6 +266,12 @@ public:
         effect = newEffect;
         scratchpadVersion++;    // Signals scratchpad reset
         memset(scratchpad, 0, SCRATCHPAD_SIZE);
+        
+        // Update cached capabilities from effect metadata
+        caps.hasSpeed = newEffect->usesSpeed;
+        caps.hasIntensity = newEffect->usesIntensity;
+        caps.hasPalette = newEffect->usesPalette;
+        caps.hasSecondaryColor = newEffect->usesSecondaryColor;
     }
     
     template<typename T>
@@ -225,16 +289,23 @@ public:
 - UI can reliably target segments by ID
 - Internal storage can still be array-based for efficiency
 
+**Note on Capabilities:** `SegmentCapabilities` caches "what's meaningful right now" from `EffectInfo`:
+- **UI:** Only show sliders for params the effect actually uses
+- **Matter:** Map only relevant attributes to the segment
+- **AI:** Constrain prompt understanding to meaningful params
+- Updated automatically when effect changes—no manual sync needed
+
 ### Effect System
 
 Effects are pure functions with rich metadata, registered by name:
 
 ```cpp
 // Effect function signature
-using EffectFn = void (*)(
-    SegmentView& view,
+// Note: firstFrame is true when scratchpad was just reset (effect change)
+using EffectFn = void (*)(    SegmentView& view,
     const EffectParams& params,
-    uint32_t frame
+    uint32_t frame,
+    bool firstFrame          // True when scratchpad just reset
 );
 
 // Effect metadata (enables rich UI/AI integration)
@@ -267,7 +338,10 @@ struct EffectInfo {
     })
 
 // Example effect implementation
-void effectFire(SegmentView& view, const EffectParams& p, uint32_t frame) {
+void effectFire(SegmentView& view, const EffectParams& p, uint32_t frame, bool firstFrame) {
+    if (firstFrame) {
+        // Initialize scratchpad state
+    }
     // Full access to FastLED functions
     // Operates only on this segment's LEDs
 }
@@ -330,8 +404,10 @@ private:
 | **Pixel Ops** | `fadeToBlackBy`, `blur1d`, `fill_solid` | Via `view.leds` |
 | **Timing** | `beatsin8`, `beat8`, `BPM` | Direct in effects |
 | **Math** | `scale8`, `ease8`, `triwave8` | Direct in effects |
-| **Power** | `setMaxPowerInVoltsAndMilliamps` | Controller-level |
-| **Correction** | `setCorrection`, `setTemperature` | Controller-level |
+| **Power** | `setMaxPowerInVoltsAndMilliamps` | Controller-level (global only) |
+| **Correction** | `setCorrection`, `setTemperature` | Controller-level (global only) |
+
+> **Design note:** Power limiting and color correction intentionally stay controller-global. Do not push these into segments—it adds complexity without real benefit and breaks FastLED's power calculation.
 
 ### Requires View Extension
 
@@ -529,15 +605,19 @@ POST /api/segments/{id}/effect  # Set segment effect
   "effect": {
     "id": "fire",
     "displayName": "Fire",
-    "category": "Animated",
-    "usesPalette": true,
-    "usesSpeed": true
+    "category": "Animated"
   },
   "brightness": 200,
   "speed": 150,
   "colors": ["#ff6600", "#ff0000"],
   "palette": "heat",
-  "reverse": false
+  "reverse": false,
+  "capabilities": {     // Derived from effect, tells UI what to show
+    "hasSpeed": true,
+    "hasIntensity": true,
+    "hasPalette": true,
+    "hasSecondaryColor": false
+  }
 }
 ```
 
@@ -630,9 +710,9 @@ Explicit ordering prevents "where does this logic belong?" confusion:
 │    └─ Effects mode (default)                            │
 ├─────────────────────────────────────────────────────────┤
 │ 3. Render                                               │
-│    ├─ Protocol mode: protocol writes directly to LEDs   │
-│    └─ Effects mode: for each segment in order:          │
-│                     segment.update(frame)               │
+│    ├─ Protocol active: protocol writes directly to LEDs │
+│    └─ Otherwise: for each segment (ordered by start):   │
+│                  segment.update(frame, firstFrame)      │
 ├─────────────────────────────────────────────────────────┤
 │ 4. Post-process (global brightness applied by FastLED)  │
 ├─────────────────────────────────────────────────────────┤
@@ -642,11 +722,47 @@ Explicit ordering prevents "where does this logic belong?" confusion:
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Protocol Override Semantics:**
-- Protocols (sACN, Art-Net) write directly to the base LED buffer
-- When protocol data is active, effects are skipped
-- Timeout (5s without data) returns to effects mode
-- This matches v1 behavior exactly
+**Protocol Semantics (protocols as writers, not modes):**
+- Protocols (sACN, Art-Net, future Matter) are **temporary sole writers**
+- When active, they have write priority over effects
+- Timeout (5s without data) releases write priority back to effects
+- This framing keeps the single-writer mental model consistent
+
+**Critical: Protocol callbacks must not write LEDs directly.**
+
+Protocol receive callbacks (UDP, etc.) may run on network tasks, not the main loop. To honor Invariant 2:
+
+```cpp
+// Protocol buffer (double-buffered or single + atomic flag)
+CRGB protocolBuffer[MAX_LED_COUNT];
+std::atomic<bool> protocolFrameReady{false};
+uint32_t lastProtocolFrameMs = 0;
+
+// In sACN callback (runs on network task)
+void onSacnPacket(const uint8_t* dmxData, uint16_t length) {
+    // Copy to protocol buffer, NOT to leds[]
+    for (int i = 0; i < length/3 && i < ledCount; i++) {
+        protocolBuffer[i] = CRGB(dmxData[i*3], dmxData[i*3+1], dmxData[i*3+2]);
+    }
+    protocolFrameReady.store(true, std::memory_order_release);
+}
+
+// In main loop (single writer)
+void processProtocol() {
+    if (protocolFrameReady.load(std::memory_order_acquire)) {
+        memcpy(leds, protocolBuffer, sizeof(CRGB) * ledCount);
+        lastProtocolFrameMs = millis();
+        protocolFrameReady.store(false, std::memory_order_release);
+    }
+}
+```
+
+> **Why this matters:** Even if direct writes "seem fine," you will eventually see tearing or partial frames. The buffer + atomic flag pattern is the only way to truly honor single-writer.
+
+**Segment Ordering:**
+- Segments are rendered in order of increasing `start` index
+- This is deterministic and intuitive
+- Matters for future composition/transition features
 
 ---
 
