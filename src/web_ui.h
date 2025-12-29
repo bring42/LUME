@@ -920,6 +920,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </div>
                 
                 <div class="form-group">
+                    <label for="authToken">API Auth Token <span style="color: var(--text-muted); font-weight: normal;">(optional)</span></label>
+                    <input type="password" id="authToken" placeholder="Leave empty to disable auth">
+                    <small style="color: var(--text-secondary); font-size: 11px;\">Protects API &amp; OTA. Use as Bearer token or X-API-Key header.</small>
+                </div>
+                
+                <div class="form-group">
                     <label for="model">AI Model</label>
                     <select id="model">
                         <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5 (20250929)</option>
@@ -1287,6 +1293,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('wifiSSID').value = config.wifiSSID || '';
                 document.getElementById('apiKey').value = config.apiKeySet ? '****' : '';
                 document.getElementById('model').value = config.openRouterModel || 'openai/gpt-4o-mini';
+                document.getElementById('authToken').value = config.authEnabled ? '****' : '';
                 document.getElementById('ledCount').value = config.ledCount || 160;
                 
                 // sACN settings
@@ -1304,6 +1311,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 wifiSSID: document.getElementById('wifiSSID').value,
                 wifiPassword: document.getElementById('wifiPassword').value,
                 apiKey: document.getElementById('apiKey').value,
+                authToken: document.getElementById('authToken').value,
                 openRouterModel: document.getElementById('model').value,
                 ledCount: parseInt(document.getElementById('ledCount').value),
                 sacnEnabled: document.getElementById('sacnEnabled').checked,
@@ -1314,6 +1322,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             // Don't send masked password/key
             if (config.wifiPassword === '') delete config.wifiPassword;
             if (config.apiKey.startsWith('****')) delete config.apiKey;
+            if (config.authToken.startsWith('****')) delete config.authToken;
             
             try {
                 await api('/config', 'POST', config);

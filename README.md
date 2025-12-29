@@ -31,8 +31,9 @@ ESP32-S3 + FastLED firmware with modern Web UI, API, sACN, OTA, and natural-lang
 | 🌙 **Nightlight Mode** | Gradual fade-to-sleep over configurable duration |
 | ⚡ **Power Limiting** | Automatic current limiting protects your PSU |
 | 🔗 **mDNS** | Access via `http://lume.local` |
-| 🔄 **OTA Updates** | Update firmware over WiFi |
-| 💾 **Persistent Storage** | Settings survive reboots |
+| 🔄 **OTA Updates** | Update firmware wirelessly — never unplug again! |
+| 🔐 **Optional Auth** | Protect API & OTA with a token |
+| 💾 **Persistent Storage** | Settings survive reboots and updates |
 
 ---
 
