@@ -40,7 +40,7 @@ ESP32-S3 + FastLED firmware with modern Web UI, API, sACN, OTA, and natural-lang
 ### What You Need
 
 - **LILYGO T-Display S3** (or compatible ESP32-S3)
-- **WS2812B LED Strip** (data wire to GPIO 21)
+- **WS2812B LED Strip** (default: GPIO 21 — set `LED_DATA_PIN` in [constants.h](src/constants.h))
 - **5V Power Supply** (sized for your LED count)
 
 ### Flash & Go
@@ -127,6 +127,7 @@ Connect professional lighting software like QLC+, xLights, or TouchDesigner.
 Key settings in `src/constants.h`:
 
 ```cpp
+#define LED_DATA_PIN 21               // GPIO for LED data line
 constexpr uint16_t LED_MAX_MILLIAMPS = 2000;  // Match your PSU
 constexpr uint16_t MAX_LED_COUNT = 300;       // Maximum LEDs
 constexpr const char* MDNS_HOSTNAME = "lume";

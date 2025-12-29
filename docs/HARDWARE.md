@@ -89,14 +89,16 @@ FastLED will automatically dim LEDs to stay within the power budget.
 
 **Default data pin: GPIO 21**
 
-⚠️ **Important:** The LED data pin is set at **compile time** due to FastLED requirements. To change it:
+To use a different GPIO pin:
 
-1. Edit [led_controller.cpp](../src/led_controller.cpp)
-2. Find the line: `FastLED.addLeds<WS2812B, 21, GRB>(...)`
-3. Change `21` to your desired GPIO
-4. Rebuild and flash firmware
+1. Edit [constants.h](../src/constants.h)
+2. Change `LED_DATA_PIN` to your desired GPIO:
+   ```cpp
+   #define LED_DATA_PIN 16  // Example: use GPIO 16 instead
+   ```
+3. Rebuild and flash: `pio run -t upload`
 
-The `ledPin` setting in the web UI is stored but **only applies after recompiling**.
+> **Note:** The pin is set at compile time (FastLED requirement). Changing it requires reflashing.
 
 ### Recommended GPIOs
 

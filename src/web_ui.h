@@ -930,8 +930,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 
                 <div class="grid-2">
                     <div class="form-group">
-                        <label for="ledPin">LED Data Pin</label>
-                        <input type="number" id="ledPin" value="21" min="0" max="48">
+                        <label>LED Data Pin</label>
+                        <input type="text" value="GPIO 21 (compile-time)" disabled style="opacity: 0.7; cursor: not-allowed;">
+                        <small style="color: var(--text-secondary); font-size: 11px;">Set LED_DATA_PIN in <a href="https://github.com/bring42/LUME/blob/main/src/constants.h" target="_blank">constants.h</a></small>
                     </div>
                     <div class="form-group">
                         <label for="ledCount">LED Count</label>
@@ -1286,7 +1287,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('wifiSSID').value = config.wifiSSID || '';
                 document.getElementById('apiKey').value = config.apiKeySet ? '****' : '';
                 document.getElementById('model').value = config.openRouterModel || 'openai/gpt-4o-mini';
-                document.getElementById('ledPin').value = config.ledPin || 21;
                 document.getElementById('ledCount').value = config.ledCount || 160;
                 
                 // sACN settings
@@ -1305,7 +1305,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 wifiPassword: document.getElementById('wifiPassword').value,
                 apiKey: document.getElementById('apiKey').value,
                 openRouterModel: document.getElementById('model').value,
-                ledPin: parseInt(document.getElementById('ledPin').value),
                 ledCount: parseInt(document.getElementById('ledCount').value),
                 sacnEnabled: document.getElementById('sacnEnabled').checked,
                 sacnUniverse: parseInt(document.getElementById('sacnUniverse').value),
