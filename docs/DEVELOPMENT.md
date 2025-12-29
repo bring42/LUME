@@ -10,7 +10,6 @@ This guide covers architecture, building, debugging, and contributing.
 src/
 ├── main.cpp              # WiFi, web server, OTA, event loop
 ├── anthropic_client.*    # FreeRTOS task for async LLM calls
-├── sacn_receiver.*       # E1.31 DMX protocol handler (legacy)
 ├── storage.*             # NVS persistence layer
 ├── web_ui.h              # Embedded HTML/CSS/JS (PROGMEM)
 ├── constants.h           # All configurable values
@@ -27,14 +26,19 @@ src/
 ├── effects/
 │   ├── effects.h         # All effect declarations
 │   ├── solid.cpp         # Solid color effect
-│   ├── rainbow.cpp       # Rainbow effect
+│   ├── rainbow.cpp       # Rainbow chase effect
 │   ├── fire.cpp          # Fire simulation
-│   ├── confetti.cpp      # Confetti sparkles
-│   ├── gradient.cpp      # Color gradient
-│   └── pulse.cpp         # Pulsing effect
+│   ├── confetti.cpp      # Random confetti sparkles
+│   ├── gradient.cpp      # Static color gradient
+│   ├── pulse.cpp         # Color pulsing
+│   ├── meteor.cpp        # Meteor shower
+│   ├── twinkle.cpp       # Twinkling stars
+│   ├── candle.cpp        # Candle flicker
+│   ├── breathe.cpp       # Breathing pulse
+│   └── ... (23 total)    # See effects.h for full list
 └── protocols/
     ├── protocol.h        # Protocol interface + ProtocolBuffer
-    ├── sacn.*            # sACN/E1.31 protocol adapter
+    └── sacn.*            # Self-contained sACN/E1.31 implementation
 ```
 
 ### Architecture Overview (v2)
@@ -63,7 +67,7 @@ src/
 ```
 Web UI → JSON POST → main.cpp handler → lume::controller → Segment → Effect
 AI Prompt → anthropic_client task → JSON spec → applyEffectSpec() → Segment
-sACN network → SacnProtocol → ProtocolBuffer → controller.update() → FastLED
+sACN network → SacnProtocol (UDP, multicast, E1.31) → ProtocolBuffer → controller.update() → FastLED
 ```
 
 ### Concurrency & Single-Writer Model
@@ -75,7 +79,7 @@ The LED buffer (`CRGB leds_[]`) is owned by `LumeController`. All mutations flow
 - Effects are pure functions that write to their segment's view
 
 **Thread-safety patterns:**
-1. **Protocol data:** Uses `ProtocolBuffer` with `std::atomic<bool>` flag
+1. **Protocol data:** Uses `ProtocolBuffer` with `std::atomic<bool>` flag. sACN implementation is self-contained with direct UDP socket management, multicast join/leave, E1.31 packet parsing, and source priority handling.
 2. **Effect state:** Segment scratchpad is reset on effect change (version counter)
 3. **sACN priority:** When protocol data flows, effects are skipped entirely
 
@@ -308,6 +312,9 @@ struct MeteorState {
 
 void effectMeteor(SegmentView& view, const EffectParams& params, 
                   uint32_t frame, bool firstFrame) {
+    // Validate scratchpad size (checked at registration time)
+    static_assert(sizeof(MeteorState) <= 512, "State too large");
+    
     // Get typed pointer to scratchpad
     auto* state = reinterpret_cast<MeteorState*>(params.scratchpad);
     
@@ -318,6 +325,9 @@ void effectMeteor(SegmentView& view, const EffectParams& params,
     
     // Use state->position, state->trail, etc.
 }
+
+// Register with state size validation
+REGISTER_EFFECT("meteor", "Meteor", EffectCategory::Moving, effectMeteor);
 ```
 
 ---

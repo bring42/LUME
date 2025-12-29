@@ -1,6 +1,6 @@
 # sACN (E1.31) Protocol Guide
 
-The controller can receive DMX data over the network using the sACN (E1.31) protocol. This allows integration with professional lighting software like QLC+, xLights, TouchDesigner, and more.
+The controller can receive DMX data over the network using the sACN (E1.31) protocol. The implementation is self-contained with direct UDP socket management, multicast group support, E1.31 packet parsing, and source priority handling. This allows integration with professional lighting software like QLC+, xLights, TouchDesigner, and more.
 
 ---
 
@@ -83,6 +83,7 @@ This allows backup sources or priority overrides.
 | Specification | Value |
 |---------------|-------|
 | Protocol | E1.31 (ANSI E1.31-2018) |
+| Implementation | Self-contained (UDP, multicast, E1.31 parsing) |
 | Transport | UDP port 5568 |
 | Multicast Address | `239.255.{hi}.{lo}` |
 | Channels per LED | 3 (RGB) |
