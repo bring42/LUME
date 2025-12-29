@@ -3,6 +3,7 @@
 
 #include <FastLED.h>
 #include "segment.h"
+#include "command_queue.h"
 #include "../constants.h"
 
 namespace lume {
@@ -106,7 +107,20 @@ public:
     // Get actual FPS (for diagnostics)
     uint16_t getActualFps() const { return actualFps; }
     
+    // --- Command queue access (for handlers) ---
+    
+    // Enqueue a command (thread-safe)
+    bool enqueueCommand(const Command& cmd) {
+        return commandQueue.enqueue(cmd);
+    }
+    
 private:
+    // Process pending commands (called at start of each frame)
+    void processCommands();
+    
+    // Execute a single command
+    void executeCommand(const Command& cmd);
+    
     // LED array
     CRGB leds[MAX_LED_COUNT];
     uint16_t ledCount;
@@ -115,6 +129,9 @@ private:
     Segment segments[MAX_SEGMENTS];
     uint8_t segmentCount;
     uint8_t nextSegmentId;
+    
+    // Command queue
+    CommandQueue commandQueue;
     
     // State
     bool power;

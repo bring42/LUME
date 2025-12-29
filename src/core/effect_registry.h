@@ -10,33 +10,69 @@ namespace lume {
  * Effect function signature
  * 
  * All effects are pure functions with this signature:
- *   void effectName(SegmentView& view, const EffectParams& params, uint32_t frame)
+ *   void effectName(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame)
  * 
  * - view: The segment to render to (LED array slice)
  * - params: Colors, speed, palette, custom values
  * - frame: Global frame counter (for timing, use with beatsin8 etc.)
+ * - firstFrame: True when scratchpad was just reset (effect change)
  * 
  * Effects should:
  * - Write colors to view[0..view.size()-1]
  * - Use frame for animation timing (not millis())
- * - Avoid global/static state where possible
+ * - Initialize scratchpad state when firstFrame is true
+ * - Avoid global/static state - use segment scratchpad instead
  * - Be deterministic given the same inputs
  */
-using EffectFn = void (*)(SegmentView& view, const EffectParams& params, uint32_t frame);
+using EffectFn = void (*)(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame);
 
 /**
- * Effect metadata
+ * Effect categories for UI grouping and filtering
+ */
+enum class EffectCategory : uint8_t {
+    Solid = 0,      // Static, non-animated effects
+    Animated,       // Effects with motion/animation
+    Moving,         // Effects with positional movement
+    Special         // Complex or unique effects
+};
+
+/**
+ * Effect metadata - enables rich UI/AI integration
  */
 struct EffectInfo {
-    const char* name;        // Effect name (lowercase, no spaces)
-    const char* displayName; // Human-readable name
-    EffectFn fn;             // The effect function
-    bool usesSecondaryColor; // Does effect use secondary color?
-    bool usesPalette;        // Does effect use palette?
+    const char* id;           // Machine name: "fire" (lowercase, no spaces)
+    const char* displayName;  // Human-readable name: "Fire"
+    EffectCategory category;  // For UI grouping
+    
+    // Parameter support flags (enables smart UI)
+    bool usesPalette;         // Responds to palette changes
+    bool usesSecondaryColor;  // Uses params.colors[1]
+    bool usesSpeed;           // Responds to speed param
+    bool usesIntensity;       // Responds to intensity param
+    
+    // Resource hints
+    uint16_t stateSize;       // Bytes needed in scratchpad (0 = stateless)
+    uint16_t minLeds;         // Minimum LEDs for effect to look good
+    
+    EffectFn fn;              // The actual effect function
+    
+    // Helper to get category name
+    const char* categoryName() const {
+        switch (category) {
+            case EffectCategory::Solid:    return "Solid";
+            case EffectCategory::Animated: return "Animated";
+            case EffectCategory::Moving:   return "Moving";
+            case EffectCategory::Special:  return "Special";
+            default:                       return "Unknown";
+        }
+    }
 };
 
 // Maximum number of registered effects
 constexpr uint8_t MAX_EFFECTS = 32;
+
+// Scratchpad size for stateful effects (per segment)
+constexpr size_t SCRATCHPAD_SIZE = 512;
 
 /**
  * EffectRegistry - Singleton registry of all available effects
@@ -51,36 +87,31 @@ public:
         return registry;
     }
     
-    // Register an effect (called by REGISTER_EFFECT macro)
-    bool add(const char* name, const char* displayName, EffectFn fn,
-             bool usesSecondary = false, bool usesPalette = false) {
+    // Register an effect with full metadata (called by REGISTER_EFFECT macro)
+    bool add(const EffectInfo& info) {
         if (count >= MAX_EFFECTS) return false;
         
-        effects[count].name = name;
-        effects[count].displayName = displayName;
-        effects[count].fn = fn;
-        effects[count].usesSecondaryColor = usesSecondary;
-        effects[count].usesPalette = usesPalette;
+        // Validate stateSize doesn't exceed scratchpad
+        if (info.stateSize > SCRATCHPAD_SIZE) {
+            return false;  // Effect requires too much state
+        }
+        
+        effects[count] = info;
         count++;
         return true;
     }
     
-    // Find effect by name
-    EffectFn find(const char* name) const {
-        if (!name) return nullptr;
-        for (uint8_t i = 0; i < count; i++) {
-            if (strcmp(effects[i].name, name) == 0) {
-                return effects[i].fn;
-            }
-        }
-        return nullptr;
+    // Find effect function by id
+    EffectFn find(const char* id) const {
+        const EffectInfo* info = getInfo(id);
+        return info ? info->fn : nullptr;
     }
     
-    // Get effect info by name
-    const EffectInfo* getInfo(const char* name) const {
-        if (!name) return nullptr;
+    // Get effect info by id
+    const EffectInfo* getInfo(const char* id) const {
+        if (!id) return nullptr;
         for (uint8_t i = 0; i < count; i++) {
-            if (strcmp(effects[i].name, name) == 0) {
+            if (strcmp(effects[i].id, id) == 0) {
                 return &effects[i];
             }
         }
@@ -96,11 +127,22 @@ public:
     // Get number of registered effects
     uint8_t getCount() const { return count; }
     
-    // Get all effect names (for API)
-    void getNames(const char** names, uint8_t maxCount) const {
+    // Get all effect ids (for API)
+    void getIds(const char** ids, uint8_t maxCount) const {
         for (uint8_t i = 0; i < count && i < maxCount; i++) {
-            names[i] = effects[i].name;
+            ids[i] = effects[i].id;
         }
+    }
+    
+    // Get effects by category
+    uint8_t getByCategory(EffectCategory cat, const EffectInfo** results, uint8_t maxResults) const {
+        uint8_t found = 0;
+        for (uint8_t i = 0; i < count && found < maxResults; i++) {
+            if (effects[i].category == cat) {
+                results[found++] = &effects[i];
+            }
+        }
+        return found;
     }
     
 private:
@@ -115,41 +157,57 @@ private:
  */
 class EffectRegistrar {
 public:
-    EffectRegistrar(const char* name, const char* displayName, EffectFn fn,
-                    bool usesSecondary = false, bool usesPalette = false) {
-        EffectRegistry::instance().add(name, displayName, fn, usesSecondary, usesPalette);
-    }
-    
-    // Convenience overload with same name for display
-    EffectRegistrar(const char* name, EffectFn fn,
-                    bool usesSecondary = false, bool usesPalette = false) {
-        EffectRegistry::instance().add(name, name, fn, usesSecondary, usesPalette);
+    EffectRegistrar(const EffectInfo& info) {
+        EffectRegistry::instance().add(info);
     }
 };
 
 /**
- * REGISTER_EFFECT macro
+ * REGISTER_EFFECT_FULL macro - All parameters explicit
  * 
  * Usage:
- *   void effectFire(SegmentView& view, const EffectParams& params, uint32_t frame) {
- *       // effect implementation
- *   }
- *   REGISTER_EFFECT("fire", "Fire", effectFire, false, false);
- * 
- * Or with defaults (no secondary color, no palette):
- *   REGISTER_EFFECT_SIMPLE("fire", effectFire);
+ *   REGISTER_EFFECT_FULL(effectFire, "fire", "Fire", Animated,
+ *       false, false, true, true, sizeof(FireState), 10);
+ *       // usesPal, usesSecColor, usesSpd, usesInt, stateSize, minLeds
  */
-#define REGISTER_EFFECT(name, displayName, fn, usesSecondary, usesPalette) \
-    static lume::EffectRegistrar _registrar_##fn(name, displayName, fn, usesSecondary, usesPalette)
+#define REGISTER_EFFECT_FULL(fn, idStr, dispName, cat, usesPal, usesSecColor, usesSpd, usesInt, stateSz, minL) \
+    static lume::EffectRegistrar _registrar_##fn({ \
+        idStr, dispName, lume::EffectCategory::cat, \
+        usesPal, usesSecColor, usesSpd, usesInt, \
+        stateSz, minL, fn \
+    })
 
-#define REGISTER_EFFECT_SIMPLE(name, fn) \
-    static lume::EffectRegistrar _registrar_##fn(name, fn)
+// Simple effect: animated, uses speed only
+#define REGISTER_EFFECT_SIMPLE(fn, idStr) \
+    REGISTER_EFFECT_FULL(fn, idStr, idStr, Animated, false, false, true, false, 0, 1)
 
-#define REGISTER_EFFECT_PALETTE(name, displayName, fn) \
-    static lume::EffectRegistrar _registrar_##fn(name, displayName, fn, false, true)
+// Simple effect with display name
+#define REGISTER_EFFECT_SIMPLE_NAMED(fn, idStr, dispName) \
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, false, true, false, 0, 1)
 
-#define REGISTER_EFFECT_COLORS(name, displayName, fn) \
-    static lume::EffectRegistrar _registrar_##fn(name, displayName, fn, true, false)
+// Static solid-type effect: no animation
+#define REGISTER_EFFECT_SOLID(fn, idStr, dispName) \
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Solid, false, false, false, false, 0, 1)
+
+// Animated effect with speed + intensity
+#define REGISTER_EFFECT_ANIMATED(fn, idStr, dispName) \
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, false, true, true, 0, 1)
+
+// Moving effect with speed + intensity
+#define REGISTER_EFFECT_MOVING(fn, idStr, dispName) \
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Moving, false, false, true, true, 0, 1)
+
+// Palette-based effect: uses palette and speed
+#define REGISTER_EFFECT_PALETTE(fn, idStr, dispName) \
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, true, false, true, false, 0, 1)
+
+// Effect using primary + secondary colors
+#define REGISTER_EFFECT_COLORS(fn, idStr, dispName) \
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, true, true, false, 0, 1)
+
+// Stateful effect: requires scratchpad state
+#define REGISTER_EFFECT_STATEFUL(fn, idStr, dispName, stateType) \
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, false, true, true, sizeof(stateType), 1)
 
 // Convenience function to get registry
 inline EffectRegistry& effects() {

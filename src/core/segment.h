@@ -11,27 +11,18 @@ namespace lume {
 class LumeController;
 
 /**
- * Effect state storage
+ * Segment capabilities - cached "what's meaningful right now" for UI/AI
  * 
- * Some effects need persistent state across frames (e.g., fire cooling array).
- * This union provides space for effect-specific state without heap allocation.
+ * Updated automatically when effect changes:
+ * - UI: Only show sliders for params the effect actually uses
+ * - AI: Constrain prompt understanding to meaningful params
  */
-union EffectState {
-    // Fire effect cooling data (up to 64 LEDs per segment with state)
-    uint8_t cooling[64];
-    
-    // Generic state bytes
-    uint8_t bytes[64];
-    
-    // Numeric state
-    struct {
-        uint16_t position;
-        uint16_t counter;
-        uint8_t phase;
-        uint8_t direction;
-    } motion;
-    
-    EffectState() { memset(bytes, 0, sizeof(bytes)); }
+struct SegmentCapabilities {
+    bool hasBrightness = true;   // Always true for segments
+    bool hasSpeed;               // Effect responds to speed
+    bool hasIntensity;           // Effect responds to intensity
+    bool hasPalette;             // Effect uses palette
+    bool hasSecondaryColor;      // Effect uses colors[1]
 };
 
 /**
@@ -39,22 +30,31 @@ union EffectState {
  * 
  * Each segment has:
  * - A view into the LED array (start position, length)
- * - An assigned effect function
+ * - An assigned effect (with metadata)
  * - Effect parameters (colors, speed, palette)
- * - Optional effect-specific state
+ * - Fixed-size scratchpad for stateful effects
+ * 
+ * Scratchpad design (see ARCHITECTURE.md Invariant 3):
+ * - 512 bytes per segment for effect state
+ * - Cleared automatically when effect changes
+ * - Effects use getScratchpad<T>() to access typed state
+ * - firstFrame flag signals scratchpad reset
  */
 class Segment {
 public:
     Segment()
         : view()
         , effect(nullptr)
-        , effectName(nullptr)
         , params()
-        , state()
+        , caps()
         , brightness(255)
         , blendMode(BlendMode::Replace)
         , active(false)
-        , id(0) {}
+        , id(0)
+        , scratchpadVersion(0)
+        , lastSeenVersion(0) {
+        memset(scratchpad, 0, SCRATCHPAD_SIZE);
+    }
     
     // --- Configuration ---
     
@@ -64,29 +64,51 @@ public:
         active = true;
     }
     
-    // Set effect by function pointer
-    void setEffect(EffectFn fn) {
-        effect = fn;
-        effectName = nullptr;
-        state = EffectState(); // Reset state
+    // Set effect by EffectInfo pointer (preferred)
+    void setEffect(const EffectInfo* info) {
+        if (!info) return;
+        
+        // Validate stateSize fits in scratchpad
+        if (info->stateSize > SCRATCHPAD_SIZE) {
+            return;  // Refuse invalid effect
+        }
+        
+        effect = info;
+        scratchpadVersion++;  // Signal scratchpad reset
+        memset(scratchpad, 0, SCRATCHPAD_SIZE);
+        
+        // Update cached capabilities from effect metadata
+        caps.hasSpeed = info->usesSpeed;
+        caps.hasIntensity = info->usesIntensity;
+        caps.hasPalette = info->usesPalette;
+        caps.hasSecondaryColor = info->usesSecondaryColor;
     }
     
-    // Set effect by name (looks up in registry)
-    bool setEffect(const char* name) {
-        EffectFn fn = effects().find(name);
-        if (fn) {
-            effect = fn;
-            effectName = name;
-            state = EffectState();
+    // Set effect by id (looks up in registry)
+    bool setEffect(const char* id) {
+        const EffectInfo* info = effects().getInfo(id);
+        if (info) {
+            setEffect(info);
             return true;
         }
         return false;
     }
     
-    // Get current effect name
-    const char* getEffectName() const {
-        return effectName ? effectName : "none";
+    // Get current effect info
+    const EffectInfo* getEffect() const { return effect; }
+    
+    // Get current effect id
+    const char* getEffectId() const {
+        return effect ? effect->id : "none";
     }
+    
+    // Get current effect display name
+    const char* getEffectName() const {
+        return effect ? effect->displayName : "None";
+    }
+    
+    // Get cached capabilities
+    const SegmentCapabilities& getCapabilities() const { return caps; }
     
     // --- Parameter accessors ---
     
@@ -115,11 +137,7 @@ public:
     
     uint8_t getId() const { return id; }
     
-    uint16_t getStart() const { 
-        // Note: We can't know absolute start from view alone
-        // Controller tracks this
-        return 0; 
-    }
+    uint16_t getStart() const { return view.getStart(); }
     uint16_t getLength() const { return view.size(); }
     bool isReversed() const { return view.reversed; }
     
@@ -131,20 +149,41 @@ public:
     EffectParams& getParams() { return params; }
     const EffectParams& getParams() const { return params; }
     
-    // Direct access to effect state
-    EffectState& getState() { return state; }
+    // --- Scratchpad access for stateful effects ---
+    
+    // Get typed scratchpad pointer (compile-time size check)
+    template<typename T>
+    T* getScratchpad() {
+        static_assert(sizeof(T) <= SCRATCHPAD_SIZE, "State type exceeds scratchpad size");
+        return reinterpret_cast<T*>(scratchpad);
+    }
+    
+    template<typename T>
+    const T* getScratchpad() const {
+        static_assert(sizeof(T) <= SCRATCHPAD_SIZE, "State type exceeds scratchpad size");
+        return reinterpret_cast<const T*>(scratchpad);
+    }
+    
+    // Raw scratchpad access
+    uint8_t* getScratchpadRaw() { return scratchpad; }
+    const uint8_t* getScratchpadRaw() const { return scratchpad; }
     
     // --- Update ---
     
     // Run the effect for this frame
     void update(uint32_t frame) {
-        if (!active || !view.valid() || !effect) {
+        if (!active || !view.valid() || !effect || !effect->fn) {
             return;
         }
         
-        // Apply per-segment brightness by scaling params
-        // (Alternative: post-process LEDs, but this is simpler)
-        effect(view, params, frame);
+        // Derive firstFrame from version mismatch (no desync possible)
+        bool firstFrame = (lastSeenVersion != scratchpadVersion);
+        if (firstFrame) {
+            lastSeenVersion = scratchpadVersion;
+        }
+        
+        // Call the effect function
+        effect->fn(view, params, frame, firstFrame);
         
         // Apply segment brightness if not 255
         if (brightness < 255) {
@@ -158,15 +197,19 @@ private:
     friend class LumeController;
     
     SegmentView view;
-    EffectFn effect;
-    const char* effectName;
+    const EffectInfo* effect;
     EffectParams params;
-    EffectState state;
+    SegmentCapabilities caps;
     
     uint8_t brightness;
     BlendMode blendMode;
     bool active;
     uint8_t id;
+    
+    // Scratchpad for stateful effects (see ARCHITECTURE.md Invariant 3)
+    uint8_t scratchpad[SCRATCHPAD_SIZE];
+    uint8_t scratchpadVersion;   // Incremented when effect changes
+    uint8_t lastSeenVersion;     // Tracks when effect last saw reset
 };
 
 } // namespace lume
