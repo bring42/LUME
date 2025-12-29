@@ -24,7 +24,8 @@ ESP32-S3 + FastLED firmware with modern Web UI, API, sACN, OTA, and natural-lang
 | Category | What You Get |
 |----------|--------------|
 | 🤖 **AI Effects** | Describe effects in natural language via OpenRouter API |
-| 🎨 **15 Built-in Effects** | Rainbow, Fire, Confetti, Meteor, Twinkle, Candle, Breathe... |
+| 🎨 **23 Built-in Effects** | Rainbow, Fire, Confetti, Meteor, Twinkle, Candle, Gradient, Pulse... |
+| 🔲 **Segments** | Split your strip into independent zones with different effects |
 | 🎨 **Color Palettes** | 12 palettes: Ocean, Lava, Sunset, Forest, Party... |
 | 📡 **sACN/E1.31** | Professional DMX protocol for lighting software integration |
 | 📱 **Modern Web UI** | Responsive, mobile-friendly, works offline |
