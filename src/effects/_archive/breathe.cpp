@@ -8,8 +8,9 @@
 
 namespace lume {
 
-void effectBreathe(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectBreathe(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
     (void)frame;
+    (void)firstFrame;
     
     // Map speed to BPM (breaths per minute)
     uint8_t bpm = map(params.speed, 1, 255, 5, 30);
@@ -24,6 +25,6 @@ void effectBreathe(SegmentView& view, const EffectParams& params, uint32_t frame
     view.fill(color);
 }
 
-REGISTER_EFFECT("breathe", "Breathe", effectBreathe, false, false);
+REGISTER_EFFECT_SIMPLE_NAMED(effectBreathe, "breathe", "Breathe");
 
 } // namespace lume

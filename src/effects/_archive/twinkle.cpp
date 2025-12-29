@@ -2,20 +2,28 @@
  * Twinkle effect - Random LEDs fade in and out
  * 
  * Creates a cozy twinkling starfield effect
+ * 
+ * TODO: Migrate static state to scratchpad for multi-segment support
  */
 
 #include "../core/effect_registry.h"
 
 namespace lume {
 
-// Twinkle state - per-LED fade state
+// Twinkle state - per-LED fade state (will move to scratchpad in Phase 1)
 // 0 = off, 1-127 = fading in, 128-255 = fading out
 static uint8_t twinkleState[300] = {0};
 
-void effectTwinkle(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectTwinkle(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
     (void)frame;
     
     uint16_t len = min(view.size(), (uint16_t)300);
+    
+    // Reset state on first frame
+    if (firstFrame) {
+        memset(twinkleState, 0, sizeof(twinkleState));
+    }
+    
     uint8_t spawnChance = map(params.speed, 1, 255, 5, 40);
     
     for (uint16_t i = 0; i < len; i++) {
@@ -48,6 +56,6 @@ void effectTwinkle(SegmentView& view, const EffectParams& params, uint32_t frame
     }
 }
 
-REGISTER_EFFECT("twinkle", "Twinkle", effectTwinkle, false, false);
+REGISTER_EFFECT_SIMPLE_NAMED(effectTwinkle, "twinkle", "Twinkle");
 
 } // namespace lume

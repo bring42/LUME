@@ -6,7 +6,9 @@
 
 namespace lume {
 
-void effectMeteor(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectMeteor(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
     uint16_t len = view.size();
     if (len == 0) return;
     
@@ -34,6 +36,6 @@ void effectMeteor(SegmentView& view, const EffectParams& params, uint32_t frame)
     }
 }
 
-REGISTER_EFFECT("meteor", "Meteor", effectMeteor, false, false);
+REGISTER_EFFECT_MOVING(effectMeteor, "meteor", "Meteor");
 
 } // namespace lume

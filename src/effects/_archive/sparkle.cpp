@@ -6,8 +6,9 @@
 
 namespace lume {
 
-void effectSparkle(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectSparkle(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
     (void)frame;
+    (void)firstFrame;
     
     // Fill with primary color
     view.fill(params.primaryColor);
@@ -21,6 +22,6 @@ void effectSparkle(SegmentView& view, const EffectParams& params, uint32_t frame
     }
 }
 
-REGISTER_EFFECT("sparkle", "Sparkle", effectSparkle, false, false);
+REGISTER_EFFECT_SIMPLE_NAMED(effectSparkle, "sparkle", "Sparkle");
 
 } // namespace lume

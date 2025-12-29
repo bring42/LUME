@@ -6,7 +6,9 @@
 
 namespace lume {
 
-void effectTheaterChase(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectTheaterChase(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
     uint16_t len = view.size();
     
     // Fade background
@@ -20,6 +22,6 @@ void effectTheaterChase(SegmentView& view, const EffectParams& params, uint32_t 
     }
 }
 
-REGISTER_EFFECT_PALETTE("theater", "Theater Chase", effectTheaterChase);
+REGISTER_EFFECT_PALETTE(effectTheaterChase, "theater", "Theater Chase");
 
 } // namespace lume

@@ -6,7 +6,9 @@
 
 namespace lume {
 
-void effectRainbow(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectRainbow(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
     // Speed controls how fast the rainbow moves
     uint8_t hue = (frame * params.speed) >> 6;
     
@@ -16,6 +18,6 @@ void effectRainbow(SegmentView& view, const EffectParams& params, uint32_t frame
     view.rainbow(hue, deltaHue);
 }
 
-REGISTER_EFFECT_SIMPLE("rainbow", effectRainbow);
+REGISTER_EFFECT_SIMPLE_NAMED(effectRainbow, "rainbow", "Rainbow");
 
 } // namespace lume

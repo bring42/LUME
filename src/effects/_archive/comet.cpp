@@ -6,7 +6,9 @@
 
 namespace lume {
 
-void effectComet(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectComet(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
     uint16_t len = view.size();
     if (len == 0) return;
     
@@ -50,6 +52,6 @@ void effectComet(SegmentView& view, const EffectParams& params, uint32_t frame) 
     }
 }
 
-REGISTER_EFFECT_COLORS("comet", "Comet", effectComet);
+REGISTER_EFFECT_COLORS(effectComet, "comet", "Comet");
 
 } // namespace lume

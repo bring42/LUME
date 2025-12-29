@@ -2,19 +2,28 @@
  * Candle effect - Realistic candle flicker
  * 
  * All LEDs flicker together with slight variations for a cozy look
+ * 
+ * TODO: Migrate static state to scratchpad for multi-segment support
  */
 
 #include "../core/effect_registry.h"
 
 namespace lume {
 
-// Static state for smooth flicker
+// Static state for smooth flicker (will move to scratchpad in Phase 1)
 static uint8_t candleBase = 200;
 static uint8_t candleTarget = 200;
 static uint32_t lastFlickerChange = 0;
 
-void effectCandle(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectCandle(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
     (void)frame;
+    
+    // Reset state on first frame
+    if (firstFrame) {
+        candleBase = 200;
+        candleTarget = 200;
+        lastFlickerChange = 0;
+    }
     
     uint32_t now = millis();
     
@@ -61,6 +70,6 @@ void effectCandle(SegmentView& view, const EffectParams& params, uint32_t frame)
     }
 }
 
-REGISTER_EFFECT("candle", "Candle", effectCandle, false, false);
+REGISTER_EFFECT_ANIMATED(effectCandle, "candle", "Candle");
 
 } // namespace lume

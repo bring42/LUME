@@ -6,7 +6,9 @@
 
 namespace lume {
 
-void effectNoise(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectNoise(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
     uint16_t len = view.size();
     
     // Scale and speed for noise
@@ -25,6 +27,6 @@ void effectNoise(SegmentView& view, const EffectParams& params, uint32_t frame) 
     }
 }
 
-REGISTER_EFFECT_PALETTE("noise", "Noise", effectNoise);
+REGISTER_EFFECT_PALETTE(effectNoise, "noise", "Noise");
 
 } // namespace lume
