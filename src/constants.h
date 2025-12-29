@@ -21,7 +21,8 @@ constexpr uint16_t WEB_SERVER_PORT = 80;
 constexpr uint16_t OTA_PORT = 3232;
 constexpr uint16_t SACN_PORT = 5568;
 
-// --- LED Limits ---
+// --- LED Configuration ---
+#define LED_DATA_PIN 21                 // GPIO pin for LED data (change this for your wiring)
 constexpr uint16_t MAX_LED_COUNT = 300;
 constexpr uint16_t LEDS_PER_UNIVERSE = 170;
 

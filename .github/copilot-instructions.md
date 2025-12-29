@@ -50,7 +50,6 @@ Create `src/secrets.h` (gitignored) from `secrets.h.example`:
 #define DEV_WIFI_PASSWORD "YourPass"
 #define DEV_API_KEY "sk-or-..."
 #define DEV_OPENROUTER_MODEL "anthropic/claude-3-haiku"
-#define DEV_LED_PIN 21
 #define DEV_LED_COUNT 160
 #define DEV_DEFAULT_BRIGHTNESS 128
 ```
@@ -76,7 +75,7 @@ constexpr uint32_t PROMPT_RATE_LIMIT_MS = 3000;
 
 **sACN Priority:** When `config.sacnEnabled` and data flows, LED updates skip normal effects. Timeout after 5s returns to effects.
 
-**FastLED Pin Limitation:** Pin is compile-time only. To change: edit `addLeds<>` template AND rebuild.
+**LED Pin:** Set `LED_DATA_PIN` in `constants.h`. Compile-time only (FastLED requirement).
 
 **OTA Safety:** LEDs off during OTA, watchdog disabled to prevent timeout during long uploads.
 

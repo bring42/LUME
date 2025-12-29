@@ -21,15 +21,9 @@ void LedController::begin(uint8_t pin, uint16_t count) {
     dataPin = pin;
     ledCount = min(count, (uint16_t)MAX_LED_COUNT);
     
-    // IMPORTANT: FastLED requires COMPILE-TIME pin configuration for ESP32-S3.
-    // The pin number in addLeds<> template MUST match the physical wiring.
-    // To change LED pin: modify the line below AND rebuild the firmware.
-    // Runtime ledPin config is stored but only applies after firmware rebuild.
-    // Default pin: GPIO 21 (confirmed working on T-Display S3)
-    
-    // Initialize FastLED - using GPIO 21 as default
-    // For ESP32-S3, we use the RMT driver
-    FastLED.addLeds<WS2812B, 21, GRB>(leds, ledCount);
+    // Initialize FastLED with pin from constants.h
+    // To change the LED data pin, edit LED_DATA_PIN in constants.h
+    FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(leds, ledCount);
     FastLED.setBrightness(state.brightness);
     
     // Apply color correction for more accurate colors

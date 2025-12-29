@@ -144,7 +144,7 @@ void Storage::configToJson(const Config& config, JsonDocument& doc, bool maskApi
     doc["apiKey"] = maskApiKey ? (config.apiKey.length() > 0 ? "****" + config.apiKey.substring(config.apiKey.length() - 4) : "") : config.apiKey;
     doc["apiKeySet"] = config.apiKey.length() > 0;
     doc["openRouterModel"] = config.openRouterModel;
-    doc["ledPin"] = config.ledPin;
+    // Note: ledPin is not exposed - it's hardcoded at compile time
     doc["ledCount"] = config.ledCount;
     doc["defaultBrightness"] = config.defaultBrightness;
     doc["sacnEnabled"] = config.sacnEnabled;
@@ -175,9 +175,7 @@ bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
     if (doc["openRouterModel"].is<const char*>()) {
         config.openRouterModel = doc["openRouterModel"].as<String>();
     }
-    if (doc["ledPin"].is<int>()) {
-        config.ledPin = doc["ledPin"].as<uint8_t>();
-    }
+    // Note: ledPin is not parsed from JSON - it's hardcoded at compile time
     if (doc["ledCount"].is<int>()) {
         config.ledCount = doc["ledCount"].as<uint16_t>();
     }

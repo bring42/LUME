@@ -107,7 +107,7 @@ void setup() {
     } else {
         LOG_INFO(LogTag::STORAGE, "Configuration loaded");
         LOG_DEBUG(LogTag::STORAGE, "WiFi SSID: %s", config.wifiSSID.c_str());
-        LOG_DEBUG(LogTag::STORAGE, "LED Pin: %d, Count: %d", config.ledPin, config.ledCount);
+        LOG_DEBUG(LogTag::STORAGE, "LED Count: %d", config.ledCount);
     }
     
     // Override with development secrets if available
@@ -121,7 +121,7 @@ void setup() {
     if (devPass.length() > 0) config.wifiPassword = devPass;
     if (devKey.length() > 0) config.apiKey = devKey;
     config.openRouterModel = DEV_OPENROUTER_MODEL;
-    config.ledPin = DEV_LED_PIN;
+    // Note: LED pin is hardcoded to GPIO 21 in led_controller.cpp
     config.ledCount = DEV_LED_COUNT;
     config.defaultBrightness = DEV_DEFAULT_BRIGHTNESS;
 #endif
