@@ -126,9 +126,9 @@ void setup() {
     config.defaultBrightness = DEV_DEFAULT_BRIGHTNESS;
 #endif
     
-    // Initialize LED controller
+    // Initialize LED controller (pin is set via LED_DATA_PIN in constants.h)
     LOG_INFO(LogTag::LED, "Initializing LED controller...");
-    ledController.begin(config.ledPin, config.ledCount);
+    ledController.begin(config.ledCount);
     ledController.setBrightness(config.defaultBrightness);
     
     // Try to load saved LED state
@@ -552,7 +552,7 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
         // Save to storage
         if (storage.saveConfig(config)) {
             // Apply changes that can be applied without restart
-            ledController.reconfigure(config.ledPin, config.ledCount);
+            ledController.reconfigure(config.ledCount);
             
             // Handle sACN enable/disable
             if (config.sacnEnabled && wifiConnected) {

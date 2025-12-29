@@ -8,7 +8,6 @@ LedController ledController;
 
 LedController::LedController() :
     ledCount(160),
-    dataPin(21),
     lastUpdate(0),
     hue(0),
     frameCounter(0)
@@ -17,8 +16,7 @@ LedController::LedController() :
     memset(heat, 0, sizeof(heat));
 }
 
-void LedController::begin(uint8_t pin, uint16_t count) {
-    dataPin = pin;
+void LedController::begin(uint16_t count) {
     ledCount = min(count, (uint16_t)MAX_LED_COUNT);
     
     // Initialize FastLED with pin from constants.h
@@ -39,9 +37,8 @@ void LedController::begin(uint8_t pin, uint16_t count) {
     updatePalette();
 }
 
-void LedController::reconfigure(uint8_t pin, uint16_t count) {
-    // Note: Changing pin at runtime requires re-init which isn't fully supported
-    // For now, we just update the count
+void LedController::reconfigure(uint16_t count) {
+    // Update LED count (pin is fixed at compile time via LED_DATA_PIN)
     ledCount = min(count, (uint16_t)MAX_LED_COUNT);
     FastLED.clear();
     FastLED.show();

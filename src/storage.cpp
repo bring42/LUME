@@ -22,7 +22,6 @@ bool Storage::loadConfig(Config& config) {
     config.wifiPassword = prefs.getString("pass", "");
     config.apiKey = prefs.getString("apikey", "");
     config.openRouterModel = prefs.getString("model", "claude-sonnet-4-5-20250929");
-    config.ledPin = prefs.getUChar("ledpin", 21);
     config.ledCount = prefs.getUShort("ledcount", 160);
     config.defaultBrightness = prefs.getUChar("brightness", 128);
     config.sacnEnabled = prefs.getBool("sacn_en", false);
@@ -44,7 +43,6 @@ bool Storage::saveConfig(const Config& config) {
     prefs.putString("pass", config.wifiPassword);
     prefs.putString("apikey", config.apiKey);
     prefs.putString("model", config.openRouterModel);
-    prefs.putUChar("ledpin", config.ledPin);
     prefs.putUShort("ledcount", config.ledCount);
     prefs.putUChar("brightness", config.defaultBrightness);
     prefs.putBool("sacn_en", config.sacnEnabled);
@@ -144,7 +142,6 @@ void Storage::configToJson(const Config& config, JsonDocument& doc, bool maskApi
     doc["apiKey"] = maskApiKey ? (config.apiKey.length() > 0 ? "****" + config.apiKey.substring(config.apiKey.length() - 4) : "") : config.apiKey;
     doc["apiKeySet"] = config.apiKey.length() > 0;
     doc["openRouterModel"] = config.openRouterModel;
-    // Note: ledPin is not exposed - it's hardcoded at compile time
     doc["ledCount"] = config.ledCount;
     doc["defaultBrightness"] = config.defaultBrightness;
     doc["sacnEnabled"] = config.sacnEnabled;
@@ -175,7 +172,6 @@ bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
     if (doc["openRouterModel"].is<const char*>()) {
         config.openRouterModel = doc["openRouterModel"].as<String>();
     }
-    // Note: ledPin is not parsed from JSON - it's hardcoded at compile time
     if (doc["ledCount"].is<int>()) {
         config.ledCount = doc["ledCount"].as<uint16_t>();
     }
