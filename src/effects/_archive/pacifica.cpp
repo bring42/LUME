@@ -31,7 +31,9 @@ DEFINE_GRADIENT_PALETTE(pacifica3) {
   255, 100,180,220
 };
 
-void effectPacifica(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectPacifica(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
     uint16_t len = view.size();
     
     CRGBPalette16 pal1 = pacifica1;
@@ -65,6 +67,6 @@ void effectPacifica(SegmentView& view, const EffectParams& params, uint32_t fram
     }
 }
 
-REGISTER_EFFECT_SIMPLE("pacifica", effectPacifica);
+REGISTER_EFFECT_SIMPLE(effectPacifica, "pacifica");
 
 } // namespace lume

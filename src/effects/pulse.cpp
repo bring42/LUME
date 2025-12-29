@@ -6,7 +6,9 @@
 
 namespace lume {
 
-void effectPulse(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectPulse(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
     // Use beatsin8 for smooth sine wave
     // Speed controls frequency (higher = faster)
     uint8_t bpm = params.speed / 4;  // Map 1-255 to reasonable BPM
@@ -21,6 +23,6 @@ void effectPulse(SegmentView& view, const EffectParams& params, uint32_t frame) 
     view.fill(color);
 }
 
-REGISTER_EFFECT("pulse", "Pulse", effectPulse, false, false);
+REGISTER_EFFECT_SIMPLE_NAMED(effectPulse, "pulse", "Pulse");
 
 } // namespace lume

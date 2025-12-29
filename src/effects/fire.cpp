@@ -2,6 +2,8 @@
  * Fire effect - Realistic fire simulation
  * 
  * Uses the classic Fire2012 algorithm adapted for segments
+ * 
+ * TODO: Migrate static heat array to scratchpad for multi-segment support
  */
 
 #include "../core/effect_registry.h"
@@ -12,7 +14,10 @@ namespace lume {
 constexpr uint8_t FIRE_COOLING = 55;
 constexpr uint8_t FIRE_SPARKING = 120;
 
-void effectFire(SegmentView& view, const EffectParams& params, uint32_t frame) {
+// Static heat array (will move to scratchpad in Phase 1)
+static uint8_t heat[300];
+
+void effectFire(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
     (void)frame;
     
     uint16_t len = view.size();
@@ -22,11 +27,13 @@ void effectFire(SegmentView& view, const EffectParams& params, uint32_t frame) {
     uint8_t cooling = params.intensity > 0 ? params.intensity : FIRE_COOLING;
     uint8_t sparking = params.speed > 0 ? params.speed : FIRE_SPARKING;
     
-    // Static heat array (works for segments up to 300 LEDs)
-    static uint8_t heat[300];
-    
     // Limit to array size
     len = min(len, (uint16_t)300);
+    
+    // Reset heat on first frame
+    if (firstFrame) {
+        memset(heat, 0, sizeof(heat));
+    }
     
     // Step 1: Cool down every cell a little
     for (uint16_t i = 0; i < len; i++) {
@@ -59,6 +66,6 @@ void effectFire(SegmentView& view, const EffectParams& params, uint32_t frame) {
     }
 }
 
-REGISTER_EFFECT("fire", "Fire", effectFire, false, false);
+REGISTER_EFFECT_ANIMATED(effectFire, "fire", "Fire");
 
 } // namespace lume

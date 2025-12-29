@@ -6,8 +6,9 @@
 
 namespace lume {
 
-void effectConfetti(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectConfetti(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
     (void)frame;
+    (void)firstFrame;
     
     // Fade all pixels slightly
     view.fade(10);
@@ -21,6 +22,6 @@ void effectConfetti(SegmentView& view, const EffectParams& params, uint32_t fram
     }
 }
 
-REGISTER_EFFECT_PALETTE("confetti", "Confetti", effectConfetti);
+REGISTER_EFFECT_PALETTE(effectConfetti, "confetti", "Confetti");
 
 } // namespace lume

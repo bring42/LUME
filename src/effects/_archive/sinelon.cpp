@@ -6,7 +6,9 @@
 
 namespace lume {
 
-void effectSinelon(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectSinelon(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
     uint16_t len = view.size();
     if (len == 0) return;
     
@@ -22,6 +24,6 @@ void effectSinelon(SegmentView& view, const EffectParams& params, uint32_t frame
     view[pos] += ColorFromPalette(params.palette, hue, 255, LINEARBLEND);
 }
 
-REGISTER_EFFECT_PALETTE("sinelon", "Sinelon", effectSinelon);
+REGISTER_EFFECT_PALETTE(effectSinelon, "sinelon", "Sinelon");
 
 } // namespace lume

@@ -6,7 +6,9 @@
 
 namespace lume {
 
-void effectColorWaves(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectColorWaves(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
     uint16_t len = view.size();
     
     // Speed controls wave movement
@@ -23,6 +25,6 @@ void effectColorWaves(SegmentView& view, const EffectParams& params, uint32_t fr
     }
 }
 
-REGISTER_EFFECT_PALETTE("colorwaves", "Color Waves", effectColorWaves);
+REGISTER_EFFECT_PALETTE(effectColorWaves, "colorwaves", "Color Waves");
 
 } // namespace lume

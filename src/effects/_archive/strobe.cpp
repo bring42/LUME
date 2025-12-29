@@ -6,7 +6,9 @@
 
 namespace lume {
 
-void effectStrobe(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectStrobe(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
     // Speed controls flash rate
     uint8_t rate = params.speed / 8;
     if (rate < 1) rate = 1;
@@ -21,6 +23,6 @@ void effectStrobe(SegmentView& view, const EffectParams& params, uint32_t frame)
     }
 }
 
-REGISTER_EFFECT("strobe", "Strobe", effectStrobe, false, false);
+REGISTER_EFFECT_SIMPLE_NAMED(effectStrobe, "strobe", "Strobe");
 
 } // namespace lume

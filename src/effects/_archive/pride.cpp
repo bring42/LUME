@@ -19,7 +19,9 @@ DEFINE_GRADIENT_PALETTE(prideGradient) {
   255,   255,   0,   0     // Back to red
 };
 
-void effectPride(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectPride(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
     uint16_t len = view.size();
     CRGBPalette16 pridePalette = prideGradient;
     
@@ -32,6 +34,6 @@ void effectPride(SegmentView& view, const EffectParams& params, uint32_t frame) 
     }
 }
 
-REGISTER_EFFECT_SIMPLE("pride", effectPride);
+REGISTER_EFFECT_SIMPLE(effectPride, "pride");
 
 } // namespace lume

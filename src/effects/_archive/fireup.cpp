@@ -1,19 +1,26 @@
 /**
  * Fire Up effect - Fire flames rising upward (inverted fire)
+ * 
+ * TODO: Migrate static heat array to scratchpad for multi-segment support
  */
 
 #include "../core/effect_registry.h"
 
 namespace lume {
 
-// Heat array for fire simulation
+// Heat array for fire simulation (will move to scratchpad in Phase 1)
 static uint8_t fireUpHeat[300];
 
-void effectFireUp(SegmentView& view, const EffectParams& params, uint32_t frame) {
+void effectFireUp(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
     (void)frame;
     
     uint16_t len = min(view.size(), (uint16_t)300);
     if (len == 0) return;
+    
+    // Reset heat on first frame
+    if (firstFrame) {
+        memset(fireUpHeat, 0, sizeof(fireUpHeat));
+    }
     
     uint8_t cooling = params.intensity > 0 ? params.intensity / 4 : 55;
     uint8_t sparking = params.speed > 0 ? params.speed : 120;
@@ -43,6 +50,6 @@ void effectFireUp(SegmentView& view, const EffectParams& params, uint32_t frame)
     }
 }
 
-REGISTER_EFFECT("fireup", "Fire Up", effectFireUp, false, false);
+REGISTER_EFFECT_ANIMATED(effectFireUp, "fireup", "Fire Up");
 
 } // namespace lume
