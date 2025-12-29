@@ -562,14 +562,30 @@ src/
 
 **Success criteria:** Web UI controls new system
 
-### Phase 4: Protocol Migration
+### Phase 4: Protocol Migration ✅ COMPLETE
 **Goal:** Adapt sACN to new architecture
 
-- [ ] Define protocol interface
-- [ ] Adapt sACN receiver
-- [ ] Test with lighting software
+- [x] Define protocol interface (`protocols/protocol.h`)
+- [x] Create thread-safe `ProtocolBuffer` template with atomic flag
+- [x] Create `SacnProtocol` adapter wrapping existing `SacnReceiver`
+- [x] Integrate protocol handling into `LumeController::update()`
+- [x] Update main.cpp to use new protocol system
+- [x] Update API endpoints to use `sacnProtocol`
+- [ ] Test with lighting software (needs hardware)
 
-**Success criteria:** sACN works with segments
+**Key design decisions:**
+- Protocols implement `Protocol` interface with `hasFrameReady()`/`getBuffer()` pattern
+- `ProtocolBuffer<MAX_LEDS>` provides thread-safe buffering via `std::atomic<bool>`
+- Controller owns protocol registration and processes them in `update()`
+- Protocol data has priority over effects (when active, effects are skipped)
+- 5-second timeout returns control to effects
+
+**Files created:**
+- `src/protocols/protocol.h` - Base interface + `ProtocolBuffer` template
+- `src/protocols/sacn.h` - sACN protocol adapter header
+- `src/protocols/sacn.cpp` - sACN protocol implementation
+
+**Success criteria:** sACN works with new architecture
 
 ### Phase 5: Cleanup
 **Goal:** Remove old code, polish

@@ -2,9 +2,13 @@
 #define LUME_CONTROLLER_H
 
 #include <FastLED.h>
+#include <atomic>
 #include "segment.h"
 #include "command_queue.h"
 #include "../constants.h"
+
+// Forward declare Protocol to avoid circular dependency
+namespace lume { class Protocol; }
 
 namespace lume {
 
@@ -95,6 +99,17 @@ public:
         FastLED.setMaxPowerInVoltsAndMilliamps(volts, milliamps);
     }
     
+    // --- Protocol management ---
+    
+    // Register a protocol (called at startup)
+    void registerProtocol(Protocol* protocol);
+    
+    // Check if any protocol is currently active (receiving data)
+    bool isProtocolActive() const { return protocolActive_; }
+    
+    // Get active protocol name (or nullptr if none)
+    const char* getActiveProtocolName() const;
+    
     // --- Direct LED access (for protocols like sACN) ---
     
     CRGB* getLeds() { return leds; }
@@ -121,6 +136,9 @@ private:
     // Execute a single command
     void executeCommand(const Command& cmd);
     
+    // Process registered protocols (check for incoming data)
+    void processProtocols();
+    
     // LED array
     CRGB leds[MAX_LED_COUNT];
     uint16_t ledCount;
@@ -136,6 +154,14 @@ private:
     // State
     bool power;
     uint8_t globalBrightness;
+    
+    // Protocol handling
+    static constexpr uint8_t MAX_PROTOCOLS = 4;
+    Protocol* protocols_[MAX_PROTOCOLS];
+    uint8_t protocolCount_;
+    bool protocolActive_;
+    Protocol* activeProtocol_;
+    static constexpr uint32_t PROTOCOL_TIMEOUT_MS = 5000;
     
     // Timing
     uint16_t targetFps;
