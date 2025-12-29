@@ -154,18 +154,9 @@ lume::Segment* getMainSegment() {
 const char* mapOldEffectToNew(const char* oldEffect) {
     if (!oldEffect) return "rainbow";
     
-    // Case-insensitive comparison helper
-    String eff = oldEffect;
-    eff.toLowerCase();
-    
-    if (eff == "solid") return "solid";
-    if (eff == "rainbow") return "rainbow";
-    if (eff == "confetti") return "confetti";
-    if (eff == "fire" || eff == "fire2012") return "fire";
-    if (eff == "gradient") return "gradient";
-    if (eff == "pulse") return "pulse";
-    // Effects that aren't ported yet default to rainbow
-    return "rainbow";
+    // The new effect IDs are the same as old ones, so pass through directly.
+    // The segment.setEffect() will validate if the effect exists.
+    return oldEffect;
 }
 
 // Map old palette names to new PalettePreset
