@@ -3,6 +3,7 @@
  */
 
 #include "controller.h"
+#include "../logging.h"
 
 namespace lume {
 
@@ -27,6 +28,11 @@ LumeController::LumeController()
 
 void LumeController::begin(uint16_t count) {
     ledCount = min(count, (uint16_t)MAX_LED_COUNT);
+    
+    // Initialize command queue
+    if (!commandQueue.begin()) {
+        LOG_ERROR(LogTag::LED, "Failed to initialize command queue");
+    }
     
     // Initialize FastLED
     // Note: LED_DATA_PIN is defined in constants.h
@@ -66,6 +72,9 @@ void LumeController::update() {
     }
     lastFrameTime = now;
     
+    // Process any pending commands (single-writer model)
+    processCommands();
+    
     // FPS calculation
     fpsFrameCount++;
     if (now - fpsUpdateTime >= 1000) {
@@ -100,6 +109,94 @@ void LumeController::update() {
     // Show the result
     FastLED.show();
     frameCounter++;
+}
+
+void LumeController::processCommands() {
+    Command cmd;
+    // Process all pending commands this frame
+    while (commandQueue.dequeue(cmd)) {
+        executeCommand(cmd);
+    }
+}
+
+void LumeController::executeCommand(const Command& cmd) {
+    Segment* seg = nullptr;
+    
+    // Get target segment if needed
+    if (cmd.segmentId != 255) {
+        seg = getSegment(cmd.segmentId);
+        if (!seg && cmd.type != CommandType::CreateSegment) {
+            LOG_WARN(LogTag::LED, "Command targets unknown segment %d", cmd.segmentId);
+            return;
+        }
+    }
+    
+    switch (cmd.type) {
+        case CommandType::SetEffect:
+            if (seg && cmd.data.effectId) {
+                seg->setEffect(cmd.data.effectId);
+                LOG_DEBUG(LogTag::LED, "Segment %d effect -> %s", cmd.segmentId, cmd.data.effectId);
+            }
+            break;
+            
+        case CommandType::SetBrightness:
+            if (seg) {
+                seg->setBrightness(cmd.data.value8);
+            }
+            break;
+            
+        case CommandType::SetSpeed:
+            if (seg) {
+                seg->setSpeed(cmd.data.value8);
+            }
+            break;
+            
+        case CommandType::SetIntensity:
+            if (seg) {
+                seg->setIntensity(cmd.data.value8);
+            }
+            break;
+            
+        case CommandType::SetColor:
+            if (seg) {
+                if (cmd.data.color.isSecondary) {
+                    seg->setSecondaryColor(cmd.data.color.toCRGB());
+                } else {
+                    seg->setPrimaryColor(cmd.data.color.toCRGB());
+                }
+            }
+            break;
+            
+        case CommandType::SetPalette:
+            if (seg) {
+                seg->setPalette(static_cast<PalettePreset>(cmd.data.value8));
+            }
+            break;
+            
+        case CommandType::CreateSegment:
+            createSegment(cmd.data.segment.start, cmd.data.segment.length, cmd.data.segment.reversed);
+            break;
+            
+        case CommandType::RemoveSegment:
+            removeSegment(cmd.segmentId);
+            break;
+            
+        case CommandType::SetPower:
+            setPower(cmd.data.power);
+            LOG_INFO(LogTag::LED, "Power -> %s", cmd.data.power ? "ON" : "OFF");
+            break;
+            
+        case CommandType::SetGlobalBrightness:
+            setBrightness(cmd.data.value8);
+            break;
+            
+        case CommandType::ApplyEffectSpec:
+        case CommandType::SaveScene:
+        case CommandType::LoadScene:
+            // TODO: Implement in later phase
+            LOG_WARN(LogTag::LED, "Command type %d not yet implemented", static_cast<int>(cmd.type));
+            break;
+    }
 }
 
 void LumeController::show() {
