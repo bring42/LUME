@@ -802,10 +802,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     </div>
                 </div>
             </div>
-            
-            <div class="btn-group">
-                <button class="btn btn-primary" onclick="applyLedState()">Apply</button>
-            </div>
         </div>
         
         <!-- Nightlight -->
@@ -1149,12 +1145,25 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             }
         }
         
-        // Tile selector functions
+        // Debounce utility for sliders
+        function debounce(func, wait) {
+            let timeout;
+            return function(...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
+        }
+        
+        // Debounced apply for sliders (300ms delay)
+        const debouncedApply = debounce(() => applyLedState(), 300);
+        
+        // Tile selector functions - auto-apply on selection
         function selectEffect(tile) {
             const container = document.getElementById('effectTiles');
             container.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
             tile.classList.add('selected');
             document.getElementById('effect').value = tile.dataset.value;
+            applyLedState();
         }
         
         function selectPalette(tile) {
@@ -1162,6 +1171,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             container.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
             tile.classList.add('selected');
             document.getElementById('palette').value = tile.dataset.value;
+            applyLedState();
         }
         
         function selectTileByValue(containerId, value) {
@@ -1548,13 +1558,24 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
         }
         
-        // Event listeners
+        // Event listeners - sliders use debounced auto-apply
         document.getElementById('brightness').addEventListener('input', function() {
             document.getElementById('brightnessValue').textContent = this.value;
+            debouncedApply();
         });
         
         document.getElementById('speed').addEventListener('input', function() {
             document.getElementById('speedValue').textContent = this.value;
+            debouncedApply();
+        });
+        
+        // Color pickers auto-apply on change (when picker closes)
+        document.getElementById('primaryColor').addEventListener('change', function() {
+            applyLedState();
+        });
+        
+        document.getElementById('secondaryColor').addEventListener('change', function() {
+            applyLedState();
         });
         
         document.getElementById('powerToggle').addEventListener('change', function() {
