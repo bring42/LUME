@@ -97,11 +97,11 @@ class LedController {
 public:
     LedController();
     
-    // Initialize LEDs
-    void begin(uint8_t pin, uint16_t count);
+    // Initialize LEDs (pin is set via LED_DATA_PIN in constants.h)
+    void begin(uint16_t count);
     
-    // Reconfigure at runtime (changes pin or count)
-    void reconfigure(uint8_t pin, uint16_t count);
+    // Reconfigure LED count at runtime
+    void reconfigure(uint16_t count);
     
     // Non-blocking update - call this frequently
     void update();
@@ -148,7 +148,6 @@ public:
 private:
     CRGB leds[MAX_LED_COUNT];
     uint16_t ledCount;
-    uint8_t dataPin;
     LedState state;
     
     // Animation state
