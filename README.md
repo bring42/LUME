@@ -8,6 +8,7 @@
 
 ESP32-S3 + FastLED firmware with modern Web UI, API, sACN, OTA, and natural-language effects.
 
+![Build](https://github.com/bring42/LUME/actions/workflows/build.yml/badge.svg)
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32--S3-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Status](https://img.shields.io/badge/status-active%20development-brightgreen)
