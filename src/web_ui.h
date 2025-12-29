@@ -971,6 +971,54 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     </div>
                 </div>
                 
+                <!-- MQTT Settings -->
+                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="mqttEnabled" style="width: auto;">
+                            <span>Enable MQTT</span>
+                        </label>
+                        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                            Connect to MQTT broker for Home Assistant / automation
+                        </p>
+                    </div>
+                    
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="mqttBroker">Broker (hostname/IP)</label>
+                            <input type="text" id="mqttBroker" placeholder="192.168.1.100">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqttPort">Port</label>
+                            <input type="number" id="mqttPort" value="1883" min="1" max="65535">
+                        </div>
+                    </div>
+                    
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label for="mqttUsername">Username (optional)</label>
+                            <input type="text" id="mqttUsername" placeholder="">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqttPassword">Password (optional)</label>
+                            <input type="password" id="mqttPassword" placeholder="">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="mqttTopicPrefix">Topic Prefix</label>
+                        <input type="text" id="mqttTopicPrefix" value="lume" placeholder="lume">
+                        <p style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                            Topics: {prefix}/state, {prefix}/set, {prefix}/status
+                        </p>
+                    </div>
+                    
+                    <div id="mqttStatus" class="status-item" style="margin-top: 8px;">
+                        <div class="status-dot offline" id="mqttDot"></div>
+                        <span id="mqttStatusText">Not enabled</span>
+                    </div>
+                </div>
+                
                 <!-- Debug Console (collapsible) -->
                 <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);" class="collapsible collapsed">
                     <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')" style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 12px;">
@@ -1108,6 +1156,21 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 } else {
                     sacnDot.className = 'status-dot loading';
                     sacnText.textContent = `Waiting for data (uni ${sacn.universe})`;
+                }
+                
+                // Update MQTT status
+                const mqtt = status.mqtt || {};
+                const mqttDot = document.getElementById('mqttDot');
+                const mqttText = document.getElementById('mqttStatusText');
+                if (!mqtt.enabled) {
+                    mqttDot.className = 'status-dot offline';
+                    mqttText.textContent = 'Not enabled';
+                } else if (mqtt.connected) {
+                    mqttDot.className = 'status-dot';
+                    mqttText.textContent = `Connected to ${mqtt.broker}`;
+                } else {
+                    mqttDot.className = 'status-dot loading';
+                    mqttText.textContent = 'Connecting...';
                 }
             } catch (e) {
                 document.getElementById('wifiDot').className = 'status-dot offline';
@@ -1310,6 +1373,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('sacnEnabled').checked = config.sacnEnabled || false;
                 document.getElementById('sacnUniverse').value = config.sacnUniverse || 1;
                 document.getElementById('sacnStartChannel').value = config.sacnStartChannel || 1;
+                
+                // MQTT settings
+                document.getElementById('mqttEnabled').checked = config.mqttEnabled || false;
+                document.getElementById('mqttBroker').value = config.mqttBroker || '';
+                document.getElementById('mqttPort').value = config.mqttPort || 1883;
+                document.getElementById('mqttUsername').value = config.mqttUsername && config.mqttUsername !== '****' ? config.mqttUsername : '';
+                document.getElementById('mqttPassword').value = config.mqttPassword && config.mqttPassword !== '****' ? '' : '';
+                document.getElementById('mqttTopicPrefix').value = config.mqttTopicPrefix || 'lume';
             } catch (e) {
                 console.error('Failed to load config:', e);
             }
@@ -1326,13 +1397,20 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 ledCount: parseInt(document.getElementById('ledCount').value),
                 sacnEnabled: document.getElementById('sacnEnabled').checked,
                 sacnUniverse: parseInt(document.getElementById('sacnUniverse').value),
-                sacnStartChannel: parseInt(document.getElementById('sacnStartChannel').value)
+                sacnStartChannel: parseInt(document.getElementById('sacnStartChannel').value),
+                mqttEnabled: document.getElementById('mqttEnabled').checked,
+                mqttBroker: document.getElementById('mqttBroker').value,
+                mqttPort: parseInt(document.getElementById('mqttPort').value),
+                mqttUsername: document.getElementById('mqttUsername').value,
+                mqttPassword: document.getElementById('mqttPassword').value,
+                mqttTopicPrefix: document.getElementById('mqttTopicPrefix').value
             };
             
             // Don't send masked password/key
             if (config.wifiPassword === '') delete config.wifiPassword;
             if (config.apiKey.startsWith('****')) delete config.apiKey;
             if (config.authToken.startsWith('****')) delete config.authToken;
+            if (config.mqttPassword === '') delete config.mqttPassword;
             
             try {
                 await api('/config', 'POST', config);

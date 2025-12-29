@@ -31,6 +31,14 @@ bool Storage::loadConfig(Config& config) {
     config.sacnStartChannel = prefs.getUShort("sacn_ch", 1);
     config.sacnUnicast = prefs.getBool("sacn_uc", false);
     
+    // MQTT settings
+    config.mqttEnabled = prefs.getBool("mqtt_en", false);
+    config.mqttBroker = prefs.getString("mqtt_broker", "");
+    config.mqttPort = prefs.getUShort("mqtt_port", 1883);
+    config.mqttUsername = prefs.getString("mqtt_user", "");
+    config.mqttPassword = prefs.getString("mqtt_pass", "");
+    config.mqttTopicPrefix = prefs.getString("mqtt_prefix", "lume");
+    
     prefs.end();
     return true;
 }
@@ -52,6 +60,14 @@ bool Storage::saveConfig(const Config& config) {
     prefs.putUChar("sacn_ucnt", config.sacnUniverseCount);
     prefs.putUShort("sacn_ch", config.sacnStartChannel);
     prefs.putBool("sacn_uc", config.sacnUnicast);
+    
+    // MQTT settings
+    prefs.putBool("mqtt_en", config.mqttEnabled);
+    prefs.putString("mqtt_broker", config.mqttBroker);
+    prefs.putUShort("mqtt_port", config.mqttPort);
+    prefs.putString("mqtt_user", config.mqttUsername);
+    prefs.putString("mqtt_pass", config.mqttPassword);
+    prefs.putString("mqtt_prefix", config.mqttTopicPrefix);
     
     prefs.end();
     return true;
@@ -153,6 +169,14 @@ void Storage::configToJson(const Config& config, JsonDocument& doc, bool maskApi
     doc["sacnUniverseCount"] = config.sacnUniverseCount;
     doc["sacnStartChannel"] = config.sacnStartChannel;
     doc["sacnUnicast"] = config.sacnUnicast;
+    
+    // MQTT settings
+    doc["mqttEnabled"] = config.mqttEnabled;
+    doc["mqttBroker"] = config.mqttBroker;
+    doc["mqttPort"] = config.mqttPort;
+    doc["mqttUsername"] = config.mqttUsername.length() > 0 ? "****" : "";
+    doc["mqttPassword"] = config.mqttPassword.length() > 0 ? "****" : "";
+    doc["mqttTopicPrefix"] = config.mqttTopicPrefix;
 }
 
 bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
@@ -203,6 +227,32 @@ bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
     }
     if (doc["sacnUnicast"].is<bool>()) {
         config.sacnUnicast = doc["sacnUnicast"].as<bool>();
+    }
+    
+    // MQTT settings
+    if (doc["mqttEnabled"].is<bool>()) {
+        config.mqttEnabled = doc["mqttEnabled"].as<bool>();
+    }
+    if (doc["mqttBroker"].is<const char*>()) {
+        config.mqttBroker = doc["mqttBroker"].as<String>();
+    }
+    if (doc["mqttPort"].is<int>()) {
+        config.mqttPort = doc["mqttPort"].as<uint16_t>();
+    }
+    if (doc["mqttUsername"].is<const char*>()) {
+        String user = doc["mqttUsername"].as<String>();
+        if (!user.startsWith("****")) {
+            config.mqttUsername = user;
+        }
+    }
+    if (doc["mqttPassword"].is<const char*>()) {
+        String pass = doc["mqttPassword"].as<String>();
+        if (!pass.startsWith("****")) {
+            config.mqttPassword = pass;
+        }
+    }
+    if (doc["mqttTopicPrefix"].is<const char*>()) {
+        config.mqttTopicPrefix = doc["mqttTopicPrefix"].as<String>();
     }
     
     return true;
