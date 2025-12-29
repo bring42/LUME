@@ -28,6 +28,7 @@ ESP32-S3 + FastLED firmware with modern Web UI, API, sACN, OTA, and natural-lang
 | 🔲 **Segments** | Split your strip into independent zones with different effects |
 | 🎨 **Color Palettes** | 12 palettes: Ocean, Lava, Sunset, Forest, Party... |
 | 📡 **sACN/E1.31** | Professional DMX protocol for lighting software integration |
+| 🏠 **MQTT** | Home Assistant auto-discovery, full control via MQTT |
 | 📱 **Modern Web UI** | Responsive, mobile-friendly, works offline |
 | 🌙 **Nightlight Mode** | Gradual fade-to-sleep over configurable duration |
 | ⚡ **Power Limiting** | Automatic current limiting protects your PSU |
@@ -121,6 +122,7 @@ Connect professional lighting software like QLC+, xLights, or TouchDesigner.
 | [Hardware Setup](docs/HARDWARE.md) | Wiring, power calculation, GPIO pins |
 | [API Reference](docs/API.md) | All REST endpoints with examples |
 | [sACN Guide](docs/SACN.md) | E1.31 protocol setup and Python examples |
+| [MQTT Guide](docs/MQTT.md) | Home Assistant, Node-RED, topic structure |
 | [Development](docs/DEVELOPMENT.md) | Architecture, building, contributing |
 
 ---
@@ -156,7 +158,6 @@ This project is in active development. On the horizon:
 - 📊 More effects (porting favorites from the community)
 - 🔲 2D matrix support
 - 🎛️ Physical button controls
-- 🏠 MQTT for home automation
 - 🔮 Matter/Thread support
 
 ---

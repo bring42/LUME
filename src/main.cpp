@@ -32,6 +32,7 @@
 #include "core/controller.h"
 #include "effects/effects.h"
 #include "protocols/sacn.h"
+#include "protocols/mqtt.h"
 
 // Optional development secrets (create src/secrets.h from secrets.h.example)
 #ifdef __has_include
@@ -413,6 +414,18 @@ void setup() {
     // Register protocols with controller
     lume::controller.registerProtocol(&lume::sacnProtocol);
     
+    // Initialize MQTT if configured
+    if (config.mqttEnabled && config.mqttBroker.length() > 0) {
+        lume::MqttConfig mqttConfig;
+        mqttConfig.enabled = config.mqttEnabled;
+        mqttConfig.broker = config.mqttBroker;
+        mqttConfig.port = config.mqttPort;
+        mqttConfig.username = config.mqttUsername;
+        mqttConfig.password = config.mqttPassword;
+        mqttConfig.topicPrefix = config.mqttTopicPrefix;
+        lume::mqtt.begin(mqttConfig, &lume::controller);
+    }
+    
     // Create full-strip segment and set default effect
     lume::Segment* mainSegment = lume::controller.createFullStrip();
     if (mainSegment) {
@@ -468,6 +481,7 @@ void handleWifiMaintenance() {
                                               config.sacnUnicast, config.sacnStartChannel);
                 lume::sacnProtocol.begin();
             }
+            // MQTT will auto-reconnect in its update() cycle
         } else {
             LOG_WARN(LogTag::WIFI, "WiFi disconnected");
             lume::sacnProtocol.stop();
@@ -482,6 +496,9 @@ void loop() {
     // Update controller (handles effects and registered protocols internally)
     // Protocol handling is now integrated into the controller's update cycle
     lume::controller.update();
+    
+    // MQTT update (handles reconnection and message processing)
+    lume::mqtt.update();
     
     // WiFi maintenance (reconnection, status monitoring)
     handleWifiMaintenance();
@@ -648,6 +665,8 @@ void setupServer() {
         components["storage"] = true;  // Would fail at boot if broken
         components["sacn_enabled"] = config.sacnEnabled;
         components["sacn_receiving"] = lume::sacnProtocol.isActive();
+        components["mqtt_enabled"] = config.mqttEnabled;
+        components["mqtt_connected"] = lume::mqtt.isConnected();
         
         // AI client status
         PromptJobResult& aiResult = openRouterClient.getJobResult();
@@ -855,6 +874,12 @@ void handleApiStatus(AsyncWebServerRequest* request) {
         sacn["lastPacketMs"] = millis() - lume::sacnProtocol.getLastPacketTime();
     }
     
+    // MQTT status
+    JsonObject mqtt = doc["mqtt"].to<JsonObject>();
+    mqtt["enabled"] = config.mqttEnabled;
+    mqtt["broker"] = config.mqttBroker;
+    mqtt["connected"] = lume::mqtt.isConnected();
+    
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);
@@ -913,6 +938,22 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
                 lume::sacnProtocol.begin();
             } else {
                 lume::sacnProtocol.stop();
+            }
+            
+            // Handle MQTT enable/disable
+            if (config.mqttEnabled && config.mqttBroker.length() > 0 && wifiConnected) {
+                lume::MqttConfig mqttConfig;
+                mqttConfig.enabled = config.mqttEnabled;
+                mqttConfig.broker = config.mqttBroker;
+                mqttConfig.port = config.mqttPort;
+                mqttConfig.username = config.mqttUsername;
+                mqttConfig.password = config.mqttPassword;
+                mqttConfig.topicPrefix = config.mqttTopicPrefix;
+                lume::mqtt.setConfig(mqttConfig);
+            } else {
+                lume::MqttConfig disabledConfig;
+                disabledConfig.enabled = false;
+                lume::mqtt.setConfig(disabledConfig);
             }
             
             request->send(200, "application/json", "{\"success\":true}");

@@ -21,6 +21,14 @@ struct Config {
     uint16_t sacnStartChannel;
     bool sacnUnicast;             // true = unicast mode, false = multicast
     
+    // MQTT settings
+    bool mqttEnabled;
+    String mqttBroker;            // Hostname or IP
+    uint16_t mqttPort;
+    String mqttUsername;
+    String mqttPassword;
+    String mqttTopicPrefix;       // Base topic (e.g., "lume")
+    
     Config() : 
         wifiSSID(""),
         wifiPassword(""),
@@ -33,7 +41,13 @@ struct Config {
         sacnUniverse(1),
         sacnUniverseCount(1),
         sacnStartChannel(1),
-        sacnUnicast(false) {}
+        sacnUnicast(false),
+        mqttEnabled(false),
+        mqttBroker(""),
+        mqttPort(1883),
+        mqttUsername(""),
+        mqttPassword(""),
+        mqttTopicPrefix("lume") {}
 };
 
 // Last generated effect spec storage
