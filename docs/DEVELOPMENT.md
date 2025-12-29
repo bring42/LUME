@@ -78,12 +78,55 @@ Why this is currently safe:
 # Build only
 pio run
 
-# Build and upload via USB
+# Build and upload via USB (required for first flash)
 pio run -t upload
+```
 
-# Upload via OTA (after initial flash)
+### Over-The-Air (OTA) Updates
+
+Once you've done the initial USB flash, **never plug in a cable again!** Update wirelessly from anywhere on your network:
+
+```bash
 pio run -t upload --upload-port lume.local
 ```
+
+That's it. PlatformIO will compile, find your device via mDNS, and push the update.
+
+#### Enabling OTA in platformio.ini
+
+For convenience, uncomment the OTA section in `platformio.ini`:
+
+```ini
+; === OTA UPLOAD ===
+upload_protocol = espota
+upload_port = lume.local          ; Or use IP like 192.168.1.100
+upload_flags = 
+    --port=3232
+    --auth=ledcontrol             ; Default password, or your auth token if set
+    --timeout=20
+```
+
+Then just `pio run -t upload` works wirelessly.
+
+#### OTA Password
+
+- **Default:** `ledcontrol`
+- **Custom:** Set an **auth token** in the web UI Settings — it becomes your OTA password too
+
+#### Why OTA is Great
+
+- 📍 **Device can be anywhere** — mounted on a ceiling, behind furniture, in another room
+- ⚡ **Faster iteration** — no unplugging, no walking to the device
+- 🔄 **Settings persist** — your WiFi, API key, and LED config survive updates
+
+#### Troubleshooting OTA
+
+| Issue | Solution |
+|-------|----------|
+| "No response from device" | Check it's on WiFi (not AP mode), same network as you |
+| "Auth failed" | Password is `ledcontrol` or your auth token |
+| "Timeout" | Increase `--timeout=30`, check firewall allows UDP 3232 |
+| mDNS not working | Use IP address instead of `lume.local` |
 
 ### Serial Monitor
 

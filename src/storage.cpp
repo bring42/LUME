@@ -22,6 +22,7 @@ bool Storage::loadConfig(Config& config) {
     config.wifiPassword = prefs.getString("pass", "");
     config.apiKey = prefs.getString("apikey", "");
     config.openRouterModel = prefs.getString("model", "claude-sonnet-4-5-20250929");
+    config.authToken = prefs.getString("authtoken", "");
     config.ledCount = prefs.getUShort("ledcount", 160);
     config.defaultBrightness = prefs.getUChar("brightness", 128);
     config.sacnEnabled = prefs.getBool("sacn_en", false);
@@ -43,6 +44,7 @@ bool Storage::saveConfig(const Config& config) {
     prefs.putString("pass", config.wifiPassword);
     prefs.putString("apikey", config.apiKey);
     prefs.putString("model", config.openRouterModel);
+    prefs.putString("authtoken", config.authToken);
     prefs.putUShort("ledcount", config.ledCount);
     prefs.putUChar("brightness", config.defaultBrightness);
     prefs.putBool("sacn_en", config.sacnEnabled);
@@ -142,6 +144,8 @@ void Storage::configToJson(const Config& config, JsonDocument& doc, bool maskApi
     doc["apiKey"] = maskApiKey ? (config.apiKey.length() > 0 ? "****" + config.apiKey.substring(config.apiKey.length() - 4) : "") : config.apiKey;
     doc["apiKeySet"] = config.apiKey.length() > 0;
     doc["openRouterModel"] = config.openRouterModel;
+    doc["authToken"] = config.authToken.length() > 0 ? "****" : "";
+    doc["authEnabled"] = config.authToken.length() > 0;
     doc["ledCount"] = config.ledCount;
     doc["defaultBrightness"] = config.defaultBrightness;
     doc["sacnEnabled"] = config.sacnEnabled;
@@ -171,6 +175,13 @@ bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
     }
     if (doc["openRouterModel"].is<const char*>()) {
         config.openRouterModel = doc["openRouterModel"].as<String>();
+    }
+    if (doc["authToken"].is<const char*>()) {
+        String token = doc["authToken"].as<String>();
+        // Don't overwrite with masked value, empty string clears the token
+        if (!token.startsWith("****")) {
+            config.authToken = token;
+        }
     }
     if (doc["ledCount"].is<int>()) {
         config.ledCount = doc["ledCount"].as<uint16_t>();

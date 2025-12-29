@@ -53,6 +53,47 @@ bool wifiConnected = false;
 unsigned long lastWifiAttempt = 0;
 const unsigned long WIFI_RETRY_INTERVAL = 30000;
 
+// Auth helper - returns true if request is authorized
+bool checkAuth(AsyncWebServerRequest* request) {
+    // If no auth token configured, allow all requests
+    if (config.authToken.length() == 0) {
+        return true;
+    }
+    
+    // Check Authorization header
+    if (request->hasHeader("Authorization")) {
+        String authHeader = request->header("Authorization");
+        // Support both "Bearer <token>" and plain "<token>"
+        if (authHeader.startsWith("Bearer ")) {
+            authHeader = authHeader.substring(7);
+        }
+        if (authHeader == config.authToken) {
+            return true;
+        }
+    }
+    
+    // Check X-API-Key header (alternative)
+    if (request->hasHeader("X-API-Key")) {
+        if (request->header("X-API-Key") == config.authToken) {
+            return true;
+        }
+    }
+    
+    // Check query parameter (for easy browser testing)
+    if (request->hasParam("token")) {
+        if (request->getParam("token")->value() == config.authToken) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Send 401 Unauthorized response
+void sendUnauthorized(AsyncWebServerRequest* request) {
+    request->send(401, "application/json", "{\"error\":\"Unauthorized\"}");
+}
+
 // Forward declarations
 void setupWiFi();
 void setupOTA();
@@ -289,8 +330,12 @@ void setupOTA() {
     // Set OTA port (default is 3232)
     ArduinoOTA.setPort(3232);
     
-    // Set OTA password (same as AP password for simplicity)
-    ArduinoOTA.setPassword(AP_PASSWORD);
+    // Set OTA password (use auth token if set, otherwise fall back to AP password)
+    if (config.authToken.length() > 0) {
+        ArduinoOTA.setPassword(config.authToken.c_str());
+    } else {
+        ArduinoOTA.setPassword(AP_PASSWORD);
+    }
     
     // OTA callbacks for status updates
     ArduinoOTA.onStart([]() {
@@ -457,6 +502,10 @@ void setupServer() {
         handleApiNightlightPost
     );
     server.on("/api/nightlight/stop", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!checkAuth(request)) {
+            sendUnauthorized(request);
+            return;
+        }
         ledController.stopNightlight();
         request->send(200, "application/json", "{\"success\":true}");
     });
@@ -465,8 +514,8 @@ void setupServer() {
     server.on("/api/*", HTTP_OPTIONS, [](AsyncWebServerRequest* request) {
         AsyncWebServerResponse* response = request->beginResponse(200);
         response->addHeader("Access-Control-Allow-Origin", "*");
-        response->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        response->addHeader("Access-Control-Allow-Headers", "Content-Type");
+        response->addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+        response->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key");
         request->send(response);
     });
     
@@ -525,6 +574,12 @@ void handleApiConfig(AsyncWebServerRequest* request) {
 }
 
 void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+    // Auth check at start of request
+    if (index == 0 && !checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
+    
     if (index == 0) {
         configBodyBuffer = "";
         // Validate total size
@@ -580,6 +635,12 @@ void handleApiLed(AsyncWebServerRequest* request) {
 }
 
 void handleApiLedPost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+    // Auth check at start of request
+    if (index == 0 && !checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
+    
     if (index == 0) {
         ledBodyBuffer = "";
         if (total > MAX_REQUEST_BODY_SIZE) {
@@ -612,6 +673,12 @@ void handleApiLedPost(AsyncWebServerRequest* request, uint8_t* data, size_t len,
 }
 
 void handleApiPrompt(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+    // Auth check at start of request
+    if (index == 0 && !checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
+    
     if (index == 0) {
         promptBodyBuffer = "";
         if (total > MAX_REQUEST_BODY_SIZE) {
@@ -720,6 +787,12 @@ void handleApiPromptStatus(AsyncWebServerRequest* request) {
 }
 
 void handleApiPromptApply(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+    // Auth check at start of request
+    if (index == 0 && !checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
+    
     if (index == 0) {
         applyBodyBuffer = "";
         if (total > MAX_REQUEST_BODY_SIZE) {
@@ -815,6 +888,12 @@ void handleApiPromptApply(AsyncWebServerRequest* request, uint8_t* data, size_t 
 // Accepts: { "pixels": [[r,g,b], [r,g,b], ...], "brightness": 255 }
 // Or compact: { "rgb": [r,g,b,r,g,b,...], "brightness": 255 }
 void handleApiPixels(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+    // Auth check at start of request
+    if (index == 0 && !checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
+    
     if (index == 0) {
         pixelsBodyBuffer = "";
         if (total > MAX_REQUEST_BODY_SIZE) {
@@ -965,6 +1044,12 @@ void handleApiSceneGet(AsyncWebServerRequest* request) {
 }
 
 void handleApiScenePost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+    // Auth check at start of request
+    if (index == 0 && !checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
+    
     // Accumulate body data
     if (index == 0) {
         sceneBodyBuffer = "";
@@ -1045,6 +1130,11 @@ void handleApiScenePost(AsyncWebServerRequest* request, uint8_t* data, size_t le
 }
 
 void handleApiSceneDelete(AsyncWebServerRequest* request) {
+    if (!checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
+    
     // Extract ID from URL path
     String path = request->url();
     int lastSlash = path.lastIndexOf('/');
@@ -1063,6 +1153,11 @@ void handleApiSceneDelete(AsyncWebServerRequest* request) {
 }
 
 void handleApiSceneApply(AsyncWebServerRequest* request) {
+    if (!checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
+    
     // Extract ID from URL path  /api/scenes/{id}/apply
     String path = request->url();
     
@@ -1128,6 +1223,12 @@ void handleApiNightlightGet(AsyncWebServerRequest* request) {
 }
 
 void handleApiNightlightPost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+    // Auth check at start of request
+    if (index == 0 && !checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
+    
     // Body size validation
     if (index == 0) {
         if (total > MAX_REQUEST_BODY_SIZE) {

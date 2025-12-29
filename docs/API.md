@@ -6,6 +6,31 @@ The AI LED Strip Controller exposes a REST API for control and configuration. Al
 
 ---
 
+## Authentication
+
+API authentication is **optional**. Set an auth token in Settings to protect write endpoints.
+
+When enabled, include the token in requests using one of:
+
+```bash
+# Bearer token (recommended)
+curl -H "Authorization: Bearer YOUR_TOKEN" http://lume.local/api/led -X POST -d '...'
+
+# X-API-Key header
+curl -H "X-API-Key: YOUR_TOKEN" http://lume.local/api/led -X POST -d '...'
+
+# Query parameter (for browser testing)
+curl "http://lume.local/api/led?token=YOUR_TOKEN" -X POST -d '...'
+```
+
+**Protected endpoints:** All POST/DELETE operations (`/api/led`, `/api/config`, `/api/prompt`, `/api/pixels`, `/api/scenes`, `/api/nightlight`)
+
+**Unprotected endpoints:** GET requests (`/api/status`, `/api/led`, `/health`) - read-only access is always allowed
+
+**OTA updates:** Also protected by the auth token when set.
+
+---
+
 ## Quick Reference
 
 | Endpoint | Method | Description |

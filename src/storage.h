@@ -11,6 +11,7 @@ struct Config {
     String wifiPassword;
     String apiKey;
     String openRouterModel;
+    String authToken;             // Optional API auth token (empty = no auth)
     uint16_t ledCount;
     uint8_t defaultBrightness;
     // sACN (E1.31) settings
@@ -25,6 +26,7 @@ struct Config {
         wifiPassword(""),
         apiKey(""),
         openRouterModel("claude-sonnet-4-5-20250929"),
+        authToken(""),
         ledCount(160),
         defaultBrightness(128),
         sacnEnabled(false),
