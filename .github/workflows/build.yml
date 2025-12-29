@@ -21,5 +21,8 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
       
-      - name: Build firmware
-        run: pio run
+      - name: Build T-Display S3
+        run: pio run -e lilygo-t-display-s3
+      
+      - name: Build Generic S3 DevKit
+        run: pio run -e esp32-s3-devkitc-1
