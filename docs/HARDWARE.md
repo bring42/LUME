@@ -60,6 +60,18 @@
 2. **Common Ground:** ESP32 GND must connect to LED strip GND
 3. **Power Injection:** For strips > 150 LEDs, inject power at both ends
 
+### Logic Level Shifting
+
+The ESP32-S3 outputs 3.3V logic, while WS2812B LEDs expect 5V signals. In practice, **most WS2812B strips work fine with 3.3V** because they typically recognize anything above ~2.5V as HIGH.
+
+However, if you experience flickering, glitching, or random colors—especially with longer data wires—you may need a level shifter:
+
+- **74AHCT125** (recommended) - Simple, fast, reliable
+- **74HCT245** - Bidirectional, overkill for LEDs but common
+- **Dedicated level shifter boards** - Many available on Amazon/AliExpress
+
+> **Tip:** Before adding a level shifter, try keeping the data wire short (<30cm) and adding a 330Ω resistor in series. This solves most issues.
+
 ---
 
 ## Power Calculation

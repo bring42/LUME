@@ -45,6 +45,22 @@ AI Prompt → anthropic_client task → JSON spec → ledController.applyEffectS
 sACN network → sacnReceiver.update() → DMX channels → CRGB array → FastLED
 ```
 
+### Concurrency & LED Buffer Ownership
+
+The LED buffer (`CRGB leds[]`) is owned by `LedController` and accessed from multiple contexts:
+
+- **Main loop** calls `ledController.update()` ~60 times/sec to render effects
+- **Web handlers** (async context) call `stateFromJson()` / `applyEffectSpec()`
+- **sACN receiver** writes directly to the buffer when DMX data arrives
+- **AI client** (FreeRTOS task on Core 0) calls `applyEffectSpec()` when generation completes
+
+> ⚠️ **No mutex protection.** The LED buffer has no thread-safe guards. This works today because writes are small/atomic and sACN preempts effects entirely. If you add features with complex multi-step buffer manipulation, add a mutex.
+
+Why this is currently safe:
+1. Effect state changes are atomic (single values like brightness, effect enum)
+2. sACN has priority—when active, normal effect rendering is skipped entirely
+3. AI effect application happens infrequently and completes quickly
+
 ---
 
 ## Building
@@ -76,6 +92,14 @@ pio device monitor
 ```
 
 Baud rate: 115200
+
+### Continuous Integration
+
+Every push and PR to `main` triggers a GitHub Actions build. See [.github/workflows/build.yml](../.github/workflows/build.yml).
+
+The build badge in the README shows current status:
+
+![Build](https://github.com/bring42/LUME/actions/workflows/build.yml/badge.svg)
 
 ---
 
