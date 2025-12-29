@@ -503,7 +503,7 @@ src/
 
 ## Migration Plan
 
-### Phase 0: Architecture Refinement 🔄 IN PROGRESS
+### Phase 0: Architecture Refinement ✅ COMPLETE
 **Goal:** Lock down invariants and refine core abstractions before API work
 
 - [x] Document three core invariants (non-overlapping, single-writer, scratchpad)
@@ -512,13 +512,13 @@ src/
 - [x] Design scratchpad state model with versioning
 - [x] Document command queue pattern
 - [x] Document render pipeline
-- [ ] **Implement** SegmentView refactor in code
-- [ ] **Implement** EffectInfo metadata in registry
-- [ ] **Implement** scratchpad state in Segment
-- [ ] **Implement** command queue infrastructure
-- [ ] Update effects to use new SegmentView API
+- [x] **Implement** SegmentView refactor in code
+- [x] **Implement** EffectInfo metadata in registry
+- [x] **Implement** scratchpad state in Segment
+- [x] **Implement** command queue infrastructure
+- [x] Update effects to use new SegmentView API (4-param signature with firstFrame)
 
-**Status:** Design complete. Implementation pending.
+**Status:** Complete. All effects updated, compiles and runs.
 
 ### Phase 1: Core Foundation ✅ COMPLETE
 **Goal:** Create new core without breaking existing code
