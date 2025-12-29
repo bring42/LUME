@@ -32,6 +32,7 @@
 // v2 architecture
 #include "core/controller.h"
 #include "effects/effects.h"
+#include "protocols/sacn.h"
 
 // Optional development secrets (create src/secrets.h from secrets.h.example)
 #ifdef __has_include
@@ -410,6 +411,9 @@ void setup() {
     lume::controller.begin(config.ledCount);
     lume::controller.setBrightness(config.defaultBrightness);
     
+    // Register protocols with controller
+    lume::controller.registerProtocol(&lume::sacnProtocol);
+    
     // Create full-strip segment and set default effect
     lume::Segment* mainSegment = lume::controller.createFullStrip();
     if (mainSegment) {
@@ -461,14 +465,15 @@ void handleWifiMaintenance() {
             LOG_INFO(LogTag::WIFI, "Connected! IP: %s", WiFi.localIP().toString().c_str());
             // Setup OTA when WiFi connects
             setupOTA();
-            // Start sACN receiver if enabled
+            // Start sACN protocol if enabled
             if (config.sacnEnabled) {
-                sacnReceiver.setUnicastMode(config.sacnUnicast);
-                sacnReceiver.begin(config.sacnUniverse, config.sacnUniverseCount);
+                lume::sacnProtocol.configure(config.sacnUniverse, config.sacnUniverseCount,
+                                              config.sacnUnicast, config.sacnStartChannel);
+                lume::sacnProtocol.begin();
             }
         } else {
             LOG_WARN(LogTag::WIFI, "WiFi disconnected");
-            sacnReceiver.stop();
+            lume::sacnProtocol.stop();
         }
     }
 }
@@ -477,30 +482,9 @@ void loop() {
     // Handle OTA updates
     ArduinoOTA.handle();
     
-    // Check for sACN data and apply if enabled
-    static bool sacnActive = false;
-    bool skipNormalEffects = false;
-    
-    if (config.sacnEnabled && sacnReceiver.isEnabled()) {
-        if (sacnReceiver.update()) {
-            // New sACN data received - apply to LEDs (using v2 controller's LED array)
-            sacnReceiver.applyToLeds(lume::controller.getLeds(), lume::controller.getLedCount(), config.sacnStartChannel);
-            FastLED.show();
-            sacnActive = true;
-        } else if (sacnActive && sacnReceiver.hasTimedOut(5000)) {
-            // sACN timed out, return to normal effects
-            LOG_INFO(LogTag::SACN, "Timeout - returning to normal effects");
-            sacnActive = false;
-        }
-        
-        // If sACN is active, skip normal effect updates
-        skipNormalEffects = sacnActive;
-    }
-    
-    // Non-blocking LED update (normal effects) - skip if sACN is active
-    if (!skipNormalEffects) {
-        lume::controller.update();
-    }
+    // Update controller (handles effects and registered protocols internally)
+    // Protocol handling is now integrated into the controller's update cycle
+    lume::controller.update();
     
     // WiFi maintenance (reconnection, status monitoring)
     handleWifiMaintenance();
@@ -666,7 +650,7 @@ void setupServer() {
         components["led_controller"] = lume::controller.getLedCount() > 0;
         components["storage"] = true;  // Would fail at boot if broken
         components["sacn_enabled"] = config.sacnEnabled;
-        components["sacn_receiving"] = sacnReceiver.isReceiving();
+        components["sacn_receiving"] = lume::sacnProtocol.isActive();
         
         // AI client status
         PromptJobResult& aiResult = openRouterClient.getJobResult();
@@ -859,19 +843,19 @@ void handleApiStatus(AsyncWebServerRequest* request) {
     doc["ledCount"] = lume::controller.getLedCount();
     doc["power"] = lume::controller.getPower();
     
-    // sACN status
+    // sACN status (using new protocol system)
     JsonObject sacn = doc["sacn"].to<JsonObject>();
     sacn["enabled"] = config.sacnEnabled;
     sacn["universe"] = config.sacnUniverse;
     sacn["universeCount"] = config.sacnUniverseCount;
     sacn["startChannel"] = config.sacnStartChannel;
     sacn["unicast"] = config.sacnUnicast;
-    sacn["receiving"] = sacnReceiver.isReceiving();
-    sacn["packets"] = sacnReceiver.getPacketCount();
-    sacn["source"] = sacnReceiver.getActiveSourceName();
-    sacn["priority"] = sacnReceiver.getActivePriority();
-    if (sacnReceiver.isReceiving()) {
-        sacn["lastPacketMs"] = millis() - sacnReceiver.getLastPacketTime();
+    sacn["receiving"] = lume::sacnProtocol.isActive();
+    sacn["packets"] = lume::sacnProtocol.getPacketCount();
+    sacn["source"] = lume::sacnProtocol.getActiveSourceName();
+    sacn["priority"] = lume::sacnProtocol.getActivePriority();
+    if (lume::sacnProtocol.isActive()) {
+        sacn["lastPacketMs"] = millis() - lume::sacnProtocol.getLastPacketTime();
     }
     
     String response;
@@ -924,13 +908,14 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
             // Apply changes that can be applied without restart
             lume::controller.setLedCount(config.ledCount);
             
-            // Handle sACN enable/disable
+            // Handle sACN enable/disable (using new protocol system)
             if (config.sacnEnabled && wifiConnected) {
-                sacnReceiver.stop();
-                sacnReceiver.setUnicastMode(config.sacnUnicast);
-                sacnReceiver.begin(config.sacnUniverse, config.sacnUniverseCount);
+                lume::sacnProtocol.stop();
+                lume::sacnProtocol.configure(config.sacnUniverse, config.sacnUniverseCount,
+                                              config.sacnUnicast, config.sacnStartChannel);
+                lume::sacnProtocol.begin();
             } else {
-                sacnReceiver.stop();
+                lume::sacnProtocol.stop();
             }
             
             request->send(200, "application/json", "{\"success\":true}");

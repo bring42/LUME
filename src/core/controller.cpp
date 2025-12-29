@@ -3,6 +3,7 @@
  */
 
 #include "controller.h"
+#include "../protocols/protocol.h"
 #include "../logging.h"
 
 namespace lume {
@@ -16,6 +17,9 @@ LumeController::LumeController()
     , nextSegmentId(0)
     , power(true)
     , globalBrightness(255)
+    , protocolCount_(0)
+    , protocolActive_(false)
+    , activeProtocol_(nullptr)
     , targetFps(DEFAULT_FPS)
     , frameCounter(0)
     , lastFrameTime(0)
@@ -24,6 +28,7 @@ LumeController::LumeController()
     , fpsFrameCount(0) {
     
     memset(leds, 0, sizeof(leds));
+    memset(protocols_, 0, sizeof(protocols_));
 }
 
 void LumeController::begin(uint16_t count) {
@@ -87,6 +92,16 @@ void LumeController::update() {
     if (!power) {
         FastLED.clear();
         FastLED.show();
+        return;
+    }
+    
+    // Check protocols for incoming data
+    processProtocols();
+    
+    // If a protocol is active, it has already written to LEDs - just show
+    if (protocolActive_) {
+        FastLED.show();
+        frameCounter++;
         return;
     }
     
@@ -289,6 +304,62 @@ void LumeController::blendSegment(Segment& seg) {
     //     default:
     //         break;
     // }
+}
+
+// --- Protocol management ---
+
+void LumeController::registerProtocol(Protocol* protocol) {
+    if (!protocol) return;
+    
+    if (protocolCount_ >= MAX_PROTOCOLS) {
+        LOG_WARN(LogTag::LED, "Max protocols reached, cannot register %s", protocol->getName());
+        return;
+    }
+    
+    protocols_[protocolCount_++] = protocol;
+    LOG_INFO(LogTag::LED, "Registered protocol: %s", protocol->getName());
+}
+
+const char* LumeController::getActiveProtocolName() const {
+    if (activeProtocol_) {
+        return activeProtocol_->getName();
+    }
+    return nullptr;
+}
+
+void LumeController::processProtocols() {
+    // Check each registered protocol for incoming data
+    for (uint8_t i = 0; i < protocolCount_; i++) {
+        Protocol* proto = protocols_[i];
+        if (!proto || !proto->isEnabled()) continue;
+        
+        // Update protocol (processes incoming packets)
+        proto->update();
+        
+        // Check if this protocol has a frame ready
+        if (proto->hasFrameReady()) {
+            // Copy protocol buffer to LED array
+            const CRGB* buffer = proto->getBuffer();
+            uint16_t count = min(proto->getBufferSize(), ledCount);
+            
+            memcpy(leds, buffer, count * sizeof(CRGB));
+            proto->clearFrameReady();
+            
+            protocolActive_ = true;
+            activeProtocol_ = proto;
+            return;  // Only one protocol can be active at a time
+        }
+    }
+    
+    // Check if active protocol has timed out
+    if (protocolActive_ && activeProtocol_) {
+        if (activeProtocol_->hasTimedOut(PROTOCOL_TIMEOUT_MS)) {
+            LOG_INFO(LogTag::LED, "Protocol %s timeout - returning to effects", 
+                     activeProtocol_->getName());
+            protocolActive_ = false;
+            activeProtocol_ = nullptr;
+        }
+    }
 }
 
 } // namespace lume
