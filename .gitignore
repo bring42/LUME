@@ -9,3 +9,6 @@ src/secrets.h
 
 # Personal notes, planning, and research (not for public repo)
 .notes/
+
+# macOS
+.DS_Store
