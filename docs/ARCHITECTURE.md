@@ -18,6 +18,80 @@ This document outlines a proposed architecture refactor focused on:
 
 ---
 
+## Core Invariants (v2.0)
+
+**These three decisions are locked. They remove 80% of migration risk.**
+
+### Invariant 1: Segments are contiguous and non-overlapping
+
+For v2 migration, segments:
+- Map to a contiguous range of LEDs (`start` to `start + length - 1`)
+- Cannot overlap with other segments
+- Are validated on creation/modification
+
+**Rationale:** Overlapping segments require a composition engine (which segment "wins"? how do they blend?). WLED's segment blending is a complexity sink. We enforce non-overlap now and can add proper blending layers later with a dedicated composition pass.
+
+**Future:** Non-contiguous mapping (matrix, serpentine, grouping) can be added via `SegmentView::operator[]` without changing this invariant.
+
+### Invariant 2: Single-writer model via command queue
+
+All state mutations flow through a single point:
+- Web handlers, protocols, and AI enqueue **commands**
+- The main loop dequeues and executes commands
+- Effects read state, never write shared state
+
+```cpp
+// Command types (simple discriminated union)
+enum class CommandType { SetEffect, SetBrightness, SetColors, CreateSegment, ... };
+
+struct Command {
+    CommandType type;
+    uint8_t segmentId;
+    union { ... };  // Command-specific data
+};
+
+// Thread-safe queue (FreeRTOS xQueue or simple ring buffer)
+QueueHandle_t commandQueue;
+
+// Producers (any context)
+void enqueueCommand(const Command& cmd);
+
+// Consumer (loop only)
+void processCommands();  // Called at start of each frame
+```
+
+**Rationale:** ESP32 + AsyncWebServer means handlers run on different tasks. Without a single-writer model, we get heisenbugs. Command queue keeps effects deterministic and mutations predictable.
+
+### Invariant 3: Fixed scratchpad for effect state
+
+Effects that need persistent state (fire, meteors) use a fixed-size scratchpad per segment:
+
+> **Memory budget:** 512 bytes × 8 segments = 4 KB worst-case. Trivial on ESP32-S3 with PSRAM.
+
+```cpp
+// In Segment
+static constexpr size_t SCRATCHPAD_SIZE = 512;  // Tunable
+uint8_t scratchpad[SCRATCHPAD_SIZE];
+uint8_t scratchpadVersion;  // Incremented when effect changes
+
+// Helper for effects
+template<typename T>
+T* getScratchpad(Segment& seg) {
+    static_assert(sizeof(T) <= SCRATCHPAD_SIZE);
+    return reinterpret_cast<T*>(seg.scratchpad);
+}
+```
+
+**Rules:**
+- Effects interpret the scratchpad bytes however they need
+* Segment clears/zeros scratchpad when effect changes (version bump)
+- No heap allocation for effect state
+- Effects must handle uninitialized state gracefully (first frame detection)
+
+**Rationale:** A union-based approach becomes fragile as effects grow. A fixed scratchpad with versioning is simpler, works for multi-segment, and avoids heap allocation.
+
+---
+
 ## Goals & Non-Goals
 
 ### Goals
@@ -34,6 +108,7 @@ This document outlines a proposed architecture refactor focused on:
 - Supporting every ESP32 variant immediately
 - Abstracting away FastLED's API (we expose it)
 - Complex effect state machines (keep effects simple)
+- Overlapping segments in v2 (add composition layer later)
 
 ---
 
@@ -73,12 +148,19 @@ The fundamental insight: effects should operate on a **view** of the LED array, 
 
 ```cpp
 struct SegmentView {
-    CRGB* leds;           // Pointer to first LED in segment
+    CRGB* base;           // Pointer to controller's LED array
+    uint16_t start;       // First LED index in segment
     uint16_t length;      // Number of LEDs in segment
     bool reversed;        // Run effect backwards?
     
-    // Indexed access (handles reversal)
-    CRGB& operator[](uint16_t i);
+    // Indexed access (handles reversal + offset)
+    CRGB& operator[](uint16_t i) {
+        uint16_t idx = reversed ? (length - 1 - i) : i;
+        return base[start + idx];
+    }
+    
+    // Raw access for FastLED functions that need CRGB*
+    CRGB* raw() { return base + start; }
     
     // Convenience methods (delegate to FastLED)
     void fill(CRGB color);
@@ -87,41 +169,65 @@ struct SegmentView {
 };
 ```
 
-**Why this matters:**
-- Effects don't know their position in the strip
-- Same effect code works on any segment
-- Reversal handled transparently
-- Full FastLED access via `view.leds`
+**Why `base + start` instead of `CRGB* leds`:**
+- **Contiguous today:** For now, `operator[]` just does `base[start + idx]`—zero overhead
+- **Non-contiguous tomorrow:** Can add matrix mapping, serpentine, grouping without changing effect code
+- **Per-segment transforms:** Opens door for per-segment gamma or color correction
+- **Debug-friendly:** Can bounds-check in debug builds
+
+**Design principle:** The view is a mapping abstraction. Effects use `view[i]`, not pointer arithmetic.
 
 ### Segment Class
 
-Owns a view plus runtime state:
+Owns a view, effect binding, and scratchpad state:
 
 ```cpp
 class Segment {
 public:
-    SegmentView view;           // View into main LED array
+    // Identity (stable across deletions)
+    uint32_t id;                // Monotonic, never reused
+    
+    // View into main LED array
+    SegmentView view;
     
     // Effect binding
-    EffectFn effect;            // Current effect function
+    const EffectInfo* effect;   // Current effect (includes fn pointer)
     EffectParams params;        // Effect parameters
     
     // Per-segment state
     uint8_t brightness = 255;
-    uint8_t speed = 128;
     CRGB colors[2];             // Primary, secondary
     CRGBPalette16 palette;
     
-    // Blending mode when segments overlap
-    BlendMode blendMode = BlendMode::Replace;
+    // Scratchpad for stateful effects (see Invariant 3)
+    static constexpr size_t SCRATCHPAD_SIZE = 512;
+    uint8_t scratchpad[SCRATCHPAD_SIZE];
+    uint8_t scratchpadVersion = 0;
+    
+    void setEffect(const EffectInfo* newEffect) {
+        effect = newEffect;
+        scratchpadVersion++;    // Signals scratchpad reset
+        memset(scratchpad, 0, SCRATCHPAD_SIZE);
+    }
+    
+    template<typename T>
+    T* getScratchpad() {
+        static_assert(sizeof(T) <= SCRATCHPAD_SIZE);
+        return reinterpret_cast<T*>(scratchpad);
+    }
     
     void update(uint32_t frame);
 };
 ```
 
+**Note on IDs:** Segment IDs are monotonic counters, not array indices. This means:
+- Deleting segment 2 doesn't renumber segment 3
+- UI can reliably target segments by ID
+- Internal storage can still be array-based for efficiency
+
 ### Effect System
 
-Effects are pure functions, registered by name:
+Effects are pure functions with rich metadata, registered by name:
 
 ```cpp
 // Effect function signature
@@ -131,16 +237,41 @@ using EffectFn = void (*)(
     uint32_t frame
 );
 
-// Registration (evaluated at startup)
-#define REGISTER_EFFECT(name, fn) \
-    static EffectRegistrar _reg_##fn(name, fn)
+// Effect metadata (enables rich UI/AI integration)
+struct EffectInfo {
+    const char* id;           // Machine name: "fire"
+    const char* displayName;  // Human name: "Fire"
+    const char* category;     // "Animated", "Solid", "Moving", "Special"
+    
+    // Parameter support flags
+    bool usesPalette;         // Responds to palette changes
+    bool usesSecondaryColor;  // Uses params.colors[1]
+    bool usesSpeed;           // Responds to speed param
+    bool usesIntensity;       // Responds to intensity param
+    
+    // Resource hints
+    uint16_t stateSize;       // Bytes needed in scratchpad (0 = stateless)
+    uint16_t minLeds;         // Minimum LEDs for effect to look good
+    
+    EffectFn fn;              // The actual function
+};
+
+// Registration with metadata
+#define REGISTER_EFFECT(id, displayName, category, fn) \
+    static EffectRegistrar _reg_##fn({ \
+        .id = id, \
+        .displayName = displayName, \
+        .category = category, \
+        /* ... defaults for flags ... */ \
+        .fn = fn \
+    })
 
 // Example effect implementation
 void effectFire(SegmentView& view, const EffectParams& p, uint32_t frame) {
     // Full access to FastLED functions
     // Operates only on this segment's LEDs
 }
-REGISTER_EFFECT("fire", effectFire);
+REGISTER_EFFECT("fire", "Fire", "Animated", effectFire);
 ```
 
 **Benefits:**
@@ -148,6 +279,9 @@ REGISTER_EFFECT("fire", effectFire);
 - Effects are testable in isolation
 - Adding effects = adding files, no core changes
 - Clear contract (inputs → LED colors)
+- **Rich metadata for UI** (show relevant controls only)
+- **AI prompt understanding** (knows which params matter)
+- **Category filtering** (UI grouping, random within category)
 
 ### Controller
 
@@ -293,6 +427,23 @@ src/
 
 ## Migration Plan
 
+### Phase 0: Architecture Refinement 🔄 IN PROGRESS
+**Goal:** Lock down invariants and refine core abstractions before API work
+
+- [x] Document three core invariants (non-overlapping, single-writer, scratchpad)
+- [x] Update SegmentView to use `base + start + length` mapping abstraction
+- [x] Design EffectInfo metadata structure
+- [x] Design scratchpad state model with versioning
+- [x] Document command queue pattern
+- [x] Document render pipeline
+- [ ] **Implement** SegmentView refactor in code
+- [ ] **Implement** EffectInfo metadata in registry
+- [ ] **Implement** scratchpad state in Segment
+- [ ] **Implement** command queue infrastructure
+- [ ] Update effects to use new SegmentView API
+
+**Status:** Design complete. Implementation pending.
+
 ### Phase 1: Core Foundation ✅ COMPLETE
 **Goal:** Create new core without breaking existing code
 
@@ -305,7 +456,7 @@ src/
 - [x] Create 10 effects (solid, rainbow, fire, confetti, gradient, pulse, sparkle, colorwaves, noise, meteor)
 - [x] Verify compilation succeeds
 
-**Status:** Compiles successfully. Core framework in place.
+**Status:** Compiles successfully. Core framework in place. **Needs Phase 0 refinements.**
 
 ### Phase 2: Effect Migration & Testing ✅ COMPLETE (Effects Ported)
 **Goal:** Test effects on hardware, port remaining effects
@@ -372,18 +523,25 @@ POST /api/segments/{id}/effect  # Set segment effect
 
 ```json
 {
-  "id": 0,
+  "id": 1,              // Stable monotonic ID (not array index!)
   "start": 0,
   "length": 80,
-  "effect": "fire",
+  "effect": {
+    "id": "fire",
+    "displayName": "Fire",
+    "category": "Animated",
+    "usesPalette": true,
+    "usesSpeed": true
+  },
   "brightness": 200,
   "speed": 150,
   "colors": ["#ff6600", "#ff0000"],
   "palette": "heat",
-  "reverse": false,
-  "blend": "replace"
+  "reverse": false
 }
 ```
+
+**Note:** Segment IDs are stable across deletions. If you delete segment 2, segment 3 keeps its ID. This makes UI state sync reliable.
 
 ### Full State
 
@@ -392,11 +550,16 @@ POST /api/segments/{id}/effect  # Set segment effect
   "power": true,
   "brightness": 255,
   "ledCount": 160,
+  "nextSegmentId": 3,    // For generating stable IDs
   "segments": [
-    {"id": 0, "start": 0, "length": 80, "effect": "fire", ...},
-    {"id": 1, "start": 80, "length": 80, "effect": "rainbow", ...}
+    {"id": 1, "start": 0, "length": 80, "effect": {"id": "fire", ...}, ...},
+    {"id": 2, "start": 80, "length": 80, "effect": {"id": "rainbow", ...}, ...}
   ],
-  "effects": ["solid", "rainbow", "fire", "confetti", ...],
+  "effects": [
+    {"id": "solid", "displayName": "Solid", "category": "Solid", ...},
+    {"id": "rainbow", "displayName": "Rainbow", "category": "Animated", ...},
+    ...
+  ],
   "palettes": ["rainbow", "heat", "ocean", ...]
 }
 ```
@@ -428,21 +591,71 @@ Each effect is small (~50 lines). Splitting adds:
 
 Some effects need frame-persistent state (e.g., fire cooling array).
 
-Options:
-1. Global/static state per effect (simple, not segment-aware)
-2. State stored in Segment (segment-aware, more complex)
-3. Pass frame counter, derive state (stateless where possible)
+| Approach | Pros | Cons |
+|----------|------|------|
+| Global/static per effect | Simple | Breaks multi-segment |
+| Union in Segment | Type-safe | Grows fragile as effects increase |
+| Fixed scratchpad | Flexible, segment-aware | Effects interpret raw bytes |
 
-**Decision:** Prefer stateless via frame counter. For effects that truly need state (fire), store in Segment's `effectState` union.
+**Memory cost:** 512 bytes × MAX_SEGMENTS (8) = 4 KB. Acceptable on ESP32-S3 with PSRAM.
+
+**Decision:** Fixed-size scratchpad (`uint8_t[512]`) per segment with version counter. Effects interpret bytes as needed. Version increments on effect change, triggering re-initialization. See [Invariant 3](#invariant-3-fixed-scratchpad-for-effect-state).
+
+### How to Handle Concurrency?
+
+ESP32 + AsyncWebServer means handlers run on different tasks/cores.
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| No protection | Simple | Race conditions, heisenbugs |
+| Mutex/critical sections | Direct | Blocking, priority inversion risk |
+| Command queue | Deterministic, non-blocking | Slightly more code |
+
+**Decision:** Single-writer via command queue. All mutations (from web handlers, protocols, AI) enqueue commands. Main loop processes queue at frame start. See [Invariant 2](#invariant-2-single-writer-model-via-command-queue).
+
+---
+
+## Render Pipeline
+
+Explicit ordering prevents "where does this logic belong?" confusion:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     Frame Start                         │
+├─────────────────────────────────────────────────────────┤
+│ 1. Process command queue (mutations from web/protocol)  │
+├─────────────────────────────────────────────────────────┤
+│ 2. Determine active mode                                │
+│    ├─ Protocol override? (sACN data within timeout)     │
+│    └─ Effects mode (default)                            │
+├─────────────────────────────────────────────────────────┤
+│ 3. Render                                               │
+│    ├─ Protocol mode: protocol writes directly to LEDs   │
+│    └─ Effects mode: for each segment in order:          │
+│                     segment.update(frame)               │
+├─────────────────────────────────────────────────────────┤
+│ 4. Post-process (global brightness applied by FastLED)  │
+├─────────────────────────────────────────────────────────┤
+│ 5. FastLED.show()                                       │
+├─────────────────────────────────────────────────────────┤
+│ 6. Frame timing / yield                                 │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Protocol Override Semantics:**
+- Protocols (sACN, Art-Net) write directly to the base LED buffer
+- When protocol data is active, effects are skipped
+- Timeout (5s without data) returns to effects mode
+- This matches v1 behavior exactly
 
 ---
 
 ## Open Questions
 
-1. **Overlapping segments** — How should they blend? Add? Max? Replace?
-2. **Transition effects** — Fade between effects when switching?
+1. ~~**Overlapping segments**~~ — **RESOLVED:** Not supported in v2. Add composition layer later.
+2. **Transition effects** — Fade between effects when switching? (Nice-to-have, not blocking)
 3. **Preset format** — Store segment configs, or full state snapshots?
-4. **Matrix mapping** — Multiple mapping strategies? Configurable?
+4. **Matrix mapping** — Multiple mapping strategies? Configurable? (SegmentView design supports this)
 5. **AI prompts** — How to express multi-segment intent?
 
 ---
