@@ -38,7 +38,8 @@ curl "http://lume.local/api/led?token=YOUR_TOKEN" -X POST -d '...'
 | `/health` | GET | System health & diagnostics |
 | `/api/status` | GET | Device status |
 | `/api/config` | GET/POST | Configuration |
-| `/api/led` | GET/POST | LED state control |
+| `/api/segments` | GET | List segments & effects |
+| `/api/led` | GET/POST | LED state control (legacy) |
 | `/api/prompt` | POST | AI effect generation |
 | `/api/prompt/status` | GET | AI job status |
 | `/api/prompt/apply` | POST | Apply generated effect |
@@ -94,6 +95,49 @@ GET /api/status
 ```
 
 Returns device status including uptime, WiFi state, IP, heap memory, and LED state.
+
+---
+
+## Segments
+
+```http
+GET /api/segments
+```
+
+Returns all segments, available effects with metadata, and device capabilities.
+
+**Response:**
+```json
+{
+  "segments": [
+    {
+      "id": 0,
+      "start": 0,
+      "length": 160,
+      "effect": "rainbow",
+      "speed": 100,
+      "intensity": 128,
+      "palette": "rainbow",
+      "colors": [[255,0,0], [0,255,0]],
+      "reversed": false,
+      "mirror": false
+    }
+  ],
+  "effects": [
+    {
+      "id": "rainbow",
+      "name": "Rainbow",
+      "category": "moving",
+      "stateSize": 0
+    }
+  ],
+  "capabilities": {
+    "maxSegments": 8,
+    "totalLeds": 160,
+    "scratchpadSize": 512
+  }
+}
+```
 
 ---
 
@@ -153,9 +197,9 @@ Content-Type: application/json
 }
 ```
 
-### Available Effects
+### Available Effects (23 total)
 
-`solid`, `rainbow`, `confetti`, `fire`, `colorwaves`, `theater`, `gradient`, `sparkle`, `pulse`, `noise`, `meteor`, `twinkle`, `sinelon`, `candle`, `breathe`
+`solid`, `rainbow`, `confetti`, `fire`, `colorwaves`, `theater`, `gradient`, `sparkle`, `pulse`, `noise`, `meteor`, `twinkle`, `sinelon`, `candle`, `breathe`, `dots`, `juggle`, `bpm`, `larson`, `cylon`, `lightning`, `ripple`, `pacifica`
 
 ### Available Palettes
 
@@ -358,7 +402,7 @@ The AI generates effects matching this JSON schema:
 
 ```json
 {
-  "effect": "solid|rainbow|confetti|fire|colorwaves|theater|gradient|sparkle|pulse|noise|meteor|twinkle|sinelon|candle|breathe|custom",
+  "effect": "solid|rainbow|confetti|fire|colorwaves|theater|gradient|sparkle|pulse|noise|meteor|twinkle|sinelon|candle|breathe|dots|juggle|bpm|larson|cylon|lightning|ripple|pacifica|custom",
   "palette": "rainbow|lava|ocean|party|forest|cloud|heat|sunset|autumn|retro|ice|pink|custom",
   "brightness": 0-255,
   "speed": 1-200,
