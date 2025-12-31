@@ -17,6 +17,7 @@ ESP32-S3 + FastLED firmware with modern Web UI, API, sACN, OTA, and natural-lang
   <img src="https://github.com/user-attachments/assets/64ef8967-df5d-48bd-b54d-8d7a314b29e8" alt="LUME Web UI" width="400">
 </p>
 
+
 ---
 
 ## 💡 Why LUME?
@@ -35,18 +36,18 @@ LUME brings **AI-powered control** to your LED strips without sacrificing flexib
 | Category | What You Get |
 |----------|--------------|
 | 🤖 **AI Effects** | Describe effects in natural language via Anthropic Claude |
-| 🎨 **23 Built-in Effects** | Rainbow, Fire, Confetti, Meteor, Twinkle, Candle, Gradient, Pulse... |
-| 🔲 **Segments** | Split your strip into independent zones with different effects |
-| 🎨 **Color Palettes** | 12 palettes: Ocean, Lava, Sunset, Forest, Party... |
-| 📡 **sACN/E1.31** | Professional DMX protocol for lighting software integration |
-| 🏠 **MQTT** | Home Assistant auto-discovery, full control via MQTT |
 | 📱 **Modern Web UI** | Responsive, mobile-friendly, works offline |
-| 🌙 **Nightlight Mode** | Gradual fade-to-sleep over configurable duration |
-| ⚡ **Power Limiting** | Automatic current limiting protects your PSU |
-| 🔗 **mDNS** | Access via `http://lume.local` |
+| 🔲 **Segments** | Split your strip into independent zones with different effects |
+| 🎨 **23 Built-in Effects** | Rainbow, Fire, Confetti, Meteor, Twinkle, Candle, Gradient, Pulse... |
+| 🎨 **Color Palettes** | 12 palettes: Ocean, Lava, Sunset, Forest, Party... |
 | 🔄 **OTA Updates** | Update firmware wirelessly — never unplug again! |
-| 🔐 **Optional Auth** | Protect API & OTA with a token |
 | 💾 **Persistent Storage** | Settings survive reboots and updates |
+| 📡 **sACN/E1.31** | Professional DMX protocol for lighting software integration |
+| 🏠 **MQTT** | (Untested) Home Assistant auto-discovery, full control via MQTT |
+| 🔐 **Optional Auth** | Protect API & OTA with a token |
+| ⚡ **Power Limiting** | Automatic current limiting protects your PSU |
+| 🌙 **Nightlight Mode** | Gradual fade-to-sleep over configurable duration |
+| 🔗 **mDNS** | Access via `http://lume.local` |
 
 ---
 
@@ -97,6 +98,7 @@ That's it. No config files needed.
 
 ## 🎮 Control Methods
 
+
 ### Web UI
 Access the responsive web interface from any device on your network.
 
@@ -108,7 +110,7 @@ Tell the LEDs what you want:
 - *"cozy sunset vibes"*
 
 ### API
-Full REST API for automation and integration:
+Full REST API for automation and integration ([see full docs](docs/API_V2.md)):
 ```bash
 # Set all LEDs to red
 curl -X POST http://lume.local/api/pixels \
@@ -123,6 +125,13 @@ curl -X POST http://lume.local/api/prompt \
 
 ### sACN/E1.31
 Connect professional lighting software like QLC+, xLights, or TouchDesigner.
+
+### MQTT (Untested)
+Integrate with Home Assistant or Node-RED using MQTT topics. See the [MQTT Guide](docs/MQTT.md) for topic structure and setup notes. This feature is available but not fully tested yet.
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/d8b91c1c-d545-416c-94dd-74323f53be13" alt="LUME Settings Menu" width="400">
+</p>
 
 ---
 

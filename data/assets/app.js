@@ -620,18 +620,18 @@
                 
                 document.getElementById('wifiSSID').value = config.wifiSSID || '';
                 document.getElementById('ledCount').value = config.ledCount || 160;
-                
+
                 // AI settings
                 document.getElementById('aiApiKey').value = config.aiApiKey && config.aiApiKey !== '****' ? '' : '';
                 document.getElementById('aiModel').value = config.aiModel || 'claude-3-5-sonnet-20241022';
-                
+
                 // sACN settings
                 const sacnEnabled = config.sacnEnabled || false;
                 document.getElementById('sacnEnabled').checked = sacnEnabled;
                 document.getElementById('sacnUniverse').value = config.sacnUniverse || 1;
                 document.getElementById('sacnStartChannel').value = config.sacnStartChannel || 1;
                 toggleSettings('sacnSettings', sacnEnabled);
-                
+
                 // MQTT settings
                 const mqttEnabled = config.mqttEnabled || false;
                 document.getElementById('mqttEnabled').checked = mqttEnabled;
