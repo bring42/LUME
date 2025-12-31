@@ -111,7 +111,7 @@ pio run -t uploadfs     # Upload web UI files
 
 1. **Power on** your ESP32-S3 board (unplug/replug USB or connect to external 5V power)
 2. **Connect** to WiFi network `LUME-Setup` (password: `ledcontrol`)
-3. **Open** `lume.local` in your browser
+3. **Open** `http://192.168.4.1` in your browser
 4. **Configure** your home WiFi, LED count, and [Anthropic API key](https://console.anthropic.com/) (optional)
 5. **Done!** Hit save configuration, reboot the board and connect to your WiFi. Access via `http://lume.local`
 
