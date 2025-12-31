@@ -2,7 +2,7 @@
   <img src="https://github.com/user-attachments/assets/2dc66001-6dd6-4d1a-9cac-4835a006be74" alt="LUME Logo" width="800">
 </p>
 
-# LUME — AI LED Strip Controller
+# LUME — LED strip controller with optional AI-generated effects
 
 > Tell your LEDs what to do. In plain English.
 
