@@ -17,6 +17,11 @@ LumeController::LumeController()
     , nextSegmentId(0)
     , power(true)
     , globalBrightness(255)
+    , nightlightActive(false)
+    , nightlightStartTime(0)
+    , nightlightDuration(0)
+    , nightlightStartBrightness(0)
+    , nightlightTargetBrightness(0)
     , protocolCount_(0)
     , protocolActive_(false)
     , activeProtocol_(nullptr)
@@ -86,6 +91,27 @@ void LumeController::update() {
         actualFps = fpsFrameCount;
         fpsFrameCount = 0;
         fpsUpdateTime = now;
+    }
+    
+    // Update nightlight if active
+    if (nightlightActive) {
+        uint32_t elapsed = (now - nightlightStartTime) / 1000;  // Convert to seconds
+        if (elapsed >= nightlightDuration) {
+            // Nightlight complete - set target brightness and stop
+            setBrightness(nightlightTargetBrightness);
+            if (nightlightTargetBrightness == 0) {
+                setPower(false);
+            }
+            nightlightActive = false;
+            LOG_INFO(LogTag::LED, "Nightlight complete");
+        } else {
+            // Calculate current brightness based on progress
+            float progress = (float)elapsed / (float)nightlightDuration;
+            // Use int16_t to handle negative differences (fade down)
+            int16_t diff = (int16_t)nightlightTargetBrightness - (int16_t)nightlightStartBrightness;
+            int16_t newBri = (int16_t)nightlightStartBrightness + (int16_t)(diff * progress);
+            setBrightness((uint8_t)max((int16_t)0, min((int16_t)255, newBri)));
+        }
     }
     
     // Clear or handle power off
@@ -233,10 +259,27 @@ Segment* LumeController::createSegment(uint16_t start, uint16_t length, bool rev
         return nullptr;
     }
     
-    // Find first inactive slot or use next slot
+    // Find lowest available ID (reuse deleted IDs)
+    bool usedIds[MAX_SEGMENTS] = {false};
+    for (uint8_t i = 0; i < segmentCount; i++) {
+        uint8_t id = segments[i].getId();
+        if (id < MAX_SEGMENTS) {
+            usedIds[id] = true;
+        }
+    }
+    
+    uint8_t newId = 0;
+    for (uint8_t i = 0; i < MAX_SEGMENTS; i++) {
+        if (!usedIds[i]) {
+            newId = i;
+            break;
+        }
+    }
+    
+    // Add segment to next available slot
     Segment* seg = &segments[segmentCount];
     seg->setRange(leds, start, actualLength, reversed);
-    seg->id = nextSegmentId++;
+    seg->id = newId;
     segmentCount++;
     
     return seg;
@@ -360,6 +403,37 @@ void LumeController::processProtocols() {
             activeProtocol_ = nullptr;
         }
     }
+}
+
+void LumeController::startNightlight(uint16_t durationSeconds, uint8_t targetBrightness) {
+    nightlightActive = true;
+    nightlightStartTime = millis();
+    nightlightDuration = durationSeconds;
+    nightlightStartBrightness = globalBrightness;
+    nightlightTargetBrightness = targetBrightness;
+    
+    LOG_INFO(LogTag::LED, "Nightlight started: %ds fade from %d to %d", 
+             durationSeconds, nightlightStartBrightness, targetBrightness);
+}
+
+void LumeController::stopNightlight() {
+    if (nightlightActive) {
+        nightlightActive = false;
+        LOG_INFO(LogTag::LED, "Nightlight stopped");
+    }
+}
+
+float LumeController::getNightlightProgress() const {
+    if (!nightlightActive) {
+        return 0.0f;
+    }
+    
+    uint32_t elapsed = (millis() - nightlightStartTime) / 1000;
+    if (elapsed >= nightlightDuration) {
+        return 1.0f;
+    }
+    
+    return (float)elapsed / (float)nightlightDuration;
 }
 
 } // namespace lume

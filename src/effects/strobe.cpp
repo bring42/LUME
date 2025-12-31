@@ -23,6 +23,6 @@ void effectStrobe(SegmentView& view, const EffectParams& params, uint32_t frame,
     }
 }
 
-REGISTER_EFFECT_SIMPLE_NAMED(effectStrobe, "strobe", "Strobe");
+REGISTER_EFFECT_FULL(effectStrobe, "strobe", "Strobe", Animated, false, true, false, true, false, 0, 1);
 
 } // namespace lume

@@ -25,6 +25,7 @@ void effectBreathe(SegmentView& view, const EffectParams& params, uint32_t frame
     view.fill(color);
 }
 
-REGISTER_EFFECT_SIMPLE_NAMED(effectBreathe, "breathe", "Breathe");
+// Animated effect using primary color and speed
+REGISTER_EFFECT_FULL(effectBreathe, "breathe", "Breathe", Animated, false, true, false, true, false, 0, 1);
 
 } // namespace lume

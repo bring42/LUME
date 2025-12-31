@@ -61,6 +61,6 @@ void effectRain(SegmentView& view, const EffectParams& params, uint32_t frame, b
     }
 }
 
-REGISTER_EFFECT_MOVING(effectRain, "rain", "Rain");
+REGISTER_EFFECT_FULL(effectRain, "rain", "Rain", Moving, false, true, false, true, true, 0, 1);
 
 } // namespace lume

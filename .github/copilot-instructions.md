@@ -1,116 +1,130 @@
-# LUME - Copilot Instructions
+# LUME - AI LED Strip Controller
 
-## Project Overview
-
-**LUME** is an ESP32-S3 LED controller (LILYGO T-Display S3) for WS2812B LED strips with AI-generated effects. Three control paths: web UI, AI prompts (OpenRouter API), and sACN/E1.31 DMX protocol. Built with PlatformIO/Arduino framework.
+ESP32-S3 + FastLED firmware with REST API, sACN/E1.31, MQTT, and segment-based LED control.
 
 **Access:** `http://lume.local` | **AP Mode:** `LUME-Setup` (password: `ledcontrol`)
 
-## Architecture (v2)
+## Architecture Overview
 
-**Component Boundaries:**
-- `main.cpp`: WiFi setup (dual AP/STA), async web server routes, OTA, event loop coordination, watchdog
-- `core/controller.*`: LumeController - owns LED array, segments, protocols, frame updates
-- `core/segment.*`: Segment class with effect binding, scratchpad, and parameters
-- `core/effect_registry.h`: Effect function registry with metadata
-- `effects/*.cpp`: One file per effect (solid, rainbow, fire, confetti, gradient, pulse)
-- `protocols/sacn.*`: sACN/E1.31 protocol adapter using Protocol interface
-- `anthropic_client.*`: FreeRTOS task for async LLM calls, JSON effect spec parsing
-- `storage.*`: NVS (Non-Volatile Storage) wrapper for config/scenes/LED state persistence
-- `web_ui.h`: Single-file embedded HTML/CSS/JS (PROGMEM constant, ~1200 lines)
-- `constants.h`: All magic numbers centralized (timeouts, buffer sizes, ports, limits)
-- `logging.h`: Structured logging with levels (DEBUG/INFO/WARN/ERROR) and component tags
+**Single-Writer Model:** `LumeController` owns the LED buffer (`CRGB leds[]`). All mutations flow through it:
+- Main loop calls `controller.update()` at ~60 FPS
+- Web handlers/protocols enqueue commands or use atomic buffers
+- Effects are pure functions writing to their segment's `SegmentView`
 
 **Data Flow:**
 ```
-Web UI → JSON POST → main.cpp handler → lume::controller → Segment → Effect
-AI Prompt → anthropic_client task → JSON spec → applyEffectSpec() → Segment
-sACN network → SacnProtocol → ProtocolBuffer → controller.update() → FastLED
+Web UI → JSON POST → API handlers → controller.enqueueCommand() → Segment → Effect
+sACN/MQTT → Protocol implementations → ProtocolBuffer (atomic) → controller.update()
 ```
 
-**Critical: Async Body Handling Pattern**  
-ESP async web server requires buffering request bodies manually. Every POST handler MUST:
-1. Validate `total > MAX_REQUEST_BODY_SIZE` at `index == 0` → return 413
-2. Accumulate chunks in global buffer (e.g., `configBodyBuffer`)
-3. Process only when `index + len >= total`
+**Key Components:**
+- [src/core/controller.h](src/core/controller.h) - Orchestrates segments, frame timing, protocols
+- [src/core/segment.h](src/core/segment.h) - LED range + effect binding + 512-byte scratchpad
+- [src/core/effect_registry.h](src/core/effect_registry.h) - Self-registering effects with metadata
+- [src/network/server.cpp](src/network/server.cpp) - Route registration and WebSocket state sync
 
-## Build & Deployment
+## Adding New Effects
+
+Create `src/effects/youreffect.cpp`:
+
+```cpp
+#include "../core/effect_registry.h"
+
+namespace lume {
+
+void effectYourEffect(SegmentView& view, const EffectParams& params, 
+                      uint32_t frame, bool firstFrame) {
+    // frame for timing (use with beatsin8, etc.)
+    // firstFrame = true when scratchpad was reset
+    for (uint16_t i = 0; i < view.size(); i++) {
+        view[i] = ColorFromPalette(params.palette, i + frame);
+    }
+}
+
+// Choose macro based on parameter usage:
+// REGISTER_EFFECT_PALETTE  - palette + speed
+// REGISTER_EFFECT_COLORS   - primary + secondary colors + speed  
+// REGISTER_EFFECT_ANIMATED - speed + intensity
+REGISTER_EFFECT_PALETTE(effectYourEffect, "youreffect", "Your Effect");
+
+} // namespace lume
+```
+
+Registration macros set `usesSpeed`, `usesPalette`, etc. flags that the Web UI reads to show/hide controls. See [docs/ADDING_EFFECTS.md](docs/ADDING_EFFECTS.md) for full macro table.
+
+## API Handler Pattern
+
+API handlers in `src/api/` follow this structure:
+
+```cpp
+// Static buffer for async body accumulation
+static String bodyBuffer;
+
+void handleEndpointPost(AsyncWebServerRequest* request, uint8_t* data, 
+                        size_t len, size_t index, size_t total) {
+    if (index == 0 && !checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
+    // Accumulate body, process when complete
+}
+```
+
+Routes are registered in [src/network/server.cpp](src/network/server.cpp) with the `.onBody()` pattern for POST requests.
+
+## Build & Deploy
 
 ```bash
-pio run -t upload      # First flash via USB
-pio device monitor     # 115200 baud, includes ESP32 exception decoder
+pio run -t upload                            # USB upload (first flash)
+pio run -t upload --upload-port lume.local   # OTA after initial flash
+pio run -t uploadfs                          # Upload LittleFS web UI assets
 ```
 
-**OTA Updates:** Set `upload_port = <device-ip>` in `platformio.ini` (password: `ledcontrol`)
+**Configuration:** Hardware pin/limits in [src/constants.h](src/constants.h). Dev credentials in `src/secrets.h` (copy from `secrets.h.example`).
 
-## Development Secrets
+**OTA password:** Default `ledcontrol`, or the auth token if configured in web UI.
 
-Create `src/secrets.h` (gitignored) from `secrets.h.example`:
-```cpp
-#define DEV_WIFI_SSID "YourNetwork"
-#define DEV_WIFI_PASSWORD "YourPass"
-#define DEV_API_KEY "sk-or-..."
-#define DEV_OPENROUTER_MODEL "anthropic/claude-3-haiku"
-#define DEV_LED_COUNT 160
-#define DEV_DEFAULT_BRIGHTNESS 128
+## Web UI Development
+
+Frontend assets live in `data/` and are served via LittleFS:
+- Edit `data/index.html`, `data/assets/app.js`, `data/assets/app.css`
+- Run `pio run -t uploadfs` to push changes to device
+- Firmware must be flashed first; `uploadfs` only updates the filesystem partition
+
+## Critical Conventions
+
+- **Namespace:** All core code in `namespace lume {}`
+- **Global singleton:** `lume::controller` - access via `extern` declarations
+- **Config persistence:** `Storage` class wraps NVS. Use `storage.saveConfig()`
+- **Thread safety:** Protocol data uses `ProtocolBuffer` with atomic flags
+- **Effect state:** Use segment scratchpad via `getScratchpad<T>()`, not static variables
+- **Logging:** Use macros from [src/logging.h](src/logging.h): `LOG_INFO()`, `LOG_ERROR()`, etc.
+- **Constants:** All magic numbers in [src/constants.h](src/constants.h) with `_MS`, `_SIZE` suffixes
+- **Route order:** Register specific routes FIRST (`/api/prompt/apply` before `/api/prompt`)
+
+## Hardware & Runtime Notes
+
+- **LED Pin:** `LED_DATA_PIN` in constants.h (compile-time only, FastLED requirement)
+- **Power:** External 5V supply (~60mA/LED at full white). ESP32 GND must connect to strip GND.
+- **Watchdog:** 30s timeout auto-resets if main loop hangs; disabled during OTA
+- **sACN Priority:** When protocol data flows, effects are skipped. 5s timeout returns to effects.
+
+## Development Workflow
+
+**Test immediately after implementation.** Use curl or the shell scripts in `test/` to verify changes before moving on. Update or add docs when functionality is confirmed working.
+
+```bash
+# Quick connectivity check
+curl http://lume.local/health
+
+# Test effect change
+curl -X PUT http://lume.local/api/v2/segments/0 \
+  -H "Content-Type: application/json" \
+  -d '{"effect":"fire","speed":150}'
 ```
 
-## Key Patterns
+See [test/](test/) for shell scripts covering API endpoints.
 
-**Logging:** Use structured macros, not `Serial.print()`:
-```cpp
-LOG_INFO(LogTag::WIFI, "Connected! IP: %s", WiFi.localIP().toString().c_str());
-LOG_WARN(LogTag::LED, "Failed to apply effect: %s", errorMsg.c_str());
-LOG_DEBUG(LogTag::SACN, "Uni %d: %d pkts", universe, count);
-```
-Tags: `MAIN`, `WIFI`, `LED`, `AI`, `SACN`, `WEB`, `OTA`, `STORAGE`
+## Known Residuals
 
-**Constants:** All values in `constants.h`. Never inline magic numbers:
-```cpp
-constexpr uint32_t SACN_DATA_TIMEOUT_MS = 5000;
-constexpr size_t MAX_REQUEST_BODY_SIZE = 16384;
-constexpr uint32_t PROMPT_RATE_LIMIT_MS = 3000;
-```
-
-**Rate Limiting:** `/api/prompt` has 3-second cooldown to prevent API key exhaustion.
-
-**sACN Priority:** When protocol data flows, LED updates skip normal effects. Timeout after 5s returns to effects.
-
-**LED Pin:** Set `LED_DATA_PIN` in `constants.h`. Compile-time only (FastLED requirement).
-
-**OTA Safety:** LEDs off during OTA, watchdog disabled to prevent timeout during long uploads.
-
-**API Route Order:** More specific routes registered FIRST (`/api/prompt/apply` before `/api/prompt`).
-
-## Common Tasks
-
-**Add new effect:**
-1. Create `src/effects/myeffect.cpp`
-2. Implement effect function with signature: `void effectMyEffect(SegmentView&, const EffectParams&, uint32_t frame, bool firstFrame)`
-3. Register with `REGISTER_EFFECT("myeffect", "My Effect", EffectCategory::Animated, effectMyEffect)`
-4. Include in `effects/effects.h`
-
-**Add new constant:** Always in `constants.h` with descriptive name (e.g., `_MS`, `_SIZE` suffix)
-
-**Add POST handler:** Follow the body buffering pattern with size validation at `index == 0`
-
-## Hardware Notes
-
-- **GPIO 21:** Default LED data pin (configured in `constants.h`, compile-time only)
-- **Power:** External 5V supply (~60mA/LED). ESP32 GND must connect to strip GND.
-- **Watchdog:** 30s timeout auto-resets if main loop hangs
-- **PSRAM:** Enabled (`-DBOARD_HAS_PSRAM`)
-
-## API Quick Reference
-
-Base URL: `http://<device-ip>` (AP mode: `http://192.168.4.1`)
-
-| Endpoint | Method | Body Example |
-|----------|--------|--------------|
-| `/api/segments` | GET | Returns all segments, effects, capabilities |
-| `/api/pixels` | POST | `{"fill": [255,0,0]}` or `{"rgb": [r,g,b,...]}` |
-| `/api/prompt` | POST | `{"prompt": "warm sunset fading to purple"}` |
-| `/api/prompt/status` | GET | Returns: `idle\|queued\|running\|done\|error` |
-| `/api/prompt/apply` | POST | Applies last generated spec |
-| `/api/scenes` | POST | `{"name": "Sunset", "spec": "{...}"}` |
-| `/api/scenes/{id}/apply` | POST | Load saved scene |
+Some v1 artifacts remain (e.g., `src/api/scenes.cpp` uses old format, some constants reference removed `anthropic_client`). These are marked with TODOs and will be cleaned up as features are reimplemented. Check `docs/archive/` for historical reference.

@@ -9,8 +9,8 @@
 struct Config {
     String wifiSSID;
     String wifiPassword;
-    String apiKey;
-    String openRouterModel;
+    String aiApiKey;              // Anthropic API key
+    String aiModel;               // AI model selection
     String authToken;             // Optional API auth token (empty = no auth)
     uint16_t ledCount;
     uint8_t defaultBrightness;
@@ -32,8 +32,8 @@ struct Config {
     Config() : 
         wifiSSID(""),
         wifiPassword(""),
-        apiKey(""),
-        openRouterModel("claude-sonnet-4-5-20250929"),
+        aiApiKey(""),
+        aiModel("claude-3-5-sonnet-20241022"),
         authToken(""),
         ledCount(160),
         defaultBrightness(128),

@@ -36,6 +36,6 @@ void effectMeteor(SegmentView& view, const EffectParams& params, uint32_t frame,
     }
 }
 
-REGISTER_EFFECT_MOVING(effectMeteor, "meteor", "Meteor");
+REGISTER_EFFECT_FULL(effectMeteor, "meteor", "Meteor", Moving, false, true, false, true, true, 0, 1);
 
 } // namespace lume

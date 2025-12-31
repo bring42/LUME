@@ -20,8 +20,8 @@ bool Storage::loadConfig(Config& config) {
     
     config.wifiSSID = prefs.getString("ssid", "");
     config.wifiPassword = prefs.getString("pass", "");
-    config.apiKey = prefs.getString("apikey", "");
-    config.openRouterModel = prefs.getString("model", "claude-sonnet-4-5-20250929");
+    config.aiApiKey = prefs.getString("ai_apikey", "");
+    config.aiModel = prefs.getString("ai_model", "claude-3-5-sonnet-20241022");
     config.authToken = prefs.getString("authtoken", "");
     config.ledCount = prefs.getUShort("ledcount", 160);
     config.defaultBrightness = prefs.getUChar("brightness", 128);
@@ -50,8 +50,8 @@ bool Storage::saveConfig(const Config& config) {
     
     prefs.putString("ssid", config.wifiSSID);
     prefs.putString("pass", config.wifiPassword);
-    prefs.putString("apikey", config.apiKey);
-    prefs.putString("model", config.openRouterModel);
+    prefs.putString("ai_apikey", config.aiApiKey);
+    prefs.putString("ai_model", config.aiModel);
     prefs.putString("authtoken", config.authToken);
     prefs.putUShort("ledcount", config.ledCount);
     prefs.putUChar("brightness", config.defaultBrightness);
@@ -157,9 +157,9 @@ bool Storage::clearPromptSpec() {
 void Storage::configToJson(const Config& config, JsonDocument& doc, bool maskApiKey) {
     doc["wifiSSID"] = config.wifiSSID;
     doc["wifiPassword"] = ""; // Never expose password
-    doc["apiKey"] = maskApiKey ? (config.apiKey.length() > 0 ? "****" + config.apiKey.substring(config.apiKey.length() - 4) : "") : config.apiKey;
-    doc["apiKeySet"] = config.apiKey.length() > 0;
-    doc["openRouterModel"] = config.openRouterModel;
+    doc["aiApiKey"] = maskApiKey ? (config.aiApiKey.length() > 0 ? "****" + config.aiApiKey.substring(config.aiApiKey.length() - 4) : "") : config.aiApiKey;
+    doc["aiApiKeySet"] = config.aiApiKey.length() > 0;
+    doc["aiModel"] = config.aiModel;
     doc["authToken"] = config.authToken.length() > 0 ? "****" : "";
     doc["authEnabled"] = config.authToken.length() > 0;
     doc["ledCount"] = config.ledCount;
@@ -190,15 +190,15 @@ bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
             config.wifiPassword = pass;
         }
     }
-    if (doc["apiKey"].is<const char*>()) {
-        String key = doc["apiKey"].as<String>();
+    if (doc["aiApiKey"].is<const char*>()) {
+        String key = doc["aiApiKey"].as<String>();
         // Don't overwrite with masked value
         if (key.length() > 0 && !key.startsWith("****")) {
-            config.apiKey = key;
+            config.aiApiKey = key;
         }
     }
-    if (doc["openRouterModel"].is<const char*>()) {
-        config.openRouterModel = doc["openRouterModel"].as<String>();
+    if (doc["aiModel"].is<const char*>()) {
+        config.aiModel = doc["aiModel"].as<String>();
     }
     if (doc["authToken"].is<const char*>()) {
         String token = doc["authToken"].as<String>();

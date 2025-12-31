@@ -19,11 +19,22 @@ ESP32-S3 + FastLED firmware with modern Web UI, API, sACN, OTA, and natural-lang
 
 ---
 
+## 💡 Why LUME?
+
+
+LUME brings **AI-powered control** to your LED strips without sacrificing flexibility. Whether you want to say "make it look like a campfire" or precisely configure sACN universes, LUME handles both.
+
+- **Bring your favorites** — Port effects from WLED, write new ones, or use the built-in collection. You can also add new effects using the pre-written Copilot prompt (see [ADDING_EFFECTS.md](docs/ADDING_EFFECTS.md)).
+- **API-first design** — Control via REST, MQTT, sACN, or natural language
+- **Hackable** — Clean C++ codebase with effect registration macros and metadata that make each effect's parameters and UI behavior obvious from the code itself
+
+---
+
 ## ✨ Features
 
 | Category | What You Get |
 |----------|--------------|
-| 🤖 **AI Effects** | Describe effects in natural language via OpenRouter API |
+| 🤖 **AI Effects** | Describe effects in natural language via Anthropic Claude |
 | 🎨 **23 Built-in Effects** | Rainbow, Fire, Confetti, Meteor, Twinkle, Candle, Gradient, Pulse... |
 | 🔲 **Segments** | Split your strip into independent zones with different effects |
 | 🎨 **Color Palettes** | 12 palettes: Ocean, Lava, Sunset, Forest, Party... |
@@ -62,7 +73,7 @@ That's it. No config files needed.
 1. **Power on** your ESP32-S3 board
 2. **Connect** to WiFi network `LUME-Setup` (password: `ledcontrol`)
 3. **Open** `http://192.168.4.1`
-4. **Configure** your home WiFi, LED count, and [OpenRouter API key](https://openrouter.ai/)
+4. **Configure** your home WiFi, LED count, and [Anthropic API key](https://console.anthropic.com/)
 5. **Done!** Access via `http://lume.local`
 
 > 💾 **Your settings are saved to flash memory** and survive firmware updates. You only need to configure once.
@@ -120,7 +131,8 @@ Connect professional lighting software like QLC+, xLights, or TouchDesigner.
 | Doc | What's Inside |
 |-----|---------------|
 | [Hardware Setup](docs/HARDWARE.md) | Wiring, power calculation, GPIO pins |
-| [API Reference](docs/API.md) | All REST endpoints with examples |
+| [API Reference](docs/API_V2.md) | All REST endpoints with examples |
+| [Adding Effects](docs/ADDING_EFFECTS.md) | Guide to creating custom LED effects |
 | [sACN Guide](docs/SACN.md) | E1.31 protocol setup and Python examples |
 | [MQTT Guide](docs/MQTT.md) | Home Assistant, Node-RED, topic structure |
 | [Development](docs/DEVELOPMENT.md) | Architecture, building, contributing |
@@ -142,12 +154,22 @@ See [Hardware Setup](docs/HARDWARE.md) for power calculations and GPIO configura
 
 ---
 
-## 🧪 Built With
+## � Contributing
+
+**Love WLED effects?** Bring them over! Check out [ADDING_EFFECTS.md](docs/ADDING_EFFECTS.md) for the porting guide. The effect system is designed to be simple and self-documenting.
+
+**Ideas for new features?** Open an issue or PR. This project is young and welcomes contributions!
+
+**Found a bug?** Please report it. Include your board model, firmware version, and steps to reproduce.
+
+---
+
+## �🧪 Built With
 
 - [FastLED](https://fastled.io/) - LED control library
 - [ESPAsyncWebServer](https://github.com/me-no-dev/ESPAsyncWebServer) - Async web server
 - [ArduinoJson](https://arduinojson.org/) - JSON parsing
-- [OpenRouter](https://openrouter.ai/) - AI API access
+- [Anthropic Claude](https://anthropic.com/) - AI natural language control
 
 ---
 
@@ -155,9 +177,10 @@ See [Hardware Setup](docs/HARDWARE.md) for power calculations and GPIO configura
 
 This project is in active development. On the horizon:
 
-- 📊 More effects (porting favorites from the community)
+- 📊 More effects and palettes
 - 🔲 2D matrix support
 - 🎛️ Physical button controls
+- 🎬 Scene presets and scheduling
 - 🔮 Matter/Thread support
 
 ---
