@@ -182,6 +182,19 @@ See [Hardware Setup](docs/HARDWARE.md) for power calculations and GPIO configura
 
 ---
 
+
+## 📏 Footprint & Performance
+
+- **Firmware size:** ~1.2MB (ESP32-S3, including all features and web UI)
+- **Web UI assets:** ~200KB (served from LittleFS)
+- **RAM usage:** ~120KB at idle (with 150 LEDs, 2 segments, and web server active)
+- **Max LEDs:** 300 (default, can be increased with more PSRAM)
+- **Frame rate:** 60 FPS typical with up to 300 LEDs and most effects
+- **Startup time:** <2s to web UI ready
+
+Tested on LilyGo T-Display S3 and ESP32-S3 DevKitC-1. See [src/constants.h](src/constants.h) for hardware limits and tuning.
+
+---
 ## 🗺️ What's Coming
 
 This project is in active development. On the horizon:
