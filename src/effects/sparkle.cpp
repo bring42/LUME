@@ -22,6 +22,6 @@ void effectSparkle(SegmentView& view, const EffectParams& params, uint32_t frame
     }
 }
 
-REGISTER_EFFECT_SIMPLE_NAMED(effectSparkle, "sparkle", "Sparkle");
+REGISTER_EFFECT_FULL(effectSparkle, "sparkle", "Sparkle", Animated, false, true, false, true, false, 0, 1);
 
 } // namespace lume

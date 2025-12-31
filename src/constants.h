@@ -1,6 +1,9 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
 
+#include <cstdint>
+#include <cstddef>
+
 // ============================================
 // Project-wide Constants
 // ============================================
@@ -23,6 +26,7 @@ constexpr uint16_t SACN_PORT = 5568;
 
 // --- LED Configuration ---
 #define LED_DATA_PIN 21                 // GPIO pin for LED data (change this for your wiring)
+
 constexpr uint16_t MAX_LED_COUNT = 300;
 constexpr uint16_t LEDS_PER_UNIVERSE = 170;
 
@@ -53,5 +57,13 @@ constexpr uint32_t WATCHDOG_TIMEOUT_SEC = 30;  // Watchdog timeout in seconds
 // --- Version Info ---
 #define FIRMWARE_VERSION "1.0.0"
 #define FIRMWARE_NAME "LUME"
+
+#ifndef FIRMWARE_BUILD_HASH
+#define FIRMWARE_BUILD_HASH "dev"
+#endif
+
+#ifndef FIRMWARE_BUILD_TIMESTAMP
+#define FIRMWARE_BUILD_TIMESTAMP __DATE__ " " __TIME__
+#endif
 
 #endif // CONSTANTS_H

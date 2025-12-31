@@ -198,7 +198,7 @@ client.disconnect()
 
 All 23 built-in effects can be set via MQTT:
 
-`solid`, `rainbow`, `confetti`, `fire`, `colorwaves`, `theater`, `gradient`, `sparkle`, `pulse`, `noise`, `meteor`, `twinkle`, `sinelon`, `candle`, `breathe`, `dots`, `juggle`, `bpm`, `larson`, `cylon`, `lightning`, `ripple`, `pacifica`
+`solid`, `rainbow`, `confetti`, `fire`, `fireup`, `colorwaves`, `wave`, `theater`, `gradient`, `sparkle`, `pulse`, `noise`, `meteor`, `comet`, `rain`, `twinkle`, `strobe`, `sinelon`, `scanner`, `candle`, `breathe`, `pride`, `pacifica`
 
 ---
 

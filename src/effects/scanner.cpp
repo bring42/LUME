@@ -14,6 +14,9 @@ namespace lume {
 static int16_t scannerPos = 0;
 static int8_t scannerDir = 1;
 
+// Static for frame skip timing
+static uint8_t scannerFrameCount = 0;
+
 void effectScanner(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
     (void)frame;
     
@@ -24,9 +27,14 @@ void effectScanner(SegmentView& view, const EffectParams& params, uint32_t frame
     if (firstFrame) {
         scannerPos = 0;
         scannerDir = 1;
+        scannerFrameCount = 0;
     }
     
     uint8_t tailLength = params.intensity > 0 ? params.intensity / 4 : 20;
+    
+    // Speed controls movement rate (higher = faster)
+    // At speed 255, move every frame. At speed 1, move every ~8 frames
+    uint8_t frameSkip = map(params.speed, 1, 255, 8, 1);
     
     // Fade existing
     view.fade(40);
@@ -47,8 +55,12 @@ void effectScanner(SegmentView& view, const EffectParams& params, uint32_t frame
         }
     }
     
-    // Move scanner
-    scannerPos += scannerDir;
+    // Move scanner based on speed
+    scannerFrameCount++;
+    if (scannerFrameCount >= frameSkip) {
+        scannerFrameCount = 0;
+        scannerPos += scannerDir;
+    }
     
     // Bounce at edges
     if (scannerPos >= (int16_t)len || scannerPos < 0) {
@@ -57,6 +69,6 @@ void effectScanner(SegmentView& view, const EffectParams& params, uint32_t frame
     }
 }
 
-REGISTER_EFFECT_MOVING(effectScanner, "scanner", "Scanner");
+REGISTER_EFFECT_FULL(effectScanner, "scanner", "Scanner", Moving, false, true, false, true, true, 0, 1);
 
 } // namespace lume

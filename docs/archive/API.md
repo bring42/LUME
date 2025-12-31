@@ -38,6 +38,7 @@ curl "http://lume.local/api/led?token=YOUR_TOKEN" -X POST -d '...'
 | `/health` | GET | System health & diagnostics |
 | `/api/status` | GET | Device status |
 | `/api/config` | GET/POST | Configuration |
+| `/api/v2/info` | GET | Firmware metadata & limits |
 | `/api/segments` | GET | List segments & effects |
 | `/api/led` | GET/POST | LED state control (legacy) |
 | `/api/prompt` | POST | AI effect generation |

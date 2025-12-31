@@ -1,11 +1,81 @@
+LUME Test Scripts
+=================
 
-This directory is intended for PlatformIO Test Runner and project tests.
+This directory contains test scripts for the LUME LED controller.
 
-Unit Testing is a software testing method by which individual units of
-source code, sets of one or more MCU program modules together with associated
-control data, usage procedures, and operating procedures, are tested to
-determine whether they are fit for use. Unit testing finds problems early
-in the development cycle.
+## Connection Diagnostic
 
-More information about PlatformIO Unit Testing:
+### check_connection.sh
+Automatically scans for LUME on your network and provides troubleshooting help.
+
+Usage:
+  ./check_connection.sh
+
+Features:
+- Tests mDNS hostname (lume.local)
+- Tests AP mode (192.168.4.1)
+- Scans common local IP ranges
+- Shows device status if found
+- Provides troubleshooting steps
+
+## Effect Testing Scripts
+
+### test_effects.sh (Advanced)
+Automatically detects all effects from the API and cycles through them.
+Requires `jq` and `curl` to be installed.
+
+Usage:
+  ./test_effects.sh [host] [delay]
+  ./test_effects.sh                     # Use lume.local, 1s delay
+  ./test_effects.sh 192.168.1.100       # Use IP, 1s delay
+  ./test_effects.sh lume.local 0.5      # Fast mode: 0.5s delay
+  ./test_effects.sh lume.local 0.2      # Rapid fire: 0.2s delay
+
+Features:
+- Auto-detects available effects from API
+- Creates segment if none exist
+- Shows effect names and success/failure status
+- Displays final state in JSON
+
+### test_effects_simple.sh (Simple)
+Cycles through all 23 hardcoded effects. Only requires `curl`.
+
+Usage:
+  ./test_effects_simple.sh [host] [delay] [segment_id]
+  ./test_effects_simple.sh                    # Use lume.local, 1s delay, segment 0
+  ./test_effects_simple.sh 192.168.1.100      # Use IP, 1s delay, segment 0
+  ./test_effects_simple.sh lume.local 0.5 0   # Fast mode: 0.5s delay
+  ./test_effects_simple.sh lume.local 0.2 0   # Rapid fire: 0.2s delay
+
+Features:
+- No dependencies except curl
+- Works with existing segments
+- Clean progress display
+
+## Manual API Testing Examples
+
+Power Control:
+  curl -X PUT http://lume.local/api/v2/controller -H "Content-Type: application/json" -d '{"power":true}'
+  curl -X PUT http://lume.local/api/v2/controller -H "Content-Type: application/json" -d '{"brightness":200}'
+
+Segment Management:
+  curl http://lume.local/api/v2/segments
+  curl -X POST http://lume.local/api/v2/segments -H "Content-Type: application/json" -d '{"start":0,"length":160,"effect":"rainbow"}'
+  curl -X PUT http://lume.local/api/v2/segments/0 -H "Content-Type: application/json" -d '{"effect":"fire","speed":150}'
+  curl -X DELETE http://lume.local/api/v2/segments/0
+
+Effect Discovery:
+  curl http://lume.local/api/v2/effects | python3 -m json.tool
+
+## Quick Test
+
+Cycle through all 23 effects:
+```bash
+cd test
+./test_effects_simple.sh              # Default: 1s delay (23 seconds total)
+./test_effects_simple.sh lume.local 0.5  # Fast mode (11.5 seconds)
+./test_effects_simple.sh lume.local 0.2  # Rapid fire! (4.6 seconds) 🚀
+```
+
+For PlatformIO Unit Testing:
 - https://docs.platformio.org/en/latest/advanced/unit-testing/index.html

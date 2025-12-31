@@ -23,6 +23,7 @@ void effectPulse(SegmentView& view, const EffectParams& params, uint32_t frame, 
     view.fill(color);
 }
 
-REGISTER_EFFECT_SIMPLE_NAMED(effectPulse, "pulse", "Pulse");
+// Animated effect using primary color and speed
+REGISTER_EFFECT_FULL(effectPulse, "pulse", "Pulse", Animated, false, true, false, true, false, 0, 1);
 
 } // namespace lume

@@ -56,6 +56,6 @@ void effectTwinkle(SegmentView& view, const EffectParams& params, uint32_t frame
     }
 }
 
-REGISTER_EFFECT_SIMPLE_NAMED(effectTwinkle, "twinkle", "Twinkle");
+REGISTER_EFFECT_FULL(effectTwinkle, "twinkle", "Twinkle", Animated, false, true, false, true, false, 0, 1);
 
 } // namespace lume

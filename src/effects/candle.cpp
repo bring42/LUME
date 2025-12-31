@@ -70,6 +70,6 @@ void effectCandle(SegmentView& view, const EffectParams& params, uint32_t frame,
     }
 }
 
-REGISTER_EFFECT_ANIMATED(effectCandle, "candle", "Candle");
+REGISTER_EFFECT_FULL(effectCandle, "candle", "Candle", Animated, false, true, false, true, true, 0, 1);
 
 } // namespace lume

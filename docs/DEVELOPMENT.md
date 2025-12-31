@@ -9,9 +9,7 @@ This guide covers architecture, building, debugging, and contributing.
 ```
 src/
 ├── main.cpp              # WiFi, web server, OTA, event loop
-├── anthropic_client.*    # FreeRTOS task for async LLM calls
 ├── storage.*             # NVS persistence layer
-├── web_ui.h              # Embedded HTML/CSS/JS (PROGMEM)
 ├── constants.h           # All configurable values
 ├── logging.h             # Structured logging system
 ├── secrets.h             # Your credentials (gitignored)
@@ -23,6 +21,17 @@ src/
 │   ├── effect_registry.h # Effect function registry with metadata
 │   ├── effect_params.h   # Common effect parameters
 │   └── command_queue.h   # Thread-safe command queue
+├── api/
+│   ├── segments.*        # v2 multi-segment API handlers
+│   ├── config.*          # Configuration endpoints
+│   ├── status.*          # Status and health endpoints
+│   ├── pixels.*          # Direct pixel control
+│   ├── prompt.*          # AI natural language control (Anthropic)
+│   └── nightlight.*      # Nightlight mode endpoints
+├── network/
+│   ├── server.*          # Web server setup and route registration
+│   ├── wifi.*            # WiFi connection management
+│   └── ota.*             # Over-the-air update handling
 ├── effects/
 │   ├── effects.h         # All effect declarations
 │   ├── solid.cpp         # Solid color effect
@@ -38,7 +47,14 @@ src/
 │   └── ... (23 total)    # See effects.h for full list
 └── protocols/
     ├── protocol.h        # Protocol interface + ProtocolBuffer
-    └── sacn.*            # Self-contained sACN/E1.31 implementation
+    ├── sacn.*            # Self-contained sACN/E1.31 implementation
+    └── mqtt.*            # MQTT protocol support
+
+data/                     # LittleFS web UI (uploaded separately)
+├── index.html            # Main web interface
+└── assets/
+    ├── app.js            # Client-side JavaScript
+    └── app.css           # Styles
 ```
 
 ### Architecture Overview (v2)
@@ -65,9 +81,10 @@ src/
 
 **Data Flow:**
 ```
-Web UI → JSON POST → main.cpp handler → lume::controller → Segment → Effect
-AI Prompt → anthropic_client task → JSON spec → applyEffectSpec() → Segment
+Web UI → JSON POST → api/* handlers → lume::controller → Segment → Effect
+AI Prompt → api/prompt → Anthropic API → JSON spec → controller → Segment
 sACN network → SacnProtocol (UDP, multicast, E1.31) → ProtocolBuffer → controller.update() → FastLED
+MQTT → MqttProtocol → controller commands → Segment → Effect
 ```
 
 ### Concurrency & Single-Writer Model
@@ -102,6 +119,9 @@ pio run
 
 # Build and upload via USB (required for first flash)
 pio run -t upload
+
+# Upload web UI filesystem (do this after first firmware flash)
+pio run -t uploadfs
 ```
 
 ### Over-The-Air (OTA) Updates
@@ -262,73 +282,7 @@ if (index + len >= total) {
 
 ## Adding a New Effect
 
-Effects are pure functions registered with metadata. Each effect lives in its own `.cpp` file:
-
-1. Create a new file `src/effects/meteor.cpp`:
-   ```cpp
-   #include "effects.h"
-   #include "../core/effect_registry.h"
-   
-   namespace lume {
-   
-   void effectMeteor(SegmentView& view, const EffectParams& params, 
-                     uint32_t frame, bool firstFrame) {
-       // Access segment parameters
-       uint8_t speed = params.speed;
-       CRGB color = params.colors[0];
-       
-       // For stateful effects, use segment scratchpad
-       // (available via the segment, not shown here)
-       
-       // Write to LEDs via the view
-       for (uint16_t i = 0; i < view.length; i++) {
-           view[i] = color;  // Handles reversal automatically
-       }
-   }
-   
-   // Register the effect with metadata
-   REGISTER_EFFECT("meteor", "Meteor", EffectCategory::Moving, effectMeteor);
-   
-   }  // namespace lume
-   ```
-
-2. Add the include to `src/effects/effects.h`:
-   ```cpp
-   #include "meteor.cpp"
-   ```
-
-**Effect function signature:**
-- `SegmentView& view` - Virtual LED range (use `view[i]` to access LEDs)
-- `const EffectParams& params` - Speed, intensity, colors, palette
-- `uint32_t frame` - Frame counter for timing
-- `bool firstFrame` - True when effect just started (initialize state)
-
-**Using scratchpad for state:**
-```cpp
-struct MeteorState {
-    uint16_t position;
-    uint8_t trail[64];
-};
-
-void effectMeteor(SegmentView& view, const EffectParams& params, 
-                  uint32_t frame, bool firstFrame) {
-    // Validate scratchpad size (checked at registration time)
-    static_assert(sizeof(MeteorState) <= 512, "State too large");
-    
-    // Get typed pointer to scratchpad
-    auto* state = reinterpret_cast<MeteorState*>(params.scratchpad);
-    
-    if (firstFrame) {
-        state->position = 0;
-        memset(state->trail, 0, sizeof(state->trail));
-    }
-    
-    // Use state->position, state->trail, etc.
-}
-
-// Register with state size validation
-REGISTER_EFFECT("meteor", "Meteor", EffectCategory::Moving, effectMeteor);
-```
+See [ADDING_EFFECTS.md](ADDING_EFFECTS.md) for the complete guide to creating custom LED effects with registration macros, parameter usage, and best practices.
 
 ---
 
@@ -408,14 +362,16 @@ logMemoryStats(LogTag::MAIN, "after wifi connect");
 
 ---
 
-## FreeRTOS Tasks
+## AI Integration
 
-| Task | Core | Priority | Stack | Purpose |
-|------|------|----------|-------|---------|
-| Main loop | 1 | 1 | Default | LED updates, web server |
-| Anthropic | 0 | 5 | 16KB | Async HTTPS calls |
+The AI prompt feature uses Anthropic's Claude API via synchronous HTTPS requests:
 
-The AI client runs on Core 0 to avoid blocking LED updates on Core 1.
+- Configure API key and model in web UI settings
+- Requests are handled directly in the web handler (no background tasks)
+- System prompt includes available effects and their parameters
+- Response is parsed as JSON and applied to the controller
+
+See [api/prompt.cpp](../src/api/prompt.cpp) for implementation.
 
 ---
 
@@ -471,4 +427,4 @@ curl -X POST http://lume.local/api/pixels \
 - [ESPAsyncWebServer](https://github.com/me-no-dev/ESPAsyncWebServer)
 - [ArduinoJson](https://arduinojson.org/)
 - [E1.31/sACN Specification](https://tsp.esta.org/tsp/documents/docs/ANSI_E1-31-2018.pdf)
-- [OpenRouter API](https://openrouter.ai/docs)
+- [Anthropic API](https://docs.anthropic.com/)

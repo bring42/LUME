@@ -89,6 +89,13 @@ public:
     void setTargetFps(uint16_t fps) { targetFps = fps; }
     uint16_t getTargetFps() const { return targetFps; }
     
+    // --- Nightlight ---
+    
+    void startNightlight(uint16_t durationSeconds, uint8_t targetBrightness);
+    void stopNightlight();
+    bool isNightlightActive() const { return nightlightActive; }
+    float getNightlightProgress() const;
+    
     // --- FastLED passthrough ---
     
     void setColorCorrection(CRGB correction) {
@@ -154,6 +161,13 @@ private:
     // State
     bool power;
     uint8_t globalBrightness;
+    
+    // Nightlight state
+    bool nightlightActive;
+    uint32_t nightlightStartTime;
+    uint16_t nightlightDuration;  // in seconds
+    uint8_t nightlightStartBrightness;
+    uint8_t nightlightTargetBrightness;
     
     // Protocol handling
     static constexpr uint8_t MAX_PROTOCOLS = 4;

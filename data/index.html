@@ -1,0 +1,502 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LUME</title>
+    <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <button class="config-toggle" onclick="openConfigModal()" title="Configuration">
+                ⚙️
+            </button>
+            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+                <span id="themeIcon">🌙</span>
+            </button>
+            <h1 style="font-weight: 200; letter-spacing: 0.15em;">LUME</h1>
+            <p>AI-Powered LED Control</p>
+        </header>
+        
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-dot" id="wifiDot"></div>
+                <span id="wifiStatus">Connecting...</span>
+            </div>
+            <div class="status-item">
+                <span id="ipAddress">--</span>
+            </div>
+            <div class="status-item">
+                <span id="uptime">--</span>
+            </div>
+        </div>
+        
+        <!-- AI Prompt -->
+        <div class="card">
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <textarea id="aiPrompt" 
+                    placeholder="🤖 Tell me what you want your lights to do..."
+                    style="flex: 1; height: 42px; padding: 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: inherit; font-size: 14px; resize: none;"></textarea>
+                <button class="btn btn-primary" onclick="sendAIPrompt()" style="height: 42px; padding: 0 24px; white-space: nowrap;">
+                    ✨ Apply
+                </button>
+            </div>
+            
+            <div id="aiStatus" style="margin-top: 12px; padding: 12px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); display: none;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <div class="spinner" style="width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                    <span id="aiStatusText">Processing...</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Power & Brightness -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Power & Brightness</span>
+                <label class="toggle">
+                    <input type="checkbox" id="powerToggle" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            
+            <div class="form-group">
+                <div class="label-row">
+                    <label for="brightness">Brightness</label>
+                    <span class="label-value" id="brightnessValue">128</span>
+                </div>
+                <input type="range" id="brightness" min="0" max="255" value="128">
+            </div>
+        </div>
+        
+        <!-- Segments -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Segment</span>
+            </div>
+            
+            <div class="form-group">
+                <label>Active Segment</label>
+                <select id="segmentSelector" onchange="switchSegment(parseInt(this.value))" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 14px;">
+                    <option value="0">Segment 0</option>
+                </select>
+            </div>
+        </div>
+        
+        <!-- Effects -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Effect</span>
+            </div>
+            
+            <div class="form-group">
+                <label>Effect Type</label>
+                <div class="tile-row" id="effectTiles">
+                    <div class="tile" data-value="solid" onclick="selectEffect(this)">
+                        <span class="tile-icon">⬤</span>
+                        <span class="tile-label">Solid</span>
+                    </div>
+                    <div class="tile selected" data-value="rainbow" onclick="selectEffect(this)">
+                        <span class="tile-icon">🌈</span>
+                        <span class="tile-label">Rainbow</span>
+                    </div>
+                    <div class="tile" data-value="confetti" onclick="selectEffect(this)">
+                        <span class="tile-icon">🎊</span>
+                        <span class="tile-label">Confetti</span>
+                    </div>
+                    <div class="tile" data-value="fire" onclick="selectEffect(this)">
+                        <span class="tile-icon">🔥</span>
+                        <span class="tile-label">Fire</span>
+                    </div>
+                    <div class="tile" data-value="fireup" onclick="selectEffect(this)">
+                        <span class="tile-icon">🔥</span>
+                        <span class="tile-label">Fire Up</span>
+                    </div>
+                    <div class="tile" data-value="colorwaves" onclick="selectEffect(this)">
+                        <span class="tile-icon">🌊</span>
+                        <span class="tile-label">Waves</span>
+                    </div>
+                    <div class="tile" data-value="wave" onclick="selectEffect(this)">
+                        <span class="tile-icon">〰️</span>
+                        <span class="tile-label">Wave</span>
+                    </div>
+                    <div class="tile" data-value="theater" onclick="selectEffect(this)">
+                        <span class="tile-icon">🎭</span>
+                        <span class="tile-label">Theater</span>
+                    </div>
+                    <div class="tile" data-value="gradient" onclick="selectEffect(this)">
+                        <span class="tile-icon">◐</span>
+                        <span class="tile-label">Gradient</span>
+                    </div>
+                    <div class="tile" data-value="sparkle" onclick="selectEffect(this)">
+                        <span class="tile-icon">✨</span>
+                        <span class="tile-label">Sparkle</span>
+                    </div>
+                    <div class="tile" data-value="pulse" onclick="selectEffect(this)">
+                        <span class="tile-icon">💓</span>
+                        <span class="tile-label">Pulse</span>
+                    </div>
+                    <div class="tile" data-value="breathe" onclick="selectEffect(this)">
+                        <span class="tile-icon">🌬️</span>
+                        <span class="tile-label">Breathe</span>
+                    </div>
+                    <div class="tile" data-value="noise" onclick="selectEffect(this)">
+                        <span class="tile-icon">📺</span>
+                        <span class="tile-label">Noise</span>
+                    </div>
+                    <div class="tile" data-value="meteor" onclick="selectEffect(this)">
+                        <span class="tile-icon">☄️</span>
+                        <span class="tile-label">Meteor</span>
+                    </div>
+                    <div class="tile" data-value="comet" onclick="selectEffect(this)">
+                        <span class="tile-icon">💫</span>
+                        <span class="tile-label">Comet</span>
+                    </div>
+                    <div class="tile" data-value="rain" onclick="selectEffect(this)">
+                        <span class="tile-icon">🌧️</span>
+                        <span class="tile-label">Rain</span>
+                    </div>
+                    <div class="tile" data-value="twinkle" onclick="selectEffect(this)">
+                        <span class="tile-icon">⭐</span>
+                        <span class="tile-label">Twinkle</span>
+                    </div>
+                    <div class="tile" data-value="strobe" onclick="selectEffect(this)">
+                        <span class="tile-icon">⚡</span>
+                        <span class="tile-label">Strobe</span>
+                    </div>
+                    <div class="tile" data-value="sinelon" onclick="selectEffect(this)">
+                        <span class="tile-icon">🎯</span>
+                        <span class="tile-label">Sinelon</span>
+                    </div>
+                    <div class="tile" data-value="scanner" onclick="selectEffect(this)">
+                        <span class="tile-icon">👁️</span>
+                        <span class="tile-label">Scanner</span>
+                    </div>
+                    <div class="tile" data-value="candle" onclick="selectEffect(this)">
+                        <span class="tile-icon">🕯️</span>
+                        <span class="tile-label">Candle</span>
+                    </div>
+                    <div class="tile" data-value="pride" onclick="selectEffect(this)">
+                        <span class="tile-icon">🏳️‍🌈</span>
+                        <span class="tile-label">Pride</span>
+                    </div>
+                    <div class="tile" data-value="pacifica" onclick="selectEffect(this)">
+                        <span class="tile-icon">🐚</span>
+                        <span class="tile-label">Pacifica</span>
+                    </div>
+                </div>
+                <input type="hidden" id="effect" value="rainbow">
+            </div>
+            
+            <div class="form-group palette-section">
+                <label>Color Palette</label>
+                <div class="tile-row" id="paletteTiles">
+                    <div class="tile selected" data-value="rainbow" onclick="selectPalette(this)">
+                        <span class="tile-label">Rainbow</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, red, orange, yellow, green, blue, violet);"></div>
+                    </div>
+                    <div class="tile" data-value="lava" onclick="selectPalette(this)">
+                        <span class="tile-label">Lava</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, #000, #f00, #ff0, #fff);"></div>
+                    </div>
+                    <div class="tile" data-value="ocean" onclick="selectPalette(this)">
+                        <span class="tile-label">Ocean</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, #000040, #0080ff, #00ffff, #80ffff);"></div>
+                    </div>
+                    <div class="tile" data-value="party" onclick="selectPalette(this)">
+                        <span class="tile-label">Party</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, #5500ab, #84007c, #b5004b, #e5001b, #e81700, #ab7700);"></div>
+                    </div>
+                    <div class="tile" data-value="forest" onclick="selectPalette(this)">
+                        <span class="tile-label">Forest</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, #004400, #228b22, #90ee90, #006400);"></div>
+                    </div>
+                    <div class="tile" data-value="cloud" onclick="selectPalette(this)">
+                        <span class="tile-label">Cloud</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, #00bfff, #87ceeb, #fff, #87ceeb);"></div>
+                    </div>
+                    <div class="tile" data-value="heat" onclick="selectPalette(this)">
+                        <span class="tile-label">Heat</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, #000, #800, #f00, #ff0, #fff);"></div>
+                    </div>
+                    <div class="tile" data-value="sunset" onclick="selectPalette(this)">
+                        <span class="tile-label">Sunset</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, #ff8c00, #ff1493, #9400d3, #191970);"></div>
+                    </div>
+                    <div class="tile" data-value="autumn" onclick="selectPalette(this)">
+                        <span class="tile-label">Autumn</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, #8b4513, #d2691e, #ffa500, #b22222);"></div>
+                    </div>
+                    <div class="tile" data-value="retro" onclick="selectPalette(this)">
+                        <span class="tile-label">Retro</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, #00ffff, #8a2be2, #ff00ff, #ff1493);"></div>
+                    </div>
+                    <div class="tile" data-value="ice" onclick="selectPalette(this)">
+                        <span class="tile-label">Ice</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, #fff, #87ceeb, #4682b4, #1e3a5f);"></div>
+                    </div>
+                    <div class="tile" data-value="pink" onclick="selectPalette(this)">
+                        <span class="tile-label">Pink</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, #ffb6c1, #ff69b4, #ff00ff, #c71585);"></div>
+                    </div>
+                    <div class="tile" data-value="custom" onclick="selectPalette(this)">
+                        <span class="tile-label">Custom</span>
+                        <div class="palette-preview" style="background: linear-gradient(90deg, var(--primary), var(--text-muted));"></div>
+                    </div>
+                </div>
+                <input type="hidden" id="palette" value="rainbow">
+            </div>
+            
+            <div class="form-group speed-control">
+                <div class="label-row">
+                    <label for="speed">Speed</label>
+                    <span class="label-value" id="speedValue">100</span>
+                </div>
+                <input type="range" id="speed" min="1" max="200" value="100">
+            </div>
+            
+            <div class="form-group intensity-control">
+                <div class="label-row">
+                    <label for="intensity">Intensity</label>
+                    <span class="label-value" id="intensityValue">128</span>
+                </div>
+                <input type="range" id="intensity" min="0" max="255" value="128">
+            </div>
+            
+            <div class="form-group color-controls">
+                <label>Colors</label>
+                <div class="color-row">
+                    <div class="color-picker primary-color">
+                        <label style="font-size: 12px; color: var(--text-muted);">Primary</label>
+                        <input type="color" id="primaryColor" value="#0000ff">
+                    </div>
+                    <div class="color-picker secondary-color">
+                        <label style="font-size: 12px; color: var(--text-muted);">Secondary</label>
+                        <input type="color" id="secondaryColor" value="#800080">
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Nightlight -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">🌙 Nightlight</span>
+                <label class="toggle">
+                    <input type="checkbox" id="nightlightToggle">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            
+            <div id="nightlightControls" class="">
+                <div class="form-group">
+                    <div class="label-row">
+                        <label for="nightlightDuration">Duration</label>
+                        <span class="label-value" id="nightlightDurationValue">15 min</span>
+                    </div>
+                    <input type="range" id="nightlightDuration" min="1" max="60" value="15">
+                </div>
+                
+                <div class="form-group">
+                    <div class="label-row">
+                        <label for="nightlightTarget">Target Brightness</label>
+                        <span class="label-value" id="nightlightTargetValue">0 (off)</span>
+                    </div>
+                    <input type="range" id="nightlightTarget" min="0" max="255" value="0">
+                </div>
+                
+                <div id="nightlightProgress" style="display: none;">
+                    <div class="form-group">
+                        <label>Progress</label>
+                        <div style="background: var(--border); border-radius: 4px; height: 8px; overflow: hidden;">
+                            <div id="nightlightProgressBar" style="background: var(--primary); height: 100%; width: 0%; transition: width 1s;"></div>
+                        </div>
+                        <span style="font-size: 12px; color: var(--text-muted);" id="nightlightProgressText">0%</span>
+                    </div>
+                </div>
+                
+                <div class="btn-group">
+                    <button class="btn btn-primary" id="startNightlightBtn" onclick="startNightlight()">Start Nightlight</button>
+                    <button class="btn btn-outline" id="stopNightlightBtn" onclick="stopNightlight()" style="display: none;">Stop</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Configuration Modal -->
+        <div id="configModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-title">⚙️ Configuration</span>
+                    <button class="modal-close" onclick="closeConfigModal()">×</button>
+                </div>
+                <div>
+                
+                <!-- Segments Section -->
+                <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--border);">
+                    <h3 style="font-size: 16px; font-weight: 500; margin-bottom: 12px;">LED Segments</h3>
+                    <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+                        Split your LED strip into multiple independently controlled segments.
+                    </p>
+                    
+                    <div id="segmentsList" style="margin-bottom: 12px;">
+                        <!-- Populated by loadSegments() -->
+                    </div>
+                    
+                    <div style="display: flex; gap: 8px; align-items: flex-end;">
+                        <div class="form-group" style="flex: 1; margin: 0;">
+                            <label for="newSegmentStart">Start LED</label>
+                            <input type="number" id="newSegmentStart" min="0" max="300" value="0" placeholder="0">
+                        </div>
+                        <div class="form-group" style="flex: 1; margin: 0;">
+                            <label for="newSegmentLength">Length</label>
+                            <input type="number" id="newSegmentLength" min="1" max="300" value="160" placeholder="160">
+                        </div>
+                        <button class="btn btn-primary" onclick="addSegment()" style="height: 42px;">+ Add Segment</button>
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="wifiSSID">WiFi SSID</label>
+                        <input type="text" id="wifiSSID" placeholder="Your WiFi network">
+                    </div>
+                    <div class="form-group">
+                        <label for="wifiPassword">WiFi Password</label>
+                        <input type="password" id="wifiPassword" placeholder="Password">
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>LED Data Pin</label>
+                        <input type="text" value="GPIO 21 (compile-time)" disabled style="opacity: 0.7; cursor: not-allowed;">
+                        <small style="color: var(--text-secondary); font-size: 11px;">Set LED_DATA_PIN in <a href="https://github.com/bring42/LUME/blob/main/src/constants.h" target="_blank">constants.h</a></small>
+                    </div>
+                    <div class="form-group">
+                        <label for="ledCount">LED Count</label>
+                        <input type="number" id="ledCount" value="160" min="1" max="300">
+                    </div>
+                </div>
+                
+                <!-- sACN (E1.31) Settings -->
+                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="sacnEnabled" style="width: auto;">
+                            <span>Enable sACN (E1.31) Input</span>
+                        </label>
+                        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                            Receive DMX data over network. Multicast: 239.255.0.X
+                        </p>
+                    </div>
+                    
+                    <div id="sacnSettings" style="max-height: 0; overflow: hidden; transition: max-height 0.3s ease;">
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="sacnUniverse">Universe</label>
+                                <input type="number" id="sacnUniverse" value="1" min="1" max="63999">
+                            </div>
+                            <div class="form-group">
+                                <label for="sacnStartChannel">Start Channel</label>
+                                <input type="number" id="sacnStartChannel" value="1" min="1" max="512">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="sacnStatus" class="status-item" style="margin-top: 8px;">
+                        <div class="status-dot offline" id="sacnDot"></div>
+                        <span id="sacnStatusText">Not enabled</span>
+                    </div>
+                </div>
+                
+                <!-- AI Settings -->
+                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+                    <h3 style="font-size: 16px; font-weight: 500; margin-bottom: 12px;">🤖 AI Assistant</h3>
+                    <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+                        Configure AI model for natural language control
+                    </p>
+                    
+                    <div class="form-group">
+                        <label for="aiApiKey">Anthropic API Key</label>
+                        <input type="password" id="aiApiKey" placeholder="sk-ant-...">
+                        <small style="color: var(--text-secondary); font-size: 11px;">
+                            Get your key at <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a>
+                        </small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="aiModel">Model</label>
+                        <select id="aiModel" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 14px;">
+                            <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                            <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+                            <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- MQTT Settings -->
+                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="mqttEnabled" style="width: auto;">
+                            <span>Enable MQTT</span>
+                        </label>
+                        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                            Connect to MQTT broker for Home Assistant / automation
+                        </p>
+                    </div>
+                    
+                    <div id="mqttSettings" style="max-height: 0; overflow: hidden; transition: max-height 0.3s ease;">
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="mqttBroker">Broker (hostname/IP)</label>
+                                <input type="text" id="mqttBroker" placeholder="192.168.1.100">
+                            </div>
+                            <div class="form-group">
+                                <label for="mqttPort">Port</label>
+                                <input type="number" id="mqttPort" value="1883" min="1" max="65535">
+                            </div>
+                        </div>
+                        
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label for="mqttUsername">Username (optional)</label>
+                                <input type="text" id="mqttUsername" placeholder="">
+                            </div>
+                            <div class="form-group">
+                                <label for="mqttPassword">Password (optional)</label>
+                                <input type="password" id="mqttPassword" placeholder="">
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="mqttTopicPrefix">Topic Prefix</label>
+                            <input type="text" id="mqttTopicPrefix" value="lume" placeholder="lume">
+                            <p style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                                Topics: {prefix}/state, {prefix}/set, {prefix}/status
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div id="mqttStatus" class="status-item" style="margin-top: 8px;">
+                        <div class="status-dot offline" id="mqttDot"></div>
+                        <span id="mqttStatusText">Not enabled</span>
+                    </div>
+                </div>
+                
+                <div class="btn-group" style="margin-top: 16px;">
+                    <button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
+                    <button class="btn btn-outline" onclick="loadConfig()">Reload</button>
+                </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="toast" id="toast"></div>
+    
+    <script src="/assets/app.js"></script>
+</body>
+</html>

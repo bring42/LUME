@@ -69,6 +69,6 @@ void effectWave(SegmentView& view, const EffectParams& params, uint32_t frame, b
     }
 }
 
-REGISTER_EFFECT_MOVING(effectWave, "wave", "Wave");
+REGISTER_EFFECT_FULL(effectWave, "wave", "Wave", Moving, false, true, false, true, true, 0, 1);
 
 } // namespace lume
