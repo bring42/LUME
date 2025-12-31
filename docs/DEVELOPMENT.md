@@ -351,7 +351,7 @@ ArduinoOTA.onEnd([]() {
 ## Memory Notes
 
 - **SRAM:** ~180KB available, LED buffer uses ~4.8KB for 300 LEDs
-- **PSRAM:** 8MB available on T-Display S3 (`-DBOARD_HAS_PSRAM`)
+- **PSRAM:** Optional (8MB available on T-Display S3). Flag `-DBOARD_HAS_PSRAM` enables it if present. Default config uses only ~6KB of 512KB internal SRAM.
 - **Flash:** ~4MB, code uses ~180KB
 
 Use `logMemoryStats()` to check heap status:

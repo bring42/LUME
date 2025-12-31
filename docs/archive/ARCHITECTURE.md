@@ -86,7 +86,7 @@ bool enqueueCommand(const Command& cmd) {
 
 Effects that need persistent state (fire, meteors) use a fixed-size scratchpad per segment:
 
-> **Memory budget:** 512 bytes × 8 segments = 4 KB worst-case. Trivial on ESP32-S3 with PSRAM.
+> **Memory budget:** 512 bytes × 8 segments = 4 KB worst-case. Trivial on ESP32-S3's 512KB internal SRAM.
 
 ```cpp
 // In Segment
@@ -694,7 +694,7 @@ Some effects need frame-persistent state (e.g., fire cooling array).
 | Union in Segment | Type-safe | Grows fragile as effects increase |
 | Fixed scratchpad | Flexible, segment-aware | Effects interpret raw bytes |
 
-**Memory cost:** 512 bytes × MAX_SEGMENTS (8) = 4 KB. Acceptable on ESP32-S3 with PSRAM.
+**Memory cost:** 512 bytes × MAX_SEGMENTS (8) = 4 KB. Acceptable on ESP32-S3's 512KB internal SRAM.
 
 **Decision:** Fixed-size scratchpad (`uint8_t[512]`) per segment with version counter. Effects interpret bytes as needed. Version increments on effect change, triggering re-initialization. See [Invariant 3](#invariant-3-fixed-scratchpad-for-effect-state).
 

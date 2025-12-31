@@ -25,7 +25,9 @@ constexpr uint16_t OTA_PORT = 3232;
 constexpr uint16_t SACN_PORT = 5568;
 
 // --- LED Configuration ---
-#define LED_DATA_PIN 21                 // GPIO pin for LED data (change this for your wiring)
+// ⚠️ IMPORTANT: Set this to the GPIO pin connected to your LED strip's data line
+// Common pins: 2, 5, 16, 21 (avoid strapping pins: 0, 45, 46)
+#define LED_DATA_PIN 21                 // ← CHANGE THIS for your board wiring
 
 constexpr uint16_t MAX_LED_COUNT = 300;
 constexpr uint16_t LEDS_PER_UNIVERSE = 170;

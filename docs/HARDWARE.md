@@ -1,17 +1,88 @@
 # Hardware Setup Guide
 
+## Board Configuration
+
+LUME is configured for **generic ESP32-S3 DevKit boards** by default (compiles successfully, not yet tested in production). It has been thoroughly tested on the **LILYGO T-Display S3** and should work with any ESP32-S3 board. Here's how to set it up for your specific hardware:
+
+> 💾 **PSRAM is optional.** The default configuration (300 LEDs, 8 segments) uses only ~6KB of the ESP32-S3's 512KB internal SRAM. PSRAM is only needed if you want to significantly increase the LED count beyond 300.
+
+### Step 1: Identify Your Board
+
+**Have a generic ESP32-S3 DevKit?** The default configuration should work. Skip to [Wiring](#wiring-diagram) and test it out!
+
+**Have a LILYGO T-Display S3?** (Currently the only fully tested board) You need to configure these files:
+
+#### 1. Set Board Environment in `platformio.ini`
+
+**For generic ESP32-S3 boards:** Already configured! The default is `esp32-s3-devkitc-1`.
+
+**For LILYGO T-Display S3:** Change the default environment:
+
+```ini
+[platformio]
+default_envs = lilygo-t-display-s3    ; ← Change from esp32-s3-devkitc-1
+```
+
+**For other specific boards:** Find your board identifier:
+```bash
+pio boards esp32-s3
+```
+
+Then either:
+- Use an existing environment if available, or
+- Create a new `[env:yourboard]` section (copy from `esp32-s3-devkitc-1` and change the `board =` line)
+
+**Common board names:**
+- `esp32-s3-devkitc-1` — Generic ESP32-S3 DevKit (most common)
+- `esp32s3box` — ESP32-S3-BOX
+- `adafruit_feather_esp32s3` — Adafruit Feather ESP32-S3
+- `um_tinys3` — Unexpected Maker TinyS3
+- `lolin_s3` — WEMOS/Lolin S3
+
+**Can't find your exact board?** Use `esp32-s3-devkitc-1` as a generic fallback — it usually works.
+
+#### 2. Set LED Data Pin in `src/constants.h`
+
+Check your board's pinout diagram and choose a free GPIO pin:
+```cpp
+#define LED_DATA_PIN 21    // ← Change to your chosen pin
+```
+
+**Safe GPIO choices for ESP32-S3:**
+- ✅ Good: 2, 5, 12-14, 16-21, 35-37, 47-48
+- ⚠️ Avoid: 0 (boot button), 19-20 (USB), 45-46 (strapping pins)
+
+#### 3. Adjust Build Flags (If Needed)
+
+Most boards work with the default settings. If you get compile errors, try removing these flags from `platformio.ini`:
+
+```ini
+build_flags = 
+    ; -DBOARD_HAS_PSRAM         ; ← Optional: Only needed for >300 LEDs
+    ; -DARDUINO_USB_CDC_ON_BOOT=1  ; ← Comment out for upload issues
+```
+
+---
+
 ## Supported Hardware
 
-**Primary Target:**
-- **LILYGO T-Display S3** (ESP32-S3 with 8MB PSRAM)
+**Tested & Confirmed:**
+- **LILYGO T-Display S3** (ESP32-S3, 8MB PSRAM available but not required) ✅
 
-**Should Also Work:**
-- Generic ESP32-S3 DevKit boards
-- ESP32-S2 (single core, less RAM)
+**Compiles Successfully & Should Work:**
+- **Generic ESP32-S3 DevKit** (esp32-s3-devkitc-1) — Default configuration
+- ESP32-S3-BOX
+- Adafruit Feather ESP32-S3
+- Other ESP32-S3 boards (with or without PSRAM)
+
+> 🧪 **Help expand this list!** If you've successfully tested LUME on a different board, please [open an issue](https://github.com/bring42/LUME/issues) or PR to add it to the confirmed list.
 
 **Not Supported:**
-- ESP8266 (too limited)
-- Original ESP32 (prefer S3 for PSRAM/USB-OTG)
+- ESP8266 (insufficient RAM/performance)
+- Original ESP32 (use S3 for better performance and USB-C)
+- ESP32-S2 (single core, might work but not recommended)
+
+> **Got it working on a different board?** Please open a PR to add it to this list!
 
 ---
 
@@ -30,10 +101,10 @@
 
 ```
                     ┌─────────────────┐
-                    │  T-Display S3   │
-                    │                 │
-        ┌───────────┤ GPIO 21 (Data)  │
-        │           │                 │
+                    │   ESP32-S3      │
+                    │     Board       │
+        ┌───────────┤ GPIO 21* (Data) │  *Or your chosen pin
+        │           │                 │   (set in constants.h)
         │    ┌──────┤ GND             │
         │    │      │                 │
         │    │      └─────────────────┘
@@ -112,16 +183,21 @@ To use a different GPIO pin:
 
 > **Note:** The pin is set at compile time (FastLED requirement). Changing it requires reflashing.
 
-### Recommended GPIOs
+### Recommended GPIOs for ESP32-S3
 
-| GPIO | T-Display S3 | Notes |
-|------|--------------|-------|
-| 21 | ✅ Default | Works great |
-| 16 | ✅ Available | Alternative |
-| 17 | ✅ Available | Alternative |
-| 18 | ✅ Available | Alternative |
+| GPIO | Safe? | Notes |
+|------|-------|-------|
+| 2, 5 | ✅ Good | Commonly available, safe choices |
+| 12-14 | ✅ Good | General purpose |
+| 16-18 | ✅ Good | General purpose |
+| 21 | ✅ Default | Current default pin |
+| 35-37 | ✅ Good | General purpose |
+| 47-48 | ✅ Good | General purpose, but check your board |
+| 0 | ⚠️ Avoid | Boot button |
+| 19-20 | ⚠️ Avoid | USB D- and D+ |
+| 45-46 | ⚠️ Avoid | Strapping pins, can cause boot issues |
 
-**Avoid:** GPIOs used for flash, display, touch, or boot strapping.
+**Check your board's pinout!** Some boards use certain GPIOs for onboard peripherals (display, buttons, SD card, etc.). Consult your board's documentation or schematic.
 
 ---
 
@@ -149,7 +225,7 @@ FastLED.addLeds<APA102, DATA_PIN, CLOCK_PIN, BGR>(leds_, ledCount_);
 
 ## First Power-On
 
-1. **Connect USB-C** to T-Display S3
+1. **Connect USB-C or Micro-USB** to your ESP32-S3 board (cable must support data, not just charging)
 2. **Flash firmware** via PlatformIO:
    ```bash
    pio run -t upload

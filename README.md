@@ -51,29 +51,97 @@ LUME brings **AI-powered control** to your LED strips without sacrificing flexib
 
 ### What You Need
 
-- **ESP32-S3 Board** (T-Display S3, DevKitC-1, or any S3 with PSRAM)
-- **WS2812B LED Strip** (default: GPIO 21 — set `LED_DATA_PIN` in [constants.h](src/constants.h))
-- **5V Power Supply** (sized for your LED count)
+- **ESP32-S3 Board** (tested on LILYGO T-Display S3, should work with most ESP32-S3 boards)
+- **WS2812B LED Strip**
+- **5V Power Supply** (sized for your LED count: ~60mA per LED at full white)
+- **PlatformIO** installed ([get it here](https://platformio.org/install/ide?install=vscode))
 
-### Flash & Go
+> 💾 **PSRAM:** Optional. The default 300 LED limit uses only ~6KB of RAM. PSRAM enables future expansion beyond 300 LEDs.
+
+> 🧪 **Hardware Testing Status:** Currently tested on LILYGO T-Display S3. Generic ESP32-S3 configuration compiles successfully and should work on most ESP32-S3 boards. [Report your success!](https://github.com/bring42/LUME/issues)
+
+### Step 1: Clone & Configure
 
 ```bash
 git clone https://github.com/bring42/LUME.git
 cd LUME
-pio run -t upload
 ```
 
-That's it. No config files needed.
+### Step 2: Configure for Your Board
 
-### First Boot
+**If you have a generic ESP32-S3 DevKit board:** You're all set! Skip to Step 3.
 
-1. **Power on** your ESP32-S3 board
+**If you have a different ESP32-S3 board (LILYGO T-Display S3, etc.):** Edit these files:
+
+#### `platformio.ini` — Set your environment (if needed)
+
+The default is set to `esp32-s3-devkitc-1` which compiles successfully and should work for most generic ESP32-S3 boards.
+
+**For LILYGO T-Display S3** (currently the only tested board), change the default environment:
+
+```ini
+[platformio]
+default_envs = lilygo-t-display-s3    # ← Change from esp32-s3-devkitc-1
+```
+
+**For other boards:** Add a new `[env:yourboard]` section (copy from an existing one), or run `pio boards esp32-s3` to find your board name and create a custom environment.
+
+**Can't find your board?** Check the [PlatformIO board list](https://registry.platformio.org/platforms/platformio/espressif32/boards).
+
+**Need more help?** See [HARDWARE.md](docs/HARDWARE.md#board-configuration) for detailed board configuration guidance, including troubleshooting common issues.
+
+#### [src/constants.h](src/constants.h) — Set your LED pin
+
+```cpp
+#define LED_DATA_PIN 21    // ← Change to your wiring (common: 2, 5, 16, 21)
+```
+
+> 💡 **Tip:** If you're unsure which pin to use, GPIO 2 or GPIO 16 are safe bets for most ESP32-S3 boards according to claude.
+
+### Step 3: Flash
+
+```bash
+pio run -t upload       # Upload firmware
+pio run -t uploadfs     # Upload web UI files
+```
+
+> ⚠️ **First flash must be via USB.** After that, you can use OTA (see [platformio.ini](platformio.ini) for OTA setup).
+
+### Step 4: First Boot Setup
+
+1. **Power on** your ESP32-S3 board (unplug/replug USB or connect to external 5V power)
 2. **Connect** to WiFi network `LUME-Setup` (password: `ledcontrol`)
-3. **Open** `http://192.168.4.1`
-4. **Configure** your home WiFi, LED count, and [Anthropic API key](https://console.anthropic.com/)
-5. **Done!** Access via `http://lume.local`
+3. **Open** `lume.local` in your browser
+4. **Configure** your home WiFi, LED count, and [Anthropic API key](https://console.anthropic.com/) (optional)
+5. **Done!** Hit save configuration, reboot the board and connect to your WiFi. Access via `http://lume.local`
 
 > 💾 **Your settings are saved to flash memory** and survive firmware updates. You only need to configure once.
+
+<details>
+<summary>⚠️ <b>Troubleshooting Board Issues</b></summary>
+
+**Build fails or upload hangs?** Your board might need different settings:
+
+1. **Check build flags in `platformio.ini`**  
+   The `-DBOARD_HAS_PSRAM` flag is optional (only needed for >300 LEDs). Some boards may have issues with `-DARDUINO_USB_CDC_ON_BOOT=1`. Try removing these flags if you get compile errors.
+
+2. **Upload not working?**  
+   - Make sure your USB cable supports data (not just charging)
+   - Try holding the BOOT button while uploading
+   - Some boards need `upload_speed = 115200` instead of `921600`
+
+3. **LEDs not lighting up?**  
+   - Double-check `LED_DATA_PIN` in [constants.h](src/constants.h)
+   - Verify your LED strip ground is connected to ESP32 ground
+   - Check that your power supply is adequate
+
+4. **Can't find board type?**  
+   - Use `esp32-s3-devkitc-1` as a generic fallback
+   - Search your board name + "platformio" to find community configs
+
+**Still stuck?** Open an issue with your board model and error message.
+
+</details>
 
 <details>
 <summary>🛠️ <b>Dev Notes</b></summary>
@@ -87,6 +155,20 @@ That's it. No config files needed.
 ```
 
 **Full erase:** To wipe all saved settings: `pio run -t erase`
+
+</details>
+
+<details>
+<summary>📋 <b>Configuration Quick Reference</b></summary>
+
+What you need to change for different boards:
+
+| Your Board | Files to Edit | What to Change |
+|------------|---------------|----------------|
+| **ESP32-S3 DevKitC-1** (untested) | `constants.h` | Set `LED_DATA_PIN` to your wiring |
+| **LILYGO T-Display S3** (tested ✅) | `platformio.ini` | Set `default_envs = lilygo-t-display-s3` |
+| **Other ESP32-S3** (should work) | `platformio.ini`<br>`constants.h` | Find board with `pio boards esp32-s3`<br>Set `LED_DATA_PIN` to your wiring |
+| **Having issues?** | See [HARDWARE.md](docs/HARDWARE.md#board-configuration) | Detailed troubleshooting & build flags |
 
 </details>
 
@@ -184,11 +266,11 @@ See [Hardware Setup](docs/HARDWARE.md) for power calculations and GPIO configura
 - **Firmware size:** ~1.2MB (ESP32-S3, including all features and web UI)
 - **Web UI assets:** ~200KB (served from LittleFS)
 - **RAM usage:** ~120KB at idle (with 150 LEDs, 2 segments, and web server active)
-- **Max LEDs:** 300 (default, can be increased with more PSRAM)
+- **Max LEDs:** 300 (default, ~6KB RAM usage — can be increased if you have PSRAM)
 - **Frame rate:** 60 FPS typical with up to 300 LEDs and most effects
 - **Startup time:** <2s to web UI ready
 
-Tested on LilyGo T-Display S3 and ESP32-S3 DevKitC-1. See [src/constants.h](src/constants.h) for hardware limits and tuning.
+Tested on LILYGO T-Display S3. Generic ESP32-S3 configuration compiles successfully. See [src/constants.h](src/constants.h) for hardware limits and tuning.
 
 ---
 ## 🗺️ What's Coming
