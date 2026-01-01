@@ -21,7 +21,7 @@ bool Storage::loadConfig(Config& config) {
     config.wifiSSID = prefs.getString("ssid", "");
     config.wifiPassword = prefs.getString("pass", "");
     config.aiApiKey = prefs.getString("ai_apikey", "");
-    config.aiModel = prefs.getString("ai_model", "claude-3-5-sonnet-20241022");
+    config.aiModel = prefs.getString("ai_model", "claude-3-5-haiku-20241022");
     config.authToken = prefs.getString("authtoken", "");
     config.ledCount = prefs.getUShort("ledcount", 160);
     config.defaultBrightness = prefs.getUChar("brightness", 128);

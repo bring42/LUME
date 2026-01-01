@@ -115,10 +115,27 @@ bool callAnthropicAPI(const String& userPrompt, String& response, String& error)
             return false;
         }
     } else {
-        error = "API error: " + String(httpCode);
+        // Get detailed error information
+        String payload = "";
         if (httpCode > 0) {
-            String payload = http.getString();
-            LOG_ERROR(LogTag::WEB, "API error %d: %s", httpCode, payload.c_str());
+            payload = http.getString();
+            LOG_ERROR(LogTag::WEB, "Anthropic API error %d: %s", httpCode, payload.c_str());
+            
+            // Try to parse error details from response
+            JsonDocument errorDoc;
+            if (deserializeJson(errorDoc, payload) == DeserializationError::Ok) {
+                if (errorDoc["error"]["message"].is<const char*>()) {
+                    String errorMsg = errorDoc["error"]["message"].as<String>();
+                    error = "API error (" + String(httpCode) + "): " + errorMsg;
+                } else {
+                    error = "API error: " + String(httpCode) + " - " + payload.substring(0, 100);
+                }
+            } else {
+                error = "API error: " + String(httpCode) + " - " + payload.substring(0, 100);
+            }
+        } else {
+            LOG_ERROR(LogTag::WEB, "HTTP request failed: %d", httpCode);
+            error = "HTTP request failed: " + String(httpCode);
         }
         http.end();
         return false;

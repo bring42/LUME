@@ -33,7 +33,7 @@ struct Config {
         wifiSSID(""),
         wifiPassword(""),
         aiApiKey(""),
-        aiModel("claude-3-5-sonnet-20241022"),
+        aiModel("claude-3-5-haiku-20241022"),
         authToken(""),
         ledCount(160),
         defaultBrightness(128),

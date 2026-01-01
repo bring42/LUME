@@ -90,7 +90,18 @@
             
             const response = await fetch('/api' + endpoint, options);
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
+                // Try to extract error message from response body
+                try {
+                    const errorData = await response.json();
+                    const errorMsg = errorData.error || `HTTP ${response.status}`;
+                    throw new Error(errorMsg);
+                } catch (e) {
+                    // If parsing fails, throw generic error
+                    if (e.message && !e.message.startsWith('HTTP')) {
+                        throw e; // Re-throw if we successfully parsed the error
+                    }
+                    throw new Error(`HTTP ${response.status}`);
+                }
             }
             return response.json();
         }
@@ -623,7 +634,7 @@
 
                 // AI settings
                 document.getElementById('aiApiKey').value = config.aiApiKey && config.aiApiKey !== '****' ? '' : '';
-                document.getElementById('aiModel').value = config.aiModel || 'claude-3-5-sonnet-20241022';
+                document.getElementById('aiModel').value = config.aiModel || 'claude-3-5-haiku-20241022';
 
                 // sACN settings
                 const sacnEnabled = config.sacnEnabled || false;
@@ -956,8 +967,12 @@
                     statusDiv.style.display = 'none';
                 }
             } catch (e) {
-                showToast('Error: ' + (e.message || 'Network error'), 'error');
-                statusDiv.style.display = 'none';
+                const errorMsg = e.message || 'Network error';
+                showToast('Error: ' + errorMsg, 'error');
+                statusText.textContent = 'Error: ' + errorMsg;
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 5000); // Show error for 5 seconds
                 console.error('AI prompt error:', e);
             }
         }
