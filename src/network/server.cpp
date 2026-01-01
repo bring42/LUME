@@ -53,6 +53,13 @@ static String contentTypeFromPath(const String& path) {
     return "application/octet-stream";
 }
 
+static String cacheControl(const String& path) {
+    if (path.endsWith(".css")) return "private, max-age=604800, immutable";
+    if (path.endsWith(".js")) return "private, max-age=604800, immutable";
+
+    return "no-cache, max-age=0";
+}
+
 static void appendColorArray(JsonArray& arr, const CRGB& color) {
     arr.add(color.r);
     arr.add(color.g);
@@ -397,6 +404,7 @@ void setupServer() {
         }
 
         if (LittleFS.exists(path)) {
+            request->addHeader("Cache-Control", cacheControl(path));
             request->send(LittleFS, path, contentTypeFromPath(path));
             return;
         }
