@@ -4,61 +4,76 @@
 #include <cstdint>
 #include <cstddef>
 
-// ============================================
-// Project-wide Constants
-// ============================================
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️  LED CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════
+// Settings used to configure FastLED in controller.cpp
+// Customize these for your specific hardware setup
 
-// --- Timeouts (milliseconds) ---
-constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 30000;
-constexpr uint32_t SACN_DATA_TIMEOUT_MS = 5000;
-constexpr uint32_t SACN_SOURCE_TIMEOUT_MS = 2500;
-constexpr uint32_t HTTP_CLIENT_TIMEOUT_MS = 30000;
+#define LED_DATA_PIN                21
+#define LED_STRIP_TYPE              WS2812B         // Common addressable RGB LED
+#define LED_COLOR_MODE              GRB             // Byte order (GRB for WS2812B)
 
-// --- Buffer Sizes ---
-constexpr size_t MAX_REQUEST_BODY_SIZE = 16384;  // 16KB max for POST bodies
-constexpr size_t MAX_JSON_STATE_SIZE = 4000;     // NVS limit for state storage
-constexpr size_t SYSTEM_PROMPT_BUFFER_SIZE = 2048;
+// Strip Dimensions
+constexpr uint16_t MAX_LED_COUNT            = 300;
+constexpr uint16_t LEDS_PER_UNIVERSE        = 170;
 
-// --- Network Ports ---
-constexpr uint16_t WEB_SERVER_PORT = 80;
-constexpr uint16_t OTA_PORT = 3232;
-constexpr uint16_t SACN_PORT = 5568;
+// Power Management
+constexpr uint8_t  LED_VOLTAGE              = 5;     // LED strip voltage
+constexpr uint16_t LED_MAX_MILLIAMPS        = 2000;  // Max current (adjust for PSU)
 
-// --- LED Configuration ---
-// ⚠️ IMPORTANT: Set this to the GPIO pin connected to your LED strip's data line
-// Common pins: 2, 5, 16, 21 (avoid strapping pins: 0, 45, 46)
-#define LED_DATA_PIN 21                 // ← CHANGE THIS for your board wiring
+// ═══════════════════════════════════════════════════════════════════════════
+// NETWORK CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════
 
-constexpr uint16_t MAX_LED_COUNT = 300;
-constexpr uint16_t LEDS_PER_UNIVERSE = 170;
+// Network Ports
+constexpr uint16_t WEB_SERVER_PORT          = 80;
+constexpr uint16_t OTA_PORT                 = 3232;
+constexpr uint16_t SACN_PORT                = 5568;
 
-// --- Power Management ---
-constexpr uint8_t LED_VOLTAGE = 5;              // LED strip voltage (5V)
-constexpr uint16_t LED_MAX_MILLIAMPS = 2000;    // Max power draw (2A default, adjust for your PSU)
+// mDNS Hostname (Access via http://lume.local)
+#define MDNS_HOSTNAME "lume"
 
-// --- Nightlight ---
-constexpr uint16_t NIGHTLIGHT_MIN_DURATION = 1;       // Minimum duration (seconds)
-constexpr uint16_t NIGHTLIGHT_MAX_DURATION = 3600;    // Maximum 1 hour (seconds)
-constexpr uint16_t NIGHTLIGHT_DEFAULT_DURATION = 900; // Default 15 minutes (seconds)
-constexpr uint8_t NIGHTLIGHT_DEFAULT_TARGET = 0;      // Default target brightness (0 = off)
+// Timeouts (milliseconds)
+constexpr uint32_t WIFI_RETRY_INTERVAL_MS   = 30000;
+constexpr uint32_t SACN_DATA_TIMEOUT_MS     = 5000;
+constexpr uint32_t SACN_SOURCE_TIMEOUT_MS   = 2500;
+constexpr uint32_t HTTP_CLIENT_TIMEOUT_MS   = 30000;
 
-// --- mDNS ---
-#define MDNS_HOSTNAME "lume"  // Access via http://lume.local
+// ═══════════════════════════════════════════════════════════════════════════
+// SYSTEM LIMITS & BUFFERS
+// ═══════════════════════════════════════════════════════════════════════════
 
-// --- Task Configuration ---
-constexpr size_t ANTHROPIC_TASK_STACK_SIZE = 16384;
-constexpr uint8_t ANTHROPIC_TASK_PRIORITY = 1;
-constexpr uint8_t ANTHROPIC_TASK_CORE = 0;
+// Memory Buffers
+constexpr size_t MAX_REQUEST_BODY_SIZE      = 16384;  // 16KB max POST body
+constexpr size_t MAX_JSON_STATE_SIZE        = 4000;   // NVS storage limit
+constexpr size_t SYSTEM_PROMPT_BUFFER_SIZE  = 2048;
 
-// --- Rate Limiting ---
-constexpr uint32_t PROMPT_RATE_LIMIT_MS = 3000;  // Min time between prompt requests
+// Task Configuration
+constexpr size_t   ANTHROPIC_TASK_STACK_SIZE = 16384;
+constexpr uint8_t  ANTHROPIC_TASK_PRIORITY   = 1;
+constexpr uint8_t  ANTHROPIC_TASK_CORE       = 0;
 
-// --- Watchdog ---
-constexpr uint32_t WATCHDOG_TIMEOUT_SEC = 30;  // Watchdog timeout in seconds
+// System Timing
+constexpr uint32_t WATCHDOG_TIMEOUT_SEC     = 30;     // Auto-reset timeout
+constexpr uint32_t PROMPT_RATE_LIMIT_MS     = 3000;   // Min time between prompts
 
-// --- Version Info ---
+// ═══════════════════════════════════════════════════════════════════════════
+// FEATURE CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Nightlight Settings
+constexpr uint16_t NIGHTLIGHT_MIN_DURATION      = 1;     // Minimum (seconds)
+constexpr uint16_t NIGHTLIGHT_MAX_DURATION      = 3600;  // Maximum (1 hour)
+constexpr uint16_t NIGHTLIGHT_DEFAULT_DURATION  = 900;   // Default (15 min)
+constexpr uint8_t  NIGHTLIGHT_DEFAULT_TARGET    = 0;     // Target brightness (off)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIRMWARE METADATA
+// ═══════════════════════════════════════════════════════════════════════════
+
+#define FIRMWARE_NAME    "LUME"
 #define FIRMWARE_VERSION "1.0.0"
-#define FIRMWARE_NAME "LUME"
 
 #ifndef FIRMWARE_BUILD_HASH
 #define FIRMWARE_BUILD_HASH "dev"

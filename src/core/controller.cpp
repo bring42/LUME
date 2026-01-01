@@ -45,8 +45,8 @@ void LumeController::begin(uint16_t count) {
     }
     
     // Initialize FastLED
-    // Note: LED_DATA_PIN is defined in constants.h
-    FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(leds, ledCount);
+    // Note: LED_DATA_PIN, LED_STRIP_TYPE, and LED_COLOR_MODE are defined in constants.h
+    FastLED.addLeds<LED_STRIP_TYPE, LED_DATA_PIN, LED_COLOR_MODE>(leds, ledCount);
     FastLED.setBrightness(globalBrightness);
     FastLED.setCorrection(TypicalLEDStrip);
     FastLED.setMaxPowerInVoltsAndMilliamps(LED_VOLTAGE, LED_MAX_MILLIAMPS);
