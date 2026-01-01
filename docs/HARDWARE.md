@@ -2,51 +2,63 @@
 
 ## Board Configuration
 
-LUME is configured for **generic ESP32-S3 DevKit boards** by default (compiles successfully, not yet tested in production). It has been thoroughly tested on the **LILYGO T-Display S3** and should work with any ESP32-S3 board. Here's how to set it up for your specific hardware:
+LUME is configured for **ESP32-C3 DevKit boards** by default (compiles successfully, untested on hardware). It has been thoroughly tested on the **LILYGO T-Display S3** (ESP32-S3) and should work with most ESP32-S3 and ESP32-C3 boards. Here's how to set it up for your specific hardware:
 
-> 💾 **PSRAM is optional.** The default configuration (300 LEDs, 8 segments) uses only ~6KB of the ESP32-S3's 512KB internal SRAM. PSRAM is only needed if you want to significantly increase the LED count beyond 300.
+> 💾 **PSRAM:** Optional for ESP32-S3. The default configuration (300 LEDs, 8 segments) uses only ~6KB of RAM. ESP32-C3 has 400KB built-in RAM (no PSRAM support). Both chips handle 300 LEDs comfortably.
 
 ### Step 1: Identify Your Board
 
-**Have a generic ESP32-S3 DevKit?** The default configuration should work. Skip to [Wiring](#wiring-diagram) and test it out!
+**Have a generic ESP32-C3 or ESP32-S3 DevKit?** The default is currently ESP32-C3. Check `platformio.ini` and change if needed!
 
 **Have a LILYGO T-Display S3?** (Currently the only fully tested board) You need to configure these files:
 
 #### 1. Set Board Environment in `platformio.ini`
 
-**For generic ESP32-S3 boards:** Already configured! The default is `esp32-s3-devkitc-1`.
+**Available pre-configured boards:**
+- `esp32-c3-devkitm-1` — Generic ESP32-C3 DevKit (default, untested on hardware)
+- `esp32-s3-devkitc-1` — Generic ESP32-S3 DevKit (untested on hardware)
+- `lilygo-t-display-s3` — LILYGO T-Display S3 (tested ✅)
 
-**For LILYGO T-Display S3:** Change the default environment:
-
+**To change board:**
 ```ini
 [platformio]
-default_envs = lilygo-t-display-s3    ; ← Change from esp32-s3-devkitc-1
+default_envs = lilygo-t-display-s3    ; ← Change to your board
 ```
 
 **For other specific boards:** Find your board identifier:
 ```bash
-pio boards esp32-s3
+pio boards esp32-s3    # For ESP32-S3 boards
+pio boards esp32-c3    # For ESP32-C3 boards
 ```
 
 Then either:
 - Use an existing environment if available, or
-- Create a new `[env:yourboard]` section (copy from `esp32-s3-devkitc-1` and change the `board =` line)
+- Create a new `[env:yourboard]` section (copy from an existing one and change the `board =` line)
 
-**Common board names:**
+**Common ESP32-S3 board names:**
 - `esp32-s3-devkitc-1` — Generic ESP32-S3 DevKit (most common)
 - `esp32s3box` — ESP32-S3-BOX
 - `adafruit_feather_esp32s3` — Adafruit Feather ESP32-S3
 - `um_tinys3` — Unexpected Maker TinyS3
 - `lolin_s3` — WEMOS/Lolin S3
 
-**Can't find your exact board?** Use `esp32-s3-devkitc-1` as a generic fallback — it usually works.
+**Common ESP32-C3 board names:**
+- `esp32-c3-devkitm-1` — Generic ESP32-C3 DevKitM (most common)
+- `esp32-c3-devkitc-02` — ESP32-C3-DevKitC-02
+- `lolin_c3_mini` — WEMOS/Lolin C3 Mini
+- `adafruit_qtpy_esp32c3` — Adafruit QT Py ESP32-C3
+
+**Can't find your exact board?** Use `esp32-s3-devkitc-1` or `esp32-c3-devkitm-1` as generic fallbacks — they usually work.
 
 #### 2. Set LED Data Pin in `src/constants.h`
 
 Check your board's pinout diagram and choose a free GPIO pin:
 ```cpp
-#define LED_DATA_PIN 21    // ← Change to your chosen pin
+#define LED_DATA_PIN 8    // ← Default for ESP32-C3 (change to match your wiring)
 ```
+
+**ESP32-C3 safe pins:** GPIO 0-1, 4-7, 10, 18-21 (avoid GPIO 2-3, 8-9, 11-17 used for flash/strapping)
+**ESP32-S3 safe pins:** Most GPIO pins work, common choices: 2, 5, 16, 21, 48
 
 **Safe GPIO choices for ESP32-S3:**
 - ✅ Good: 2, 5, 12-14, 16-21, 35-37, 47-48

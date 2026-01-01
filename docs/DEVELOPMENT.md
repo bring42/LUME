@@ -124,6 +124,8 @@ pio run -t upload
 pio run -t uploadfs
 ```
 
+> 📦 **Automatic Compression:** Web files are automatically gzipped before upload (~83% size reduction). ESPAsyncWebServer serves compressed versions transparently. See [scripts/gzip_web_files.py](../scripts/gzip_web_files.py) for implementation.
+
 ### Over-The-Air (OTA) Updates
 
 Once you've done the initial USB flash, **never plug in a cable again!** Update wirelessly from anywhere on your network:
@@ -175,6 +177,21 @@ Then just `pio run -t upload` works wirelessly.
 ```bash
 pio device monitor
 ```
+
+### Web UI Development
+
+Frontend assets live in `data/` and are served via LittleFS:
+- Edit `data/index.html`, `data/assets/app.js`, `data/assets/app.css`
+- Run `pio run -t uploadfs` to push changes to device
+- Firmware must be flashed first; `uploadfs` only updates the filesystem partition
+
+**Automatic Gzip Compression:**
+- Script: [scripts/gzip_web_files.py](../scripts/gzip_web_files.py)
+- Trigger: Runs before `uploadfs` and `uploadfsota` commands
+- Result: 88K uncompressed → 15K compressed (~83% reduction)
+- Smart caching: Only recompresses files that have changed
+
+ESPAsyncWebServer automatically serves `.gz` files when they exist, with proper `Content-Encoding` headers. Browsers decompress transparently.
 
 Baud rate: 115200
 

@@ -92,7 +92,7 @@ static void buildControllerState(JsonDocument& doc) {
 }
 
 static bool buildUiStatePayload(String& payload) {
-    StaticJsonDocument<4096> doc;
+    JsonDocument doc;
     buildControllerState(doc);
     payload.clear();
     serializeJson(doc, payload);

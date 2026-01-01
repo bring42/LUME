@@ -26,3 +26,6 @@ jobs:
       
       - name: Build Generic S3 DevKit
         run: pio run -e esp32-s3-devkitc-1
+      
+      - name: Build ESP32-C3 DevKit (untested)
+        run: pio run -e esp32-c3-devkitm-1

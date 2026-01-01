@@ -10,13 +10,20 @@
 // Settings used to configure FastLED in controller.cpp
 // Customize these for your specific hardware setup
 
-#define LED_DATA_PIN                21
-#define LED_STRIP_TYPE              WS2812B         // Common addressable RGB LED
-#define LED_COLOR_MODE              GRB             // Byte order (GRB for WS2812B)
+// NOTE: ESP32-C3 has GPIO 0-21. Safe pins: 0-1, 4-7, 10, 18-21
+// Avoid: GPIO 2-3 (strapping), 8-9 (flash), 11-17 (flash)
+#define LED_DATA_PIN                21               // GPIO8 - adjust for your board
+#define LED_STRIP_TYPE              WS2811         // Common addressable RGB LED
+#define LED_COLOR_MODE              RGB             // Byte order (GRB for WS2812B)
 
 // Strip Dimensions
-constexpr uint16_t MAX_LED_COUNT            = 300;
-constexpr uint16_t LEDS_PER_UNIVERSE        = 170;
+// MAX_LED_COUNT sets compile-time buffer size (3 bytes per LED)
+// Recommended: 1000 LEDs for smooth 60 FPS performance (FastLED RMT timing limit)
+// Memory supports much more: ~10,000 LEDs (S3) or ~5,000 (C3)
+// sACN protocol limit: 8 universes × 170 LEDs = 1,360 LEDs max
+// See FastLED docs for parallel output to drive more strips simultaneously
+constexpr uint16_t MAX_LED_COUNT            = 1000;
+constexpr uint16_t LEDS_PER_UNIVERSE        = 170;   // 512 DMX channels ÷ 3 bytes/LED
 
 // Power Management
 constexpr uint8_t  LED_VOLTAGE              = 5;     // LED strip voltage
