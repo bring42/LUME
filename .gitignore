@@ -12,3 +12,7 @@ src/secrets.h
 
 # macOS
 .DS_Store
+
+node_modules/
+.vite/
+dist/
