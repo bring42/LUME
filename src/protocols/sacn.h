@@ -72,19 +72,19 @@ public:
     
     // --- Protocol interface ---
     
-    bool begin() override;
+    bool begin_impl() override;
     void stop() override;
     
     void setEnabled(bool enabled) override;
-    bool isEnabled() const override;
+    bool isEnabled_impl() const override;
     
     bool update() override;
     bool hasTimedOut(uint32_t timeoutMs = 5000) const override;
-    bool isActive() const override;
+    bool isActive_impl() const override;
     
     bool hasFrameReady() const override;
-    const CRGB* getBuffer() const override;
-    uint16_t getBufferSize() const override;
+    const CRGB* getBufferInternal() const override;
+    uint16_t getBufferSizeInternal() const override;
     void clearFrameReady() override;
     
     const char* getName() const override { return "sACN"; }

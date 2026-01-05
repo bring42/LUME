@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install PlatformIO
+        run: pip install platformio
+      
+      - name: Build T-Display S3
+        run: pio run -e lilygo-t-display-s3
+      
+      - name: Build Generic S3 DevKit
+        run: pio run -e esp32-s3-devkitc-1
+      
+      - name: Build ESP32-C3 DevKit
+        run: pio run -e esp32-c3-devkitm-1
+      
+      - name: Prepare Release Files
+        run: |
+          mkdir -p release
+          cp .pio/build/lilygo-t-display-s3/firmware.bin release/lume-lilygo-t-display-s3.bin
+          cp .pio/build/esp32-s3-devkitc-1/firmware.bin release/lume-esp32-s3-devkitc.bin
+          cp .pio/build/esp32-c3-devkitm-1/firmware.bin release/lume-esp32-c3-devkitm.bin
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*.bin
+          generate_release_notes: true
+          body: |
+            ## Flash with WebUSB
+            
+            Download the appropriate binary for your board:
+            - **LilyGo T-Display S3**: `lume-lilygo-t-display-s3.bin`
+            - **ESP32-S3 DevKitC**: `lume-esp32-s3-devkitc.bin`
+            - **ESP32-C3 DevKitM**: `lume-esp32-c3-devkitm.bin`
+            
+            Use [ESP Web Tool](https://esp.huhn.me/) or similar to flash at address `0x0`.
+            
+            **Note:** These builds use the default LED pin from constants.h. For custom pins, compile from source.

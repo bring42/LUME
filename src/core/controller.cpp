@@ -351,21 +351,21 @@ void LumeController::blendSegment(Segment& seg) {
 
 // --- Protocol management ---
 
-void LumeController::registerProtocol(Protocol* protocol) {
+void LumeController::registerProtocol(IProtocol* protocol) {
     if (!protocol) return;
     
     if (protocolCount_ >= MAX_PROTOCOLS) {
-        LOG_WARN(LogTag::LED, "Max protocols reached, cannot register %s", protocol->getName());
+        LOG_WARN(LogTag::LED, "Max protocols reached, cannot register %s", protocol->name());
         return;
     }
     
     protocols_[protocolCount_++] = protocol;
-    LOG_INFO(LogTag::LED, "Registered protocol: %s", protocol->getName());
+    LOG_INFO(LogTag::LED, "Registered protocol: %s", protocol->name());
 }
 
 const char* LumeController::getActiveProtocolName() const {
     if (activeProtocol_) {
-        return activeProtocol_->getName();
+        return activeProtocol_->name();
     }
     return nullptr;
 }
@@ -373,20 +373,20 @@ const char* LumeController::getActiveProtocolName() const {
 void LumeController::processProtocols() {
     // Check each registered protocol for incoming data
     for (uint8_t i = 0; i < protocolCount_; i++) {
-        Protocol* proto = protocols_[i];
+        IProtocol* proto = protocols_[i];
         if (!proto || !proto->isEnabled()) continue;
         
         // Update protocol (processes incoming packets)
-        proto->update();
+        proto->loop();
         
         // Check if this protocol has a frame ready
-        if (proto->hasFrameReady()) {
+        if (proto->hasData()) {
             // Copy protocol buffer to LED array
             const CRGB* buffer = proto->getBuffer();
             uint16_t count = min(proto->getBufferSize(), ledCount);
             
             memcpy(leds, buffer, count * sizeof(CRGB));
-            proto->clearFrameReady();
+            proto->clearData();
             
             protocolActive_ = true;
             activeProtocol_ = proto;
@@ -394,11 +394,11 @@ void LumeController::processProtocols() {
         }
     }
     
-    // Check if active protocol has timed out
+    // Check if active protocol has timed out (no longer active)
     if (protocolActive_ && activeProtocol_) {
-        if (activeProtocol_->hasTimedOut(PROTOCOL_TIMEOUT_MS)) {
+        if (!activeProtocol_->isActive()) {
             LOG_INFO(LogTag::LED, "Protocol %s timeout - returning to effects", 
-                     activeProtocol_->getName());
+                     activeProtocol_->name());
             protocolActive_ = false;
             activeProtocol_ = nullptr;
         }

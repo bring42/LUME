@@ -29,3 +29,13 @@ jobs:
       
       - name: Build ESP32-C3 DevKit (untested)
         run: pio run -e esp32-c3-devkitm-1
+      
+      - name: Upload Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lume-firmware-${{ github.sha }}
+          path: |
+            .pio/build/lilygo-t-display-s3/firmware.bin
+            .pio/build/esp32-s3-devkitc-1/firmware.bin
+            .pio/build/esp32-c3-devkitm-1/firmware.bin
+          retention-days: 90

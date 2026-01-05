@@ -7,8 +7,8 @@
 #include "command_queue.h"
 #include "../constants.h"
 
-// Forward declare Protocol to avoid circular dependency
-namespace lume { class Protocol; }
+// Forward declare IProtocol interface
+namespace lume { class IProtocol; }
 
 namespace lume {
 
@@ -109,7 +109,7 @@ public:
     // --- Protocol management ---
     
     // Register a protocol (called at startup)
-    void registerProtocol(Protocol* protocol);
+    void registerProtocol(IProtocol* protocol);
     
     // Check if any protocol is currently active (receiving data)
     bool isProtocolActive() const { return protocolActive_; }
@@ -171,10 +171,10 @@ private:
     
     // Protocol handling
     static constexpr uint8_t MAX_PROTOCOLS = 4;
-    Protocol* protocols_[MAX_PROTOCOLS];
+    IProtocol* protocols_[MAX_PROTOCOLS];
     uint8_t protocolCount_;
     bool protocolActive_;
-    Protocol* activeProtocol_;
+    IProtocol* activeProtocol_;
     static constexpr uint32_t PROTOCOL_TIMEOUT_MS = 5000;
     
     // Timing

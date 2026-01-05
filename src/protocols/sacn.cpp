@@ -52,7 +52,7 @@ void SacnProtocol::configure(uint16_t startUniverse, uint8_t universeCount,
               startChannel_, ledCount_);
 }
 
-bool SacnProtocol::begin() {
+bool SacnProtocol::begin_impl() {
     if (universeCount_ == 0 || universeCount_ > SACN_MAX_UNIVERSES) {
         LOG_ERROR(LogTag::SACN, "Invalid universe count: %d", universeCount_);
         return false;
@@ -132,7 +132,7 @@ void SacnProtocol::setEnabled(bool enabled) {
     LOG_INFO(LogTag::SACN, "%s", enabled ? "Enabled" : "Disabled");
 }
 
-bool SacnProtocol::isEnabled() const {
+bool SacnProtocol::isEnabled_impl() const {
     return enabled_;
 }
 
@@ -441,7 +441,7 @@ bool SacnProtocol::hasTimedOut(uint32_t timeoutMs) const {
     return (millis() - lastAnyPacketTime_) > timeoutMs;
 }
 
-bool SacnProtocol::isActive() const {
+bool SacnProtocol::isActive_impl() const {
     return active_;
 }
 
@@ -449,11 +449,11 @@ bool SacnProtocol::hasFrameReady() const {
     return buffer_.isReady();
 }
 
-const CRGB* SacnProtocol::getBuffer() const {
+const CRGB* SacnProtocol::getBufferInternal() const {
     return buffer_.getBuffer();
 }
 
-uint16_t SacnProtocol::getBufferSize() const {
+uint16_t SacnProtocol::getBufferSizeInternal() const {
     return buffer_.getLedCount();
 }
 
