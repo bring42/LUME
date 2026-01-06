@@ -9,199 +9,337 @@ Want to add a new effect or port one from WLED? Paste this prompt into GitHub Co
 Write a new LED effect for the LUME firmware. Use the following template and conventions:
 
 - The effect function signature must be:
-    void effectNAME(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame)
-- Do not use static/global variables; use the segment scratchpad for state.
-- Use only FastLED-compatible code and LUME's SegmentView API.
-- Register the effect with the correct macro (see table below).
+    void effectNAME(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame)
+- Define a schema with DEFINE_EFFECT_SCHEMA to describe parameters
+- Use view.getScratchpad<T>() for stateful effects (no static/global variables)
+- Use only FastLED-compatible code and LUME's SegmentView API
+- Register with REGISTER_EFFECT_SCHEMA macro
 - Example effect name: "fireup", "rainbowtwinkle", etc.
-- If porting from WLED, convert millis() to frame, and replace global state with scratchpad.
+- If porting from WLED, convert millis() to frame, and replace global state with scratchpad
 
 Example template:
 ```cpp
-void effectMyEffect(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
-        // Your effect code here
+namespace myeffect {
+    constexpr uint8_t SPEED = 0;
+    constexpr uint8_t COLOR = 1;
 }
-REGISTER_EFFECT_PALETTE(effectMyEffect, "myeffect", "My Effect");
+
+DEFINE_EFFECT_SCHEMA(myeffectSchema,
+    ParamDesc::Int("speed", "Speed", 128, 1, 255),
+    ParamDesc::Color("color", "Color", CRGB::Blue)
+);
+
+void effectMyEffect(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
+    uint8_t speed = params.getInt(myeffect::SPEED);
+    CRGB color = params.getColor(myeffect::COLOR);
+    // Your effect code here
+}
+
+REGISTER_EFFECT_SCHEMA(effectMyEffect, "myeffect", "My Effect", Animated, myeffectSchema, 0);
 ```
 
 ---
 
-See the rest of this file for effect registration macros and parameter details.
+See the rest of this file for parameter types and complete examples.
+
 # Adding New Effects
 
 Quick guide to creating custom LED effects for LUME.
 
 ## File Structure
 
-Create a new file in `src/effects/youreffect.cpp`:
+Create a new file in `src/visuallib/effects/youreffect.cpp`:
 
 ```cpp
-#include "../core/effect_registry.h"
+#include "../../core/effect_registry.h"
+#include "../../core/param_schema.h"
 
 namespace lume {
 
-void effectYourEffect(SegmentView& view, const EffectParams& params, 
+// Define parameter slot indices
+namespace youreffect {
+    constexpr uint8_t SPEED = 0;
+    constexpr uint8_t COLOR = 1;
+}
+
+// Define parameter schema
+DEFINE_EFFECT_SCHEMA(youreffectSchema,
+    ParamDesc::Int("speed", "Speed", 128, 1, 255),
+    ParamDesc::Color("color", "Color", CRGB::Blue)
+);
+
+void effectYourEffect(SegmentView& view, const ParamValues& params, 
                       uint32_t frame, bool firstFrame) {
+    // Access parameters by slot
+    uint8_t speed = params.getInt(youreffect::SPEED);
+    CRGB color = params.getColor(youreffect::COLOR);
+    
     // Your effect code here
     for (uint16_t i = 0; i < view.size(); i++) {
-        view[i] = CRGB::Blue;  // Example: set all LEDs to blue
+        view[i] = color;
     }
 }
 
-REGISTER_EFFECT_PALETTE(effectYourEffect, "youreffect", "Your Effect");
+// Register: function, id, name, category, schema, stateSize
+REGISTER_EFFECT_SCHEMA(effectYourEffect, "youreffect", "Your Effect", Animated, youreffectSchema, 0);
 
 } // namespace lume
 ```
 
-## Registration Macros
+## Parameter Types
 
-Choose the macro that matches your effect's needs:
+All effects now use `ParamSchema` to define parameters. Available types:
 
-| Macro | Primary Color | Secondary Color | Palette | Speed | Intensity | Use Case |
-|-------|---------------|-----------------|---------|-------|-----------|----------|
-| `REGISTER_EFFECT_SOLID` | ✅ | ❌ | ❌ | ❌ | ❌ | Static color effects (no animation) |
-| `REGISTER_EFFECT_SIMPLE_NAMED` | ❌ | ❌ | ❌ | ✅ | ❌ | Basic animated effects (speed only) |
-| `REGISTER_EFFECT_PALETTE` | ❌ | ❌ | ✅ | ✅ | ❌ | Palette-based animations |
-| `REGISTER_EFFECT_COLORS` | ✅ | ✅ | ❌ | ✅ | ❌ | Two-color effects (primary + secondary) |
-| `REGISTER_EFFECT_ANIMATED` | ❌ | ❌ | ❌ | ✅ | ✅ | Animated with speed + intensity |
-| `REGISTER_EFFECT_MOVING` | ❌ | ❌ | ❌ | ✅ | ✅ | Moving/traveling effects |
-
-**Important:** Match your registration to what parameters your effect actually uses! If your effect code uses `params.primaryColor`, you must set `usesPrimaryColor=true` in the registration (use `REGISTER_EFFECT_FULL` or an appropriate convenience macro).
-
-### Advanced Registration
-
-For full control, use `REGISTER_EFFECT_FULL`:
-
+### Int (uint8_t slider, 0-255)
 ```cpp
-REGISTER_EFFECT_FULL(
-    effectCustom,           // Function name
-    "custom",               // ID (lowercase, no spaces)
-    "Custom Effect",        // Display name
-    Animated,               // Category: Solid, Animated, Moving, Special
-    true,                   // usesPalette
-    true,                   // usesPrimaryColor
-    true,                   // usesSecondaryColor
-    true,                   // usesSpeed
-    true,                   // usesIntensity
-    0,                      // State size (0 if stateless)
-    1                       // Minimum LEDs
-);
+ParamDesc::Int("speed", "Speed", 128, 1, 255)
+//             id       name     default min max
 ```
 
-## Available Parameters
+### Float (float slider, 0.0-1.0)
+```cpp
+ParamDesc::Float("density", "Density", 0.5f, 0.0f, 1.0f)
+```
+
+### Color (RGB picker)
+```cpp
+ParamDesc::Color("color", "Color", CRGB::Red)
+//               id       name     default
+```
+
+### Bool (toggle switch)
+```cpp
+ParamDesc::Bool("reversed", "Reversed", false)
+```
+
+### Enum (dropdown)
+```cpp
+ParamDesc::Enum("direction", "Direction", "Up|Down|Left|Right", 0)
+//              id           name          options              default_index
+```
+
+### Palette (palette selector)
+```cpp
+ParamDesc::PaletteSelect("palette", "Palette")
+```
+
+## Effect Categories
+
+Choose the category that best describes your effect:
+
+- `Solid` - Static, non-animated effects
+- `Animated` - Effects with motion/animation
+- `Moving` - Effects with positional movement
+- `Special` - Complex or unique effects
+
+## Accessing Parameters
 
 ```cpp
-void effectYourEffect(SegmentView& view, const EffectParams& params, 
-                      uint32_t frame, bool firstFrame) {
+void effectExample(SegmentView& view, const ParamValues& params, 
+                   uint32_t frame, bool firstFrame) {
     
-    // Colors
-    CRGB primary = params.primaryColor;      // Primary color
-    CRGB secondary = params.secondaryColor;  // Secondary color
-    
-    // Animation controls
-    uint8_t speed = params.speed;            // 1-200 (default: 100)
-    uint8_t intensity = params.intensity;    // 0-255 (default: 128)
-    
-    // Palette (if registered with palette support)
-    CRGBPalette16 palette = params.palette;
+    // Access by slot index (defined in namespace above)
+    uint8_t speed = params.getInt(example::SPEED);
+    float density = params.getFloat(example::DENSITY);
+    CRGB color = params.getColor(example::COLOR);
+    bool reversed = params.getBool(example::REVERSED);
+    uint8_t direction = params.getEnum(example::DIRECTION);
+    const CRGBPalette16& palette = params.getPalette();
     
     // Timing
-    uint32_t currentFrame = frame;           // Use for beatsin8(), etc.
-    bool isFirstFrame = firstFrame;          // True on effect change
+    uint32_t currentFrame = frame;     // Use for beatsin8(), etc.
+    bool isFirstFrame = firstFrame;    // True on effect change
     
     // LED access
     uint16_t ledCount = view.size();
-    view[0] = CRGB::Red;                     // Set individual LED
-    view.fill(CRGB::Blue);                   // Fill all LEDs
-    view.gradient(primary, secondary);        // Create gradient
+    view[0] = CRGB::Red;               // Set individual LED
+    view.fill(CRGB::Blue);             // Fill all LEDs
+    view.gradient(color, CRGB::Red);   // Create gradient
 }
 ```
 
-## Examples
+## Stateful Effects (Using Scratchpad)
 
-### Static Two-Color Gradient
-
-```cpp
-void effectGradient(SegmentView& view, const EffectParams& params, 
-                    uint32_t frame, bool firstFrame) {
-    view.gradient(params.primaryColor, params.secondaryColor);
-}
-
-REGISTER_EFFECT_COLORS(effectGradient, "gradient", "Gradient");
-```
-
-### Animated Rainbow
+For effects that need to remember state between frames:
 
 ```cpp
-void effectRainbow(SegmentView& view, const EffectParams& params, 
-                   uint32_t frame, bool firstFrame) {
-    uint8_t hue = (frame * params.speed) / 100;
-    for (uint16_t i = 0; i < view.size(); i++) {
-        view[i] = CHSV(hue + (i * 255 / view.size()), 255, 255);
-    }
-}
+// Define state structure
+struct FireState {
+    uint8_t heat[600];
+};
 
-REGISTER_EFFECT_SIMPLE_NAMED(effectRainbow, "rainbow", "Rainbow");
-```
-
-### Palette-Based with Speed
-
-```cpp
-void effectFire(SegmentView& view, const EffectParams& params, 
+void effectFire(SegmentView& view, const ParamValues& params, 
                 uint32_t frame, bool firstFrame) {
-    uint8_t cooling = params.intensity > 0 ? params.intensity : 55;
+    // Access scratchpad
+    FireState* state = view.getScratchpad<FireState>();
+    if (!state) return;
+    
+    // Initialize on first frame
+    if (firstFrame) {
+        memset(state->heat, 0, sizeof(state->heat));
+    }
+    
+    // Use state
+    state->heat[0] = 255;
+    // ... effect logic
+}
+
+// Register with state size
+REGISTER_EFFECT_SCHEMA(effectFire, "fire", "Fire", Animated, 
+                       fireSchema, sizeof(FireState));
+```
+
+## Complete Examples
+
+### Simple Color Effect
+```cpp
+namespace solid {
+    constexpr uint8_t COLOR = 0;
+}
+
+DEFINE_EFFECT_SCHEMA(solidSchema,
+    ParamDesc::Color("color", "Color", CRGB::Red)
+);
+
+void effectSolid(SegmentView& view, const ParamValues& params, 
+                 uint32_t frame, bool firstFrame) {
+    (void)frame;
+    (void)firstFrame;
+    
+    CRGB color = params.getColor(solid::COLOR);
+    view.fill(color);
+}
+
+REGISTER_EFFECT_SCHEMA(effectSolid, "solid", "Solid Color", Solid, solidSchema, 0);
+```
+
+### Palette-Based Animation
+```cpp
+namespace colorwaves {
+    constexpr uint8_t SPEED = 0;
+}
+
+DEFINE_EFFECT_SCHEMA(colorwavesSchema,
+    ParamDesc::PaletteSelect("palette", "Palette"),
+    ParamDesc::Int("speed", "Speed", 128, 1, 255)
+);
+
+void effectColorWaves(SegmentView& view, const ParamValues& params, 
+                      uint32_t frame, bool firstFrame) {
+    (void)firstFrame;
+    
+    const CRGBPalette16& palette = params.getPalette();
+    uint8_t speed = params.getInt(colorwaves::SPEED);
+    
+    uint16_t offset = (frame * speed) >> 6;
     
     for (uint16_t i = 0; i < view.size(); i++) {
-        uint8_t colorIndex = (frame + i * 10) % 255;
-        view[i] = ColorFromPalette(params.palette, colorIndex);
+        uint8_t colorIndex = (i * 256 / view.size()) + offset;
+        view[i] = ColorFromPalette(palette, colorIndex, 255, LINEARBLEND);
     }
 }
 
-REGISTER_EFFECT_PALETTE(effectFire, "fire", "Fire");
+REGISTER_EFFECT_SCHEMA(effectColorWaves, "colorwaves", "Color Waves", 
+                       Animated, colorwavesSchema, 0);
 ```
 
-## Adding to Build
+### Stateful Effect with Multiple Parameters
+```cpp
+namespace candle {
+    constexpr uint8_t COLOR = 0;
+    constexpr uint8_t SPEED = 1;
+    constexpr uint8_t INTENSITY = 2;
+}
 
-1. Create your effect file in `src/effects/`
-2. Add to `src/effects/effects.h`:
-   ```cpp
-   #include "youreffect.cpp"
-   ```
-3. Compile: `pio run -t upload`
+DEFINE_EFFECT_SCHEMA(candleSchema,
+    ParamDesc::Color("color", "Color", CRGB(255, 140, 40)),
+    ParamDesc::Int("speed", "Flicker Speed", 128, 1, 255),
+    ParamDesc::Int("intensity", "Flicker Intensity", 128, 1, 255)
+);
+
+struct CandleState {
+    uint8_t base;
+    uint8_t target;
+    uint32_t lastFlickerChange;
+};
+
+void effectCandle(SegmentView& view, const ParamValues& params, 
+                  uint32_t frame, bool firstFrame) {
+    (void)frame;
+    
+    CandleState* state = view.getScratchpad<CandleState>();
+    if (!state) return;
+    
+    CRGB baseColor = params.getColor(candle::COLOR);
+    uint8_t speed = params.getInt(candle::SPEED);
+    uint8_t intensity = params.getInt(candle::INTENSITY);
+    
+    if (firstFrame) {
+        state->base = 200;
+        state->target = 200;
+        state->lastFlickerChange = 0;
+    }
+    
+    // Flicker logic...
+    uint32_t now = millis();
+    uint32_t flickerDelay = map(speed, 1, 255, 150, 10);
+    
+    if (now - state->lastFlickerChange > flickerDelay) {
+        state->lastFlickerChange = now;
+        state->target = random8(180, 255);
+    }
+    
+    if (state->base < state->target) state->base += 3;
+    if (state->base > state->target) state->base -= 5;
+    
+    for (uint16_t i = 0; i < view.size(); i++) {
+        CRGB color = baseColor;
+        color.nscale8(state->base);
+        view[i] = color;
+    }
+}
+
+REGISTER_EFFECT_SCHEMA(effectCandle, "candle", "Candle", Animated, 
+                       candleSchema, sizeof(CandleState));
+```
 
 ## UI Integration
 
-The web UI automatically adapts based on your registration macro:
+The web UI automatically generates controls based on your schema:
 
-- Palette selector appears if `usesPalette = true`
-- Speed slider hidden if `usesSpeed = false`
-- Intensity slider appears if `usesIntensity = true`
-- Secondary color picker shows if `usesSecondaryColor = true`
+- **Int/Float parameters** → Sliders
+- **Color parameters** → Color pickers
+- **Bool parameters** → Toggle switches
+- **Enum parameters** → Dropdown menus
+- **Palette parameter** → Palette selector
 
-**No frontend changes needed!** The metadata drives the UI.
+**No frontend changes needed!** The schema drives the UI.
 
 ## Best Practices
 
 ✅ **DO:**
-- Use `frame` for timing (not `millis()`)
+- Use `frame` for timing (not `millis()` for animations)
 - Keep effects deterministic (same inputs = same output)
-- Use `firstFrame` to initialize state
+- Use `firstFrame` to initialize scratchpad state
+- Use slot constants (e.g., `effect::SPEED`) for readability
 - Test with different LED counts
+- Use `view.getScratchpad<T>()` for stateful effects
 
 ❌ **DON'T:**
-- Use global variables or `static` state
+- Use global variables or `static` state (breaks multi-segment)
 - Call `delay()` or blocking functions
 - Assume a specific LED count
-- Use `millis()` for animation timing
+- Exceed 512 bytes in state structure
+- Mix up parameter slot indices
 
 ## Debugging
 
 Enable logging in your effect:
 
 ```cpp
-#include "../logging.h"
+#include "../../logging.h"
 
-void effectDebug(SegmentView& view, const EffectParams& params, 
+void effectDebug(SegmentView& view, const ParamValues& params, 
                  uint32_t frame, bool firstFrame) {
     if (firstFrame) {
         LOG_INFO(LogTag::LED, "Effect started, %d LEDs", view.size());
@@ -211,3 +349,31 @@ void effectDebug(SegmentView& view, const EffectParams& params,
 ```
 
 Monitor output: `pio device monitor`
+
+## Migration from Legacy Effects
+
+If updating an old effect that used `EffectParams`:
+
+**Before:**
+```cpp
+void effectOld(SegmentView& view, const EffectParams& params, 
+               const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+    CRGB color = paramValues.getColor(0);
+    view.fill(color);
+}
+```
+
+**After:**
+```cpp
+void effectNew(SegmentView& view, const ParamValues& params,
+               uint32_t frame, bool firstFrame) {
+    CRGB color = params.getColor(0);
+    view.fill(color);
+}
+```
+
+Changes:
+1. Remove `const EffectParams& params` parameter
+2. Rename `paramValues` to `params`
+3. Palette accessed via `params.getPalette()` instead of `params.palette`
+4. Update static state to use `view.getScratchpad<T>()`
