@@ -327,9 +327,9 @@ void setupServer() {
             effObj["id"] = info->id;
             effObj["name"] = info->displayName;
             effObj["category"] = info->categoryName();  // Use helper method
-            effObj["usesSpeed"] = info->usesSpeed;
-            effObj["usesIntensity"] = info->usesIntensity;
-            effObj["usesPalette"] = info->usesPalette;
+            effObj["usesSpeed"] = info->hasParam("speed");
+            effObj["usesIntensity"] = info->hasParam("intensity");
+            effObj["usesPalette"] = info->usesPalette();
         }
         
         String response;
