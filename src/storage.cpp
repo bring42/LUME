@@ -113,6 +113,26 @@ bool Storage::loadLedState(JsonDocument& state) {
     return err == DeserializationError::Ok;
 }
 
+bool Storage::saveLastEffect(const char* effectId) {
+    if (!prefs.begin(NAMESPACE_LED, false)) {
+        return false;
+    }
+    
+    prefs.putString("lasteffect", effectId);
+    prefs.end();
+    return true;
+}
+
+bool Storage::loadLastEffect(String& effectId) {
+    if (!prefs.begin(NAMESPACE_LED, true)) {
+        return false;
+    }
+    
+    effectId = prefs.getString("lasteffect", "rainbow");  // Default to rainbow
+    prefs.end();
+    return true;
+}
+
 bool Storage::savePromptSpec(const PromptSpec& spec) {
     if (!prefs.begin(NAMESPACE_PROMPT, false)) {
         return false;

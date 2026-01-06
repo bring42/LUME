@@ -4,6 +4,7 @@
 #include "segment_view.h"
 #include "effect_params.h"
 #include "effect_registry.h"
+#include "param_schema.h"
 
 namespace lume {
 
@@ -22,7 +23,7 @@ struct SegmentCapabilities {
     bool hasSpeed;               // Effect responds to speed
     bool hasIntensity;           // Effect responds to intensity
     bool hasPalette;             // Effect uses palette
-    bool hasSecondaryColor;      // Effect uses colors[1]
+    uint8_t colorCount;          // Number of colors used (0-3)
 };
 
 /**
@@ -46,6 +47,7 @@ public:
         : view()
         , effect(nullptr)
         , params()
+        , paramValues()
         , caps()
         , brightness(255)
         , blendMode(BlendMode::Replace)
@@ -77,11 +79,16 @@ public:
         scratchpadVersion++;  // Signal scratchpad reset
         memset(scratchpad, 0, SCRATCHPAD_SIZE);
         
+        // Initialize ParamValues with defaults if effect has schema
+        if (info->hasSchema()) {
+            paramValues.applyDefaults(*info->schema);
+        }
+        
         // Update cached capabilities from effect metadata
         caps.hasSpeed = info->usesSpeed;
         caps.hasIntensity = info->usesIntensity;
         caps.hasPalette = info->usesPalette;
-        caps.hasSecondaryColor = info->usesSecondaryColor;
+        caps.colorCount = info->colorCount;
     }
     
     // Set effect by id (looks up in registry)
@@ -112,17 +119,42 @@ public:
     
     // --- Parameter accessors ---
     
-    void setPrimaryColor(CRGB color) { params.primaryColor = color; }
-    void setSecondaryColor(CRGB color) { params.secondaryColor = color; }
-    void setSpeed(uint8_t speed) { params.speed = speed; }
-    void setIntensity(uint8_t intensity) { params.intensity = intensity; }
-    void setPalette(CRGBPalette16 palette) { params.palette = palette; }
-    void setPalette(PalettePreset preset) { params.palette = getPalette(preset); }
+    // Legacy palette accessors (kept for now)
+    void setPalette(CRGBPalette16 palette) { params.palette = palette; paramValues.setPalette(palette); }
+    void setPalette(PalettePreset preset) { 
+        CRGBPalette16 pal = getPalette(preset);
+        params.palette = pal;
+        paramValues.setPalette(pal);
+    }
     
-    CRGB getPrimaryColor() const { return params.primaryColor; }
-    CRGB getSecondaryColor() const { return params.secondaryColor; }
-    uint8_t getSpeed() const { return params.speed; }
-    uint8_t getIntensity() const { return params.intensity; }
+    // Transitional helpers for common params (map to schema if effect has it)
+    void setSpeed(uint8_t speed) {
+        if (effect && effect->hasSchema()) {
+            int8_t idx = effect->schema->indexOf("speed");
+            if (idx >= 0) paramValues.setInt(idx, speed);
+        }
+    }
+    
+    void setIntensity(uint8_t intensity) {
+        if (effect && effect->hasSchema()) {
+            int8_t idx = effect->schema->indexOf("intensity");
+            if (idx >= 0) paramValues.setInt(idx, intensity);
+        }
+    }
+    
+    void setColor(uint8_t colorIdx, CRGB color) {
+        if (effect && effect->hasSchema()) {
+            // Try common color param names
+            const char* names[] = {"color", "colorStart", "colorHead", "colorEnd", "colorTail"};
+            for (const char* name : names) {
+                int8_t idx = effect->schema->indexOf(name);
+                if (idx >= 0) {
+                    paramValues.setColor(idx, color);
+                    return;
+                }
+            }
+        }
+    }
     
     void setBrightness(uint8_t bri) { brightness = bri; }
     uint8_t getBrightness() const { return brightness; }
@@ -148,6 +180,10 @@ public:
     // Direct access to params
     EffectParams& getParams() { return params; }
     const EffectParams& getParams() const { return params; }
+    
+    // Direct access to param values (schema-aware effects)
+    ParamValues& getParamValues() { return paramValues; }
+    const ParamValues& getParamValues() const { return paramValues; }
     
     // --- Scratchpad access for stateful effects ---
     
@@ -183,7 +219,7 @@ public:
         }
         
         // Call the effect function
-        effect->fn(view, params, frame, firstFrame);
+        effect->fn(view, params, paramValues, frame, firstFrame);
         
         // Apply segment brightness if not 255
         if (brightness < 255) {
@@ -199,6 +235,7 @@ private:
     SegmentView view;
     const EffectInfo* effect;
     EffectParams params;
+    ParamValues paramValues;  // Schema-aware parameter values
     SegmentCapabilities caps;
     
     uint8_t brightness;

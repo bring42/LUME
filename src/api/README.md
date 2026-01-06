@@ -8,6 +8,7 @@ Each file implements handlers for a related set of endpoints:
 
 - **config.cpp** - Device configuration (WiFi, LED count, etc.)
 - **segments.cpp** - Segment CRUD operations
+- **effects_handler.cpp** - Effect discovery and metadata queries
 - **pixels.cpp** - Direct pixel manipulation
 - **status.cpp** - System status and diagnostics
 - **nightlight.cpp** - Nightlight timer functionality

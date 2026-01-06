@@ -10,8 +10,8 @@ REST API endpoint handlers for web UI and external control.
 ### [core/](core/)
 Core system: controller, segments, effects registry, command queue.
 
-### [effects/](effects/)
-Self-registering LED effects (rainbow, fire, sparkle, etc.).
+### [visuallib/](visuallib/)
+Self-registering LED effects library (rainbow, fire, sparkle, etc.).
 
 ### [network/](network/)
 WiFi, web server, OTA updates, and mDNS configuration.

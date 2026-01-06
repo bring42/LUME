@@ -30,7 +30,7 @@
 
 // v2 architecture
 #include "core/controller.h"
-#include "effects/effects.h"
+#include "visuallib/effects.h"
 #include "protocols/sacn.h"
 #include "protocols/mqtt.h"
 
@@ -188,8 +188,15 @@ void setup() {
     // Create full-strip segment and set default effect
     lume::Segment* mainSegment = lume::controller.createFullStrip();
     if (mainSegment) {
-        mainSegment->setEffect("rainbow");  // Default effect
-        LOG_INFO(LogTag::LED, "Created main segment (0-%d) with rainbow effect", config.ledCount - 1);
+        // Try to load the last effect, or use rainbow as default
+        String lastEffect;
+        if (storage.loadLastEffect(lastEffect) && lastEffect.length() > 0) {
+            mainSegment->setEffect(lastEffect.c_str());
+            LOG_INFO(LogTag::LED, "Restored last effect: %s", lastEffect.c_str());
+        } else {
+            mainSegment->setEffect("rainbow");
+            LOG_INFO(LogTag::LED, "No saved effect, using default: rainbow");
+        }
     }
     
     // Setup WiFi

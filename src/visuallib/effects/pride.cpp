@@ -4,9 +4,17 @@
  * Classic pride colors flowing smoothly
  */
 
-#include "../core/effect_registry.h"
+#include "../../core/effect_registry.h"
 
 namespace lume {
+
+namespace pride {
+    constexpr uint8_t SPEED = 0;
+}
+
+DEFINE_EFFECT_SCHEMA(prideSchema,
+    ParamDesc::Int("speed", "Scroll Speed", 128, 1, 255)
+);
 
 // Pride palette - classic rainbow pride colors
 DEFINE_GRADIENT_PALETTE(prideGradient) {
@@ -19,14 +27,17 @@ DEFINE_GRADIENT_PALETTE(prideGradient) {
   255,   255,   0,   0     // Back to red
 };
 
-void effectPride(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+void effectPride(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
+    (void)params;
+    
+    uint8_t speed = paramValues.getInt(pride::SPEED);
     
     uint16_t len = view.size();
     CRGBPalette16 pridePalette = prideGradient;
     
     // Speed controls movement
-    uint16_t offset = (frame * params.speed) >> 4;
+    uint16_t offset = (frame * speed) >> 4;
     
     for (uint16_t i = 0; i < len; i++) {
         uint8_t colorIndex = (i * 256 / len) + offset;
@@ -34,6 +45,6 @@ void effectPride(SegmentView& view, const EffectParams& params, uint32_t frame, 
     }
 }
 
-REGISTER_EFFECT_SIMPLE(effectPride, "pride");
+REGISTER_EFFECT_SCHEMA(effectPride, "pride", "Pride", Animated, prideSchema, 0);
 
 } // namespace lume

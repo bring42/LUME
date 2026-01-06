@@ -3,6 +3,7 @@
 
 #include "segment_view.h"
 #include "effect_params.h"
+#include "param_schema.h"
 
 namespace lume {
 
@@ -10,10 +11,12 @@ namespace lume {
  * Effect function signature
  * 
  * All effects are pure functions with this signature:
- *   void effectName(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame)
+ *   void effectName(SegmentView& view, const EffectParams& params, 
+ *                   const ParamValues& paramValues, uint32_t frame, bool firstFrame)
  * 
  * - view: The segment to render to (LED array slice)
- * - params: Colors, speed, palette, custom values
+ * - params: Legacy colors, speed, palette (for backward compatibility)
+ * - paramValues: Schema-aware typed parameter values
  * - frame: Global frame counter (for timing, use with beatsin8 etc.)
  * - firstFrame: True when scratchpad was just reset (effect change)
  * 
@@ -24,7 +27,8 @@ namespace lume {
  * - Avoid global/static state - use segment scratchpad instead
  * - Be deterministic given the same inputs
  */
-using EffectFn = void (*)(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame);
+using EffectFn = void (*)(SegmentView& view, const EffectParams& params, 
+                          const ParamValues& paramValues, uint32_t frame, bool firstFrame);
 
 /**
  * Effect categories for UI grouping and filtering
@@ -44,10 +48,12 @@ struct EffectInfo {
     const char* displayName;  // Human-readable name: "Fire"
     EffectCategory category;  // For UI grouping
     
+    // NEW: Schema pointer (nullptr = legacy effect, uses old EffectParams)
+    const ParamSchema* schema;
+    
     // Parameter support flags (enables smart UI)
     bool usesPalette;         // Responds to palette changes
-    bool usesPrimaryColor;    // Uses params.colors[0]
-    bool usesSecondaryColor;  // Uses params.colors[1]
+    uint8_t colorCount;       // Number of colors used (0-3): 0=none, 1=colors[0], 2=colors[0-1], 3=all
     bool usesSpeed;           // Responds to speed param
     bool usesIntensity;       // Responds to intensity param
     
@@ -56,6 +62,9 @@ struct EffectInfo {
     uint16_t minLeds;         // Minimum LEDs for effect to look good
     
     EffectFn fn;              // The actual effect function
+    
+    // Helper: has new-style schema?
+    bool hasSchema() const { return schema != nullptr && schema->count > 0; }
     
     // Helper to get category name
     const char* categoryName() const {
@@ -168,47 +177,65 @@ public:
  * 
  * Usage:
  *   REGISTER_EFFECT_FULL(effectFire, "fire", "Fire", Animated,
- *       false, false, false, true, true, sizeof(FireState), 10);
- *       // usesPal, usesPrimColor, usesSecColor, usesSpd, usesInt, stateSize, minLeds
+ *       false, 0, true, true, sizeof(FireState), 10);
+ *       // usesPal, colorCount, usesSpd, usesInt, stateSize, minLeds
  */
-#define REGISTER_EFFECT_FULL(fn, idStr, dispName, cat, usesPal, usesPrimColor, usesSecColor, usesSpd, usesInt, stateSz, minL) \
+#define REGISTER_EFFECT_FULL(fn, idStr, dispName, cat, usesPal, colCnt, usesSpd, usesInt, stateSz, minL) \
     static lume::EffectRegistrar _registrar_##fn({ \
         idStr, dispName, lume::EffectCategory::cat, \
-        usesPal, usesPrimColor, usesSecColor, usesSpd, usesInt, \
+        nullptr, \
+        usesPal, colCnt, usesSpd, usesInt, \
         stateSz, minL, fn \
     })
 
+// NEW: Schema-aware registration macro
+#define REGISTER_EFFECT_SCHEMA(fn, idStr, dispName, cat, schemaRef, stateSz) \
+    static lume::EffectRegistrar _registrar_##fn({ \
+        idStr, dispName, lume::EffectCategory::cat, \
+        &schemaRef, \
+        false, 0, false, false, \
+        stateSz, 1, fn \
+    })
+
+// NEW: Convenience macro to define schema inline
+#define DEFINE_EFFECT_SCHEMA(name, ...) \
+    static const lume::ParamDesc name##_params[] = { __VA_ARGS__ }; \
+    static const lume::ParamSchema name = { \
+        name##_params, \
+        sizeof(name##_params) / sizeof(name##_params[0]) \
+    }
+
 // Simple effect: animated, uses speed only
 #define REGISTER_EFFECT_SIMPLE(fn, idStr) \
-    REGISTER_EFFECT_FULL(fn, idStr, idStr, Animated, false, false, false, true, false, 0, 1)
+    REGISTER_EFFECT_FULL(fn, idStr, idStr, Animated, false, 0, true, false, 0, 1)
 
 // Simple effect with display name
 #define REGISTER_EFFECT_SIMPLE_NAMED(fn, idStr, dispName) \
-    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, false, false, true, false, 0, 1)
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, 0, true, false, 0, 1)
 
-// Static solid-type effect: no animation
+// Static solid-type effect: no animation, uses colors[0]
 #define REGISTER_EFFECT_SOLID(fn, idStr, dispName) \
-    REGISTER_EFFECT_FULL(fn, idStr, dispName, Solid, false, true, false, false, false, 0, 1)
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Solid, false, 1, false, false, 0, 1)
 
 // Animated effect with speed + intensity
 #define REGISTER_EFFECT_ANIMATED(fn, idStr, dispName) \
-    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, false, false, true, true, 0, 1)
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, 0, true, true, 0, 1)
 
 // Moving effect with speed + intensity
 #define REGISTER_EFFECT_MOVING(fn, idStr, dispName) \
-    REGISTER_EFFECT_FULL(fn, idStr, dispName, Moving, false, false, false, true, true, 0, 1)
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Moving, false, 0, true, true, 0, 1)
 
 // Palette-based effect: uses palette and speed
 #define REGISTER_EFFECT_PALETTE(fn, idStr, dispName) \
-    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, true, false, false, true, false, 0, 1)
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, true, 0, true, false, 0, 1)
 
-// Effect using primary + secondary colors
+// Effect using colors[0] + colors[1]
 #define REGISTER_EFFECT_COLORS(fn, idStr, dispName) \
-    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, true, true, true, false, 0, 1)
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, 2, true, false, 0, 1)
 
 // Stateful effect: requires scratchpad state
 #define REGISTER_EFFECT_STATEFUL(fn, idStr, dispName, stateType) \
-    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, false, false, true, true, sizeof(stateType), 1)
+    REGISTER_EFFECT_FULL(fn, idStr, dispName, Animated, false, 0, true, true, sizeof(stateType), 1)
 
 // Convenience function to get registry
 inline EffectRegistry& effects() {

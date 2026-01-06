@@ -6,53 +6,22 @@
 namespace lume {
 
 /**
- * EffectParams - Common parameters passed to all effect functions
+ * EffectParams - Legacy parameters struct (being phased out)
  * 
- * Effects receive these parameters along with a SegmentView.
- * This decouples effects from the Segment class and makes them
- * easier to test and reuse.
+ * Now only contains palette. All other parameters moved to ParamValues.
+ * Kept temporarily for palette initialization until Segment class refactor complete.
  */
 struct EffectParams {
-    // Primary and secondary colors (user-selected)
-    CRGB primaryColor;
-    CRGB secondaryColor;
-    
-    // Speed control (1-255, maps to update rate or animation speed)
-    uint8_t speed;
-    
-    // Intensity/density parameter (effect-specific interpretation)
-    uint8_t intensity;
-    
     // Palette for multi-color effects
     CRGBPalette16 palette;
     
-    // Custom parameters for effect-specific tuning
-    // Effects can interpret these however they want
-    uint8_t custom1;
-    uint8_t custom2;
-    uint8_t custom3;
-    
     // Defaults
     EffectParams()
-        : primaryColor(CRGB::Blue)
-        , secondaryColor(CRGB::Purple)
-        , speed(128)
-        , intensity(128)
-        , palette(RainbowColors_p)
-        , custom1(0)
-        , custom2(0)
-        , custom3(0) {}
+        : palette(RainbowColors_p) {}
     
-    // Convenience constructor
-    EffectParams(CRGB primary, CRGB secondary, uint8_t spd = 128)
-        : primaryColor(primary)
-        , secondaryColor(secondary)
-        , speed(spd)
-        , intensity(128)
-        , palette(RainbowColors_p)
-        , custom1(0)
-        , custom2(0)
-        , custom3(0) {}
+    // Constructor from palette
+    EffectParams(CRGBPalette16 pal)
+        : palette(pal) {}
 };
 
 /**

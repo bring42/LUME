@@ -5,6 +5,7 @@
 #include "../constants.h"
 #include "../core/controller.h"
 #include "../core/effect_registry.h"
+#include "../core/param_schema.h"
 #include <ArduinoJson.h>
 
 // External globals
@@ -18,6 +19,63 @@ static String segmentUpdateBuffer;
 static String controllerUpdateBuffer;
 
 namespace {
+
+// Serialize ParamType to string
+const char* paramTypeToString(lume::ParamType type) {
+    switch (type) {
+        case lume::ParamType::Int:      return "int";
+        case lume::ParamType::Float:    return "float";
+        case lume::ParamType::Color:    return "color";
+        case lume::ParamType::Palette:  return "palette";
+        case lume::ParamType::Bool:     return "bool";
+        case lume::ParamType::Enum:     return "enum";
+        default:                        return "unknown";
+    }
+}
+
+// Serialize schema to JSON
+void schemaToJson(JsonArray& paramsArray, const lume::ParamSchema* schema) {
+    if (!schema || schema->count == 0) return;
+    
+    for (uint8_t i = 0; i < schema->count; i++) {
+        const lume::ParamDesc& p = schema->params[i];
+        JsonObject param = paramsArray.add<JsonObject>();
+        
+        param["id"] = p.id;
+        param["name"] = p.name;
+        param["type"] = paramTypeToString(p.type);
+        
+        switch (p.type) {
+            case lume::ParamType::Int:
+                param["default"] = p.defaultInt;
+                param["min"] = p.minInt;
+                param["max"] = p.maxInt;
+                break;
+            case lume::ParamType::Float:
+                param["default"] = p.defaultFloat;
+                param["min"] = p.minFloat;
+                param["max"] = p.maxFloat;
+                break;
+            case lume::ParamType::Color: {
+                char colorHex[8];
+                snprintf(colorHex, sizeof(colorHex), "#%02x%02x%02x", 
+                    p.defaultColor.r, p.defaultColor.g, p.defaultColor.b);
+                param["default"] = colorHex;
+                break;
+            }
+            case lume::ParamType::Bool:
+                param["default"] = (bool)(p.defaultInt != 0);
+                break;
+            case lume::ParamType::Enum:
+                param["default"] = p.defaultInt;
+                param["options"] = p.enumOptions;  // "opt1|opt2|opt3"
+                break;
+            case lume::ParamType::Palette:
+                // Palette list could be included or fetched separately
+                break;
+        }
+    }
+}
 
 void sendJsonError(AsyncWebServerRequest* request, int status, const char* code, const char* message, const char* field = nullptr) {
     JsonDocument doc;
@@ -43,27 +101,43 @@ void segmentToJson(JsonObject& obj, lume::Segment* segment, uint8_t id) {
     obj["stop"] = segment->getStart() + segment->getLength() - 1;  // Calculate stop from start + length
     obj["length"] = segment->getLength();
     obj["effect"] = segment->getEffectId();
-    obj["speed"] = segment->getSpeed();
-    obj["intensity"] = segment->getIntensity();
     
-    // Colors
-    CRGB primary = segment->getPrimaryColor();
-    CRGB secondary = segment->getSecondaryColor();
-    
-    JsonArray primaryArr = obj["primaryColor"].to<JsonArray>();
-    primaryArr.add(primary.r);
-    primaryArr.add(primary.g);
-    primaryArr.add(primary.b);
-    
-    JsonArray secondaryArr = obj["secondaryColor"].to<JsonArray>();
-    secondaryArr.add(secondary.r);
-    secondaryArr.add(secondary.g);
-    secondaryArr.add(secondary.b);
-    
-    // Note: Palette preset is not included in response because segments store the
-    // converted CRGBPalette16, not the PalettePreset enum. Once converted, we can't
-    // determine which preset was originally used. Could be fixed by adding preset
-    // tracking to Segment class, but current implementation allows custom palettes.
+    // Serialize schema-based params if effect has schema
+    const lume::EffectInfo* effectInfo = segment->getEffect();
+    if (effectInfo && effectInfo->hasSchema()) {
+        const lume::ParamSchema* schema = effectInfo->schema;
+        const lume::ParamValues& paramValues = segment->getParamValues();
+        
+        JsonObject paramsObj = obj["params"].to<JsonObject>();
+        for (uint8_t i = 0; i < schema->count && i < lume::MAX_EFFECT_PARAMS; i++) {
+            const lume::ParamDesc& desc = schema->params[i];
+            
+            switch (desc.type) {
+                case lume::ParamType::Int:
+                    paramsObj[desc.id] = paramValues.getInt(i);
+                    break;
+                case lume::ParamType::Float:
+                    paramsObj[desc.id] = paramValues.getFloat(i);
+                    break;
+                case lume::ParamType::Color: {
+                    CRGB c = paramValues.getColor(i);
+                    char hex[8];
+                    snprintf(hex, sizeof(hex), "#%02x%02x%02x", c.r, c.g, c.b);
+                    paramsObj[desc.id] = hex;
+                    break;
+                }
+                case lume::ParamType::Bool:
+                    paramsObj[desc.id] = paramValues.getBool(i);
+                    break;
+                case lume::ParamType::Enum:
+                    paramsObj[desc.id] = paramValues.getEnum(i);
+                    break;
+                case lume::ParamType::Palette:
+                    // Palette handled separately or as string
+                    break;
+            }
+        }
+    }
     
     // Reverse flag
     obj["reverse"] = segment->isReversed();
@@ -196,33 +270,73 @@ void handleApiV2SegmentCreate(AsyncWebServerRequest* request, uint8_t* data, siz
         
         // Apply optional settings
         if (doc["effect"].is<const char*>()) {
-            seg->setEffect(doc["effect"].as<const char*>());
-        }
-        if (doc["speed"].is<int>()) {
-            seg->setSpeed(doc["speed"].as<uint8_t>());
-        }
-        if (doc["intensity"].is<int>()) {
-            seg->setIntensity(doc["intensity"].as<uint8_t>());
-        }
-        // Note: Reverse flag is set at creation time via setRange(), not changeable after
-        
-        // Colors
-        if (doc["primaryColor"].is<JsonArrayConst>()) {
-            JsonArrayConst arr = doc["primaryColor"].as<JsonArrayConst>();
-            if (arr.size() >= 3) {
-                seg->setPrimaryColor(CRGB(arr[0].as<uint8_t>(), arr[1].as<uint8_t>(), arr[2].as<uint8_t>()));
-            }
-        }
-        if (doc["secondaryColor"].is<JsonArrayConst>()) {
-            JsonArrayConst arr = doc["secondaryColor"].as<JsonArrayConst>();
-            if (arr.size() >= 3) {
-                seg->setSecondaryColor(CRGB(arr[0].as<uint8_t>(), arr[1].as<uint8_t>(), arr[2].as<uint8_t>()));
+            const char* effectId = doc["effect"].as<const char*>();
+            if (seg->setEffect(effectId)) {
+                storage.saveLastEffect(effectId);  // Only save if effect exists
             }
         }
         
         // Palette - use enum value or preset name
         if (doc["palette"].is<int>()) {
             seg->setPalette(static_cast<lume::PalettePreset>(doc["palette"].as<int>()));
+        }
+        
+        // Schema-aware parameters
+        if (doc["params"].is<JsonObjectConst>()) {
+            JsonObjectConst paramsObj = doc["params"].as<JsonObjectConst>();
+            const lume::EffectInfo* effectInfo = seg->getEffect();
+            
+            if (effectInfo && effectInfo->hasSchema()) {
+                lume::ParamValues& paramValues = seg->getParamValues();
+                const lume::ParamSchema* schema = effectInfo->schema;
+                
+                for (JsonPairConst kv : paramsObj) {
+                    const char* paramId = kv.key().c_str();
+                    int8_t slotIdx = schema->indexOf(paramId);
+                    
+                    if (slotIdx >= 0 && slotIdx < lume::MAX_EFFECT_PARAMS) {
+                        const lume::ParamDesc& desc = schema->params[slotIdx];
+                        
+                        switch (desc.type) {
+                            case lume::ParamType::Int:
+                                if (kv.value().is<int>()) {
+                                    paramValues.setInt(slotIdx, kv.value().as<uint8_t>());
+                                }
+                                break;
+                            case lume::ParamType::Float:
+                                if (kv.value().is<float>()) {
+                                    paramValues.setFloat(slotIdx, kv.value().as<float>());
+                                }
+                                break;
+                            case lume::ParamType::Color:
+                                if (kv.value().is<const char*>()) {
+                                    const char* hex = kv.value().as<const char*>();
+                                    if (hex[0] == '#' && strlen(hex) == 7) {
+                                        uint32_t rgb = strtol(hex + 1, nullptr, 16);
+                                        paramValues.setColor(slotIdx, CRGB(
+                                            (rgb >> 16) & 0xFF,
+                                            (rgb >> 8) & 0xFF,
+                                            rgb & 0xFF
+                                        ));
+                                    }
+                                }
+                                break;
+                            case lume::ParamType::Bool:
+                                if (kv.value().is<bool>()) {
+                                    paramValues.setBool(slotIdx, kv.value().as<bool>());
+                                }
+                                break;
+                            case lume::ParamType::Enum:
+                                if (kv.value().is<int>()) {
+                                    paramValues.setEnum(slotIdx, kv.value().as<uint8_t>());
+                                }
+                                break;
+                            case lume::ParamType::Palette:
+                                break;
+                        }
+                    }
+                }
+            }
         }
         
         // Return created segment
@@ -289,31 +403,76 @@ void handleApiV2SegmentUpdate(AsyncWebServerRequest* request, uint8_t* data, siz
         
         // Update fields if present
         if (doc["effect"].is<const char*>()) {
-            seg->setEffect(doc["effect"].as<const char*>());
+            const char* effectId = doc["effect"].as<const char*>();
+            if (seg->setEffect(effectId)) {
+                storage.saveLastEffect(effectId);  // Only save if effect exists
+            }
         }
-        if (doc["speed"].is<int>()) {
-            seg->setSpeed(doc["speed"].as<uint8_t>());
-        }
-        if (doc["intensity"].is<int>()) {
-            seg->setIntensity(doc["intensity"].as<uint8_t>());
-        }
-        // Note: Reverse flag is set at creation time, not changeable after
         
-        if (doc["primaryColor"].is<JsonArrayConst>()) {
-            JsonArrayConst arr = doc["primaryColor"].as<JsonArrayConst>();
-            if (arr.size() >= 3) {
-                seg->setPrimaryColor(CRGB(arr[0].as<uint8_t>(), arr[1].as<uint8_t>(), arr[2].as<uint8_t>()));
-            }
-        }
-        if (doc["secondaryColor"].is<JsonArrayConst>()) {
-            JsonArrayConst arr = doc["secondaryColor"].as<JsonArrayConst>();
-            if (arr.size() >= 3) {
-                seg->setSecondaryColor(CRGB(arr[0].as<uint8_t>(), arr[1].as<uint8_t>(), arr[2].as<uint8_t>()));
-            }
-        }
         // Palette - use enum value
         if (doc["palette"].is<int>()) {
             seg->setPalette(static_cast<lume::PalettePreset>(doc["palette"].as<int>()));
+        }
+        
+        // Custom parameters (schema-aware effects)
+        if (doc["params"].is<JsonObjectConst>()) {
+            JsonObjectConst paramsObj = doc["params"].as<JsonObjectConst>();
+            const lume::EffectInfo* effectInfo = seg->getEffect();
+            
+            if (effectInfo && effectInfo->hasSchema()) {
+                lume::ParamValues& paramValues = seg->getParamValues();
+                const lume::ParamSchema* schema = effectInfo->schema;
+                
+                // Iterate over provided params and update values
+                for (JsonPairConst kv : paramsObj) {
+                    const char* paramId = kv.key().c_str();
+                    int8_t slotIdx = schema->indexOf(paramId);
+                    
+                    if (slotIdx >= 0 && slotIdx < lume::MAX_EFFECT_PARAMS) {
+                        const lume::ParamDesc& desc = schema->params[slotIdx];
+                        
+                        switch (desc.type) {
+                            case lume::ParamType::Int:
+                                if (kv.value().is<int>()) {
+                                    paramValues.setInt(slotIdx, kv.value().as<uint8_t>());
+                                }
+                                break;
+                            case lume::ParamType::Float:
+                                if (kv.value().is<float>()) {
+                                    paramValues.setFloat(slotIdx, kv.value().as<float>());
+                                }
+                                break;
+                            case lume::ParamType::Color:
+                                if (kv.value().is<const char*>()) {
+                                    // Parse hex color "#RRGGBB"
+                                    const char* hex = kv.value().as<const char*>();
+                                    if (hex[0] == '#' && strlen(hex) == 7) {
+                                        uint32_t rgb = strtol(hex + 1, nullptr, 16);
+                                        paramValues.setColor(slotIdx, CRGB(
+                                            (rgb >> 16) & 0xFF,
+                                            (rgb >> 8) & 0xFF,
+                                            rgb & 0xFF
+                                        ));
+                                    }
+                                }
+                                break;
+                            case lume::ParamType::Bool:
+                                if (kv.value().is<bool>()) {
+                                    paramValues.setBool(slotIdx, kv.value().as<bool>());
+                                }
+                                break;
+                            case lume::ParamType::Enum:
+                                if (kv.value().is<int>()) {
+                                    paramValues.setEnum(slotIdx, kv.value().as<uint8_t>());
+                                }
+                                break;
+                            case lume::ParamType::Palette:
+                                // Palette handled separately above
+                                break;
+                        }
+                    }
+                }
+            }
         }
         
         // Return updated segment
@@ -374,10 +533,59 @@ void handleApiV2EffectsList(AsyncWebServerRequest* request) {
         JsonObject effect = effects.add<JsonObject>();
         effect["id"] = info->id;
         effect["name"] = info->displayName;
-        effect["category"] = static_cast<int>(info->category);
+        effect["category"] = info->categoryName();
+        
+        // Include schema if available
+        JsonArray params = effect["params"].to<JsonArray>();
+        if (info->hasSchema()) {
+            schemaToJson(params, info->schema);
+        } else {
+            // Legacy: generate params from flags
+            if (info->usesSpeed) {
+                JsonObject p = params.add<JsonObject>();
+                p["id"] = "speed";
+                p["name"] = "Speed";
+                p["type"] = "int";
+                p["min"] = 0;
+                p["max"] = 255;
+                p["default"] = 128;
+            }
+            if (info->usesIntensity) {
+                JsonObject p = params.add<JsonObject>();
+                p["id"] = "intensity";
+                p["name"] = "Intensity";
+                p["type"] = "int";
+                p["min"] = 0;
+                p["max"] = 255;
+                p["default"] = 128;
+            }
+            // Generate color params based on colorCount
+            for (uint8_t c = 0; c < info->colorCount; c++) {
+                JsonObject p = params.add<JsonObject>();
+                if (c == 0) {
+                    p["id"] = "color";
+                    p["name"] = "Color";
+                } else {
+                    char idBuf[16], nameBuf[16];
+                    snprintf(idBuf, sizeof(idBuf), "color%d", c);
+                    snprintf(nameBuf, sizeof(nameBuf), "Color %d", c + 1);
+                    p["id"] = idBuf;
+                    p["name"] = nameBuf;
+                }
+                p["type"] = "color";
+                p["default"] = "#ff0000";
+            }
+            if (info->usesPalette) {
+                JsonObject p = params.add<JsonObject>();
+                p["id"] = "palette";
+                p["name"] = "Palette";
+                p["type"] = "palette";
+            }
+        }
+        
+        // Effect metadata
         effect["usesPalette"] = info->usesPalette;
-        effect["usesPrimaryColor"] = info->usesPrimaryColor;
-        effect["usesSecondaryColor"] = info->usesSecondaryColor;
+        effect["colorCount"] = info->colorCount;
         effect["usesSpeed"] = info->usesSpeed;
         effect["usesIntensity"] = info->usesIntensity;
     }

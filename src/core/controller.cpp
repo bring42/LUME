@@ -201,9 +201,9 @@ void LumeController::executeCommand(const Command& cmd) {
         case CommandType::SetColor:
             if (seg) {
                 if (cmd.data.color.isSecondary) {
-                    seg->setSecondaryColor(cmd.data.color.toCRGB());
+                    seg->setColor(1, cmd.data.color.toCRGB());
                 } else {
-                    seg->setPrimaryColor(cmd.data.color.toCRGB());
+                    seg->setColor(0, cmd.data.color.toCRGB());
                 }
             }
             break;

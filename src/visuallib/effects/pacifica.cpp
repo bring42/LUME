@@ -5,9 +5,17 @@
  * Inspired by Mark Kriegsman's Pacifica
  */
 
-#include "../core/effect_registry.h"
+#include "../../core/effect_registry.h"
 
 namespace lume {
+
+namespace pacifica {
+    constexpr uint8_t SPEED = 0;
+}
+
+DEFINE_EFFECT_SCHEMA(pacificaSchema,
+    ParamDesc::Int("speed", "Wave Speed", 128, 1, 255)
+);
 
 // Ocean color palettes
 DEFINE_GRADIENT_PALETTE(pacifica1) {
@@ -31,8 +39,11 @@ DEFINE_GRADIENT_PALETTE(pacifica3) {
   255, 100,180,220
 };
 
-void effectPacifica(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+void effectPacifica(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
+    (void)params;
+    
+    uint8_t speed = paramValues.getInt(pacifica::SPEED);
     
     uint16_t len = view.size();
     
@@ -41,9 +52,9 @@ void effectPacifica(SegmentView& view, const EffectParams& params, uint32_t fram
     CRGBPalette16 pal3 = pacifica3;
     
     // Multiple wave layers
-    uint32_t speed1 = frame * params.speed / 32;
-    uint32_t speed2 = frame * params.speed / 24;
-    uint32_t speed3 = frame * params.speed / 40;
+    uint32_t speed1 = frame * speed / 32;
+    uint32_t speed2 = frame * speed / 24;
+    uint32_t speed3 = frame * speed / 40;
     
     for (uint16_t i = 0; i < len; i++) {
         // Layer 1 - slow deep waves
@@ -67,6 +78,6 @@ void effectPacifica(SegmentView& view, const EffectParams& params, uint32_t fram
     }
 }
 
-REGISTER_EFFECT_SIMPLE(effectPacifica, "pacifica");
+REGISTER_EFFECT_SCHEMA(effectPacifica, "pacifica", "Pacifica", Animated, pacificaSchema, 0);
 
 } // namespace lume

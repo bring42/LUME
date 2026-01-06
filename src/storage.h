@@ -87,6 +87,10 @@ public:
     bool saveLedState(const JsonDocument& state);
     bool loadLedState(JsonDocument& state);
     
+    // Effect persistence (for restoring last effect after reboot)
+    bool saveLastEffect(const char* effectId);
+    bool loadLastEffect(String& effectId);
+    
     // Prompt spec operations
     bool savePromptSpec(const PromptSpec& spec);
     bool loadPromptSpec(PromptSpec& spec);

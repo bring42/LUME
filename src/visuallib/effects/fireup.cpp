@@ -4,15 +4,29 @@
  * TODO: Migrate static heat array to scratchpad for multi-segment support
  */
 
-#include "../core/effect_registry.h"
+#include "../../core/effect_registry.h"
 
 namespace lume {
+
+namespace fireup {
+    constexpr uint8_t SPEED = 0;
+    constexpr uint8_t INTENSITY = 1;
+}
+
+DEFINE_EFFECT_SCHEMA(fireupSchema,
+    ParamDesc::Int("speed", "Sparking", 120, 1, 255),
+    ParamDesc::Int("intensity", "Cooling", 55, 1, 255)
+);
 
 // Heat array for fire simulation (will move to scratchpad in Phase 1)
 static uint8_t fireUpHeat[300];
 
-void effectFireUp(SegmentView& view, const EffectParams& params, uint32_t frame, bool firstFrame) {
+void effectFireUp(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
     (void)frame;
+    (void)params;
+    
+    uint8_t sparking = paramValues.getInt(fireup::SPEED);
+    uint8_t intensity = paramValues.getInt(fireup::INTENSITY);
     
     uint16_t len = min(view.size(), (uint16_t)300);
     if (len == 0) return;
@@ -22,8 +36,7 @@ void effectFireUp(SegmentView& view, const EffectParams& params, uint32_t frame,
         memset(fireUpHeat, 0, sizeof(fireUpHeat));
     }
     
-    uint8_t cooling = params.intensity > 0 ? params.intensity / 4 : 55;
-    uint8_t sparking = params.speed > 0 ? params.speed : 120;
+    uint8_t cooling = intensity > 0 ? intensity / 4 : 55;
     
     // Cool down every cell
     for (uint16_t i = 0; i < len; i++) {
@@ -50,6 +63,6 @@ void effectFireUp(SegmentView& view, const EffectParams& params, uint32_t frame,
     }
 }
 
-REGISTER_EFFECT_ANIMATED(effectFireUp, "fireup", "Fire Up");
+REGISTER_EFFECT_SCHEMA(effectFireUp, "fireup", "Fire Up", Animated, fireupSchema, 0);
 
 } // namespace lume

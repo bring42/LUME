@@ -178,23 +178,49 @@
 
         function applySegmentToUI(seg) {
             if (!seg) return;
+            
+            // Update effect selection
             document.getElementById('effect').value = seg.effect || 'rainbow';
-            // Speed input is user-controlled only, never updated from server
-
-            // Palette cannot be read back reliably in v2 (see docs); keep last selected in localStorage.
-            const savedPalette = localStorage.getItem('palettePreset') || 'rainbow';
-            document.getElementById('palette').value = savedPalette;
-
             selectTileByValue('effectTiles', seg.effect || 'rainbow');
-            selectTileByValue('paletteTiles', savedPalette);
-
-            if (seg.primaryColor) {
-                const [r, g, b] = seg.primaryColor;
-                document.getElementById('primaryColor').value = rgbToHex(r, g, b);
-            }
-            if (seg.secondaryColor) {
-                const [r, g, b] = seg.secondaryColor;
-                document.getElementById('secondaryColor').value = rgbToHex(r, g, b);
+            
+            // DON'T call updateEffectControls() here - it rebuilds controls and interrupts user input
+            // Controls are already rendered when effect changes via loadSegmentState()
+            
+            // Populate schema control values from seg.params
+            if (seg.params) {
+                Object.keys(seg.params).forEach(paramId => {
+                    const input = document.querySelector(`#param_${paramId}`);
+                    if (input) {
+                        const value = seg.params[paramId];
+                        if (input.type === 'checkbox') {
+                            input.checked = value;
+                        } else if (input.type === 'color') {
+                            // Value might be hex string or RGB array
+                            if (typeof value === 'string') {
+                                input.value = value;
+                            } else if (Array.isArray(value)) {
+                                const [r, g, b] = value;
+                                input.value = rgbToHex(r, g, b);
+                            }
+                        } else if (input.type === 'hidden' && paramId === 'palette') {
+                            // Palette tiles use hidden input - update tiles selection
+                            input.value = value;
+                            const tilesContainer = document.getElementById('paletteTiles_' + paramId);
+                            if (tilesContainer) {
+                                tilesContainer.querySelectorAll('.tile').forEach(t => {
+                                    t.classList.toggle('selected', t.dataset.value === value);
+                                });
+                            }
+                        } else {
+                            input.value = value;
+                            // Update value display for range inputs
+                            const valueDisplay = document.getElementById(input.id + '_value');
+                            if (valueDisplay) {
+                                valueDisplay.textContent = value;
+                            }
+                        }
+                    }
+                });
             }
         }
 
@@ -236,28 +262,49 @@
             try {
                 const seg = await apiV2(`/segments/${segmentId}`);
                 
+                // Set effect selection
                 document.getElementById('effect').value = seg.effect || 'rainbow';
-                document.getElementById('speed').value = seg.speed || 100;
-                document.getElementById('speedValue').textContent = seg.speed || 100;
-                document.getElementById('intensity').value = seg.intensity ?? 128;
-                document.getElementById('intensityValue').textContent = seg.intensity ?? 128;
                 selectTileByValue('effectTiles', seg.effect || 'rainbow');
                 
-                const savedPalette = localStorage.getItem('palettePreset') || 'rainbow';
-                document.getElementById('palette').value = savedPalette;
-                selectTileByValue('paletteTiles', savedPalette);
-                
-                if (seg.primaryColor) {
-                    const [r, g, b] = seg.primaryColor;
-                    document.getElementById('primaryColor').value = rgbToHex(r, g, b);
-                }
-                if (seg.secondaryColor) {
-                    const [r, g, b] = seg.secondaryColor;
-                    document.getElementById('secondaryColor').value = rgbToHex(r, g, b);
-                }
-                
-                // Update control visibility based on effect
+                // Update control visibility and render schema controls for this effect
                 updateEffectControls(seg.effect);
+                
+                // Populate schema control values from seg.params
+                if (seg.params) {
+                    Object.keys(seg.params).forEach(paramId => {
+                        const input = document.querySelector(`input[data-param-id="${paramId}"]`);
+                        if (input) {
+                            const value = seg.params[paramId];
+                            if (input.type === 'checkbox') {
+                                input.checked = value;
+                            } else if (input.type === 'color') {
+                                // Value might be hex string or RGB array
+                                if (typeof value === 'string') {
+                                    input.value = value;
+                                } else if (Array.isArray(value)) {
+                                    const [r, g, b] = value;
+                                    input.value = rgbToHex(r, g, b);
+                                }
+                            } else if (input.type === 'hidden' && paramId === 'palette') {
+                                // Palette tiles use hidden input - update tiles selection
+                                input.value = value;
+                                const tilesContainer = document.getElementById('paletteTiles_' + paramId);
+                                if (tilesContainer) {
+                                    tilesContainer.querySelectorAll('.tile').forEach(t => {
+                                        t.classList.toggle('selected', t.dataset.value === value);
+                                    });
+                                }
+                            } else {
+                                input.value = value;
+                                // Update value display for range inputs
+                                const valueDisplay = document.getElementById(input.id + '_value');
+                                if (valueDisplay) {
+                                    valueDisplay.textContent = value;
+                                }
+                            }
+                        }
+                    });
+                }
             } catch (e) {
                 console.error(`Failed to load segment ${segmentId} state:`, e);
             }
@@ -290,7 +337,9 @@
                             usesPrimaryColor: effect.usesPrimaryColor,
                             usesSecondaryColor: effect.usesSecondaryColor,
                             usesSpeed: effect.usesSpeed,
-                            usesIntensity: effect.usesIntensity
+                            usesIntensity: effect.usesIntensity,
+                            params: effect.params || [],  // Schema parameters
+                            hasSchema: effect.params && effect.params.length > 0
                         };
                     });
                 }
@@ -304,77 +353,421 @@
             const metadata = effectMetadata[effectId];
             if (!metadata) return; // Metadata not loaded yet or effect not found
             
-            // Palette controls
-            const paletteSection = document.querySelector('.palette-section');
-            if (paletteSection) {
-                paletteSection.style.display = metadata.usesPalette ? '' : 'none';
-            }
-            
-            // Speed controls
-            const speedControl = document.querySelector('.speed-control');
-            if (speedControl) {
-                speedControl.style.display = metadata.usesSpeed ? '' : 'none';
-            }
-            
-            // Intensity controls
-            const intensityControl = document.querySelector('.intensity-control');
-            if (intensityControl) {
-                intensityControl.style.display = metadata.usesIntensity ? '' : 'none';
-            }
-            
-            // Primary color
-            const primaryColorControl = document.querySelector('.primary-color');
-            if (primaryColorControl) {
-                primaryColorControl.style.display = metadata.usesPrimaryColor ? '' : 'none';
-            }
-            
-            // Secondary color
-            const secondaryColorControl = document.querySelector('.secondary-color');
-            if (secondaryColorControl) {
-                secondaryColorControl.style.display = metadata.usesSecondaryColor ? '' : 'none';
-            }
-            
-            // Hide entire color section if neither color is used
-            // EXCEPT when custom palette is selected (needs color input)
-            const colorControls = document.querySelector('.color-controls');
-            if (colorControls) {
-                const selectedPalette = document.getElementById('palette')?.value;
-                const isCustomPalette = selectedPalette === 'custom';
-                const usesAnyColor = metadata.usesPrimaryColor || metadata.usesSecondaryColor || (metadata.usesPalette && isCustomPalette);
-                colorControls.style.display = usesAnyColor ? '' : 'none';
+            // Check if effect has schema-based params
+            if (metadata.hasSchema && metadata.params.length > 0) {
+                // Render dynamic controls from schema
+                renderSchemaControls(metadata.params);
                 
-                // Show both colors for custom palette
-                if (isCustomPalette && metadata.usesPalette) {
-                    if (primaryColorControl) primaryColorControl.style.display = '';
-                    if (secondaryColorControl) secondaryColorControl.style.display = '';
+                // Hide legacy controls
+                hideControl('.palette-section');
+                hideControl('.speed-control');
+                hideControl('.intensity-control');
+                hideControl('.color-controls');
+            } else {
+                // Legacy control visibility (backward compatibility)
+                // Clear schema controls
+                const schemaContainer = document.getElementById('schemaControls');
+                if (schemaContainer) schemaContainer.innerHTML = '';
+                
+                // Palette controls
+                showHideControl('.palette-section', metadata.usesPalette);
+                
+                // Speed controls
+                showHideControl('.speed-control', metadata.usesSpeed);
+                
+                // Intensity controls
+                showHideControl('.intensity-control', metadata.usesIntensity);
+                
+                // Primary color
+                showHideControl('.primary-color', metadata.usesPrimaryColor);
+                
+                // Secondary color
+                showHideControl('.secondary-color', metadata.usesSecondaryColor);
+                
+                // Hide entire color section if neither color is used
+                // EXCEPT when custom palette is selected (needs color input)
+                const colorControls = document.querySelector('.color-controls');
+                if (colorControls) {
+                    const selectedPalette = document.getElementById('palette')?.value;
+                    const isCustomPalette = selectedPalette === 'custom';
+                    const usesAnyColor = metadata.usesPrimaryColor || metadata.usesSecondaryColor || (metadata.usesPalette && isCustomPalette);
+                    colorControls.style.display = usesAnyColor ? '' : 'none';
+                    
+                    // Show both colors for custom palette
+                    const primaryColorControl = document.querySelector('.primary-color');
+                    const secondaryColorControl = document.querySelector('.secondary-color');
+                    if (isCustomPalette && metadata.usesPalette) {
+                        if (primaryColorControl) primaryColorControl.style.display = '';
+                        if (secondaryColorControl) secondaryColorControl.style.display = '';
+                    }
                 }
+            }
+        }
+        
+        function hideControl(selector) {
+            const el = document.querySelector(selector);
+            if (el) el.style.display = 'none';
+        }
+        
+        function showHideControl(selector, show) {
+            const el = document.querySelector(selector);
+            if (el) el.style.display = show ? '' : 'none';
+        }
+        
+        function renderSchemaControls(params) {
+            let schemaContainer = document.getElementById('schemaControls');
+            if (!schemaContainer) {
+                // Create container if it doesn't exist
+                // Insert after the color-controls section
+                const colorControls = document.querySelector('.color-controls');
+                if (!colorControls) {
+                    console.error('Cannot find color-controls element to insert schema controls');
+                    return;
+                }
+                
+                schemaContainer = document.createElement('div');
+                schemaContainer.id = 'schemaControls';
+                schemaContainer.className = 'form-group';
+                schemaContainer.style.marginTop = '16px';
+                
+                // Insert after color-controls
+                colorControls.parentNode.insertBefore(schemaContainer, colorControls.nextSibling);
+            }
+            
+            schemaContainer.innerHTML = ''; // Clear existing
+            
+            params.forEach(param => {
+                const control = createSchemaControl(param);
+                if (control) {
+                    schemaContainer.appendChild(control);
+                }
+            });
+        }
+        
+        function createSchemaControl(param) {
+            let input;
+            
+            switch (param.type) {
+                case 'int':
+                    const formGroup = document.createElement('div');
+                    formGroup.className = 'form-group';
+                    formGroup.dataset.paramId = param.id;
+                    
+                    const labelRow = document.createElement('div');
+                    labelRow.className = 'label-row';
+                    
+                    const label = document.createElement('label');
+                    label.textContent = param.name;
+                    label.setAttribute('for', 'param_' + param.id);
+                    
+                    const valueDisplay = document.createElement('span');
+                    valueDisplay.className = 'label-value';
+                    valueDisplay.id = 'param_' + param.id + '_value';
+                    valueDisplay.textContent = param.default || 128;
+                    
+                    labelRow.appendChild(label);
+                    labelRow.appendChild(valueDisplay);
+                    
+                    input = document.createElement('input');
+                    input.type = 'range';
+                    input.id = 'param_' + param.id;
+                    input.min = param.min || 0;
+                    input.max = param.max || 255;
+                    input.value = param.default || 128;
+                    input.dataset.paramId = param.id;
+                    
+                    input.addEventListener('input', () => {
+                        valueDisplay.textContent = input.value;
+                    });
+                    
+                    // Apply on release
+                    ['pointerup', 'mouseup', 'touchend'].forEach(evt => {
+                        input.addEventListener(evt, () => {
+                            applySegmentState();
+                        });
+                    });
+                    
+                    formGroup.appendChild(labelRow);
+                    formGroup.appendChild(input);
+                    return formGroup;
+                    
+                case 'float':
+                    const floatGroup = document.createElement('div');
+                    floatGroup.className = 'form-group';
+                    floatGroup.dataset.paramId = param.id;
+                    
+                    const floatLabel = document.createElement('label');
+                    floatLabel.textContent = param.name;
+                    floatLabel.setAttribute('for', 'param_' + param.id);
+                    
+                    input = document.createElement('input');
+                    input.type = 'number';
+                    input.id = 'param_' + param.id;
+                    input.step = '0.01';
+                    input.min = param.min || 0;
+                    input.max = param.max || 1;
+                    input.value = param.default || 0.5;
+                    input.dataset.paramId = param.id;
+                    input.style.width = '100%';
+                    input.style.padding = '8px';
+                    input.style.borderRadius = '8px';
+                    input.style.border = '1px solid var(--border)';
+                    input.style.background = 'var(--surface)';
+                    input.style.color = 'var(--text)';
+                    
+                    input.addEventListener('change', () => {
+                        applySegmentState();
+                    });
+                    
+                    floatGroup.appendChild(floatLabel);
+                    floatGroup.appendChild(input);
+                    return floatGroup;
+                    
+                case 'color':
+                    const colorGroup = document.createElement('div');
+                    colorGroup.className = 'form-group';
+                    colorGroup.dataset.paramId = param.id;
+                    
+                    const colorLabel = document.createElement('label');
+                    colorLabel.textContent = param.name;
+                    
+                    const colorPicker = document.createElement('div');
+                    colorPicker.className = 'color-picker';
+                    
+                    input = document.createElement('input');
+                    input.type = 'color';
+                    input.id = 'param_' + param.id;
+                    input.value = param.default || '#ff0000';
+                    input.dataset.paramId = param.id;
+                    
+                    input.addEventListener('change', () => {
+                        applySegmentState();
+                    });
+                    
+                    colorPicker.appendChild(input);
+                    colorGroup.appendChild(colorLabel);
+                    colorGroup.appendChild(colorPicker);
+                    return colorGroup;
+                    
+                case 'bool':
+                    const boolGroup = document.createElement('div');
+                    boolGroup.className = 'form-group';
+                    boolGroup.dataset.paramId = param.id;
+                    boolGroup.style.display = 'flex';
+                    boolGroup.style.alignItems = 'center';
+                    boolGroup.style.justifyContent = 'space-between';
+                    
+                    const boolLabel = document.createElement('label');
+                    boolLabel.textContent = param.name;
+                    
+                    const toggleLabel = document.createElement('label');
+                    toggleLabel.className = 'toggle';
+                    
+                    input = document.createElement('input');
+                    input.type = 'checkbox';
+                    input.id = 'param_' + param.id;
+                    input.checked = param.default || false;
+                    input.dataset.paramId = param.id;
+                    
+                    input.addEventListener('change', () => {
+                        applySegmentState();
+                    });
+                    
+                    const slider = document.createElement('span');
+                    slider.className = 'toggle-slider';
+                    
+                    toggleLabel.appendChild(input);
+                    toggleLabel.appendChild(slider);
+                    
+                    boolGroup.appendChild(boolLabel);
+                    boolGroup.appendChild(toggleLabel);
+                    return boolGroup;
+                    
+                case 'enum':
+                    const enumGroup = document.createElement('div');
+                    enumGroup.className = 'form-group';
+                    enumGroup.dataset.paramId = param.id;
+                    
+                    const enumLabel = document.createElement('label');
+                    enumLabel.textContent = param.name;
+                    
+                    input = document.createElement('select');
+                    input.id = 'param_' + param.id;
+                    input.style.width = '100%';
+                    input.style.padding = '8px';
+                    input.style.borderRadius = '8px';
+                    input.style.border = '1px solid var(--border)';
+                    input.style.background = 'var(--surface)';
+                    input.style.color = 'var(--text)';
+                    input.style.fontSize = '14px';
+                    
+                    const options = param.options.split('|');
+                    options.forEach((opt, idx) => {
+                        const option = document.createElement('option');
+                        option.value = idx;
+                        option.textContent = opt;
+                        input.appendChild(option);
+                    });
+                    input.value = param.default || 0;
+                    input.dataset.paramId = param.id;
+                    
+                    input.addEventListener('change', () => {
+                        applySegmentState();
+                    });
+                    
+                    enumGroup.appendChild(enumLabel);
+                    enumGroup.appendChild(input);
+                    return enumGroup;
+                    
+                case 'palette':
+                    const palGroup = document.createElement('div');
+                    palGroup.className = 'form-group';
+                    palGroup.dataset.paramId = param.id;
+                    
+                    const palLabel = document.createElement('label');
+                    palLabel.textContent = param.name;
+                    
+                    // Create tiles container with horizontal scroll (like effects)
+                    const palTilesContainer = document.createElement('div');
+                    palTilesContainer.className = 'tile-row';
+                    palTilesContainer.id = 'paletteTiles_' + param.id;
+                    
+                    // Hidden input to store value
+                    input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.id = 'param_' + param.id;
+                    input.dataset.paramId = param.id;
+                    input.value = param.default || 'rainbow';
+                    
+                    // Define palettes with gradient previews
+                    const palettes = [
+                        { name: 'rainbow', label: 'Rainbow', gradient: 'linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' },
+                        { name: 'forest', label: 'Forest', gradient: 'linear-gradient(90deg, #0b6623, #228b22, #90ee90, #006400)' },
+                        { name: 'ocean', label: 'Ocean', gradient: 'linear-gradient(90deg, #000080, #0077be, #00bfff, #7fffd4)' },
+                        { name: 'heat', label: 'Heat', gradient: 'linear-gradient(90deg, #000, #8b0000, #ff0000, #ffa500, #ffff00)' },
+                        { name: 'lava', label: 'Lava', gradient: 'linear-gradient(90deg, #000, #8b0000, #ff4500, #ffa500)' },
+                        { name: 'cloud', label: 'Cloud', gradient: 'linear-gradient(90deg, #000080, #4169e1, #87ceeb, #f0f8ff)' },
+                        { name: 'party', label: 'Party', gradient: 'linear-gradient(90deg, #ff00ff, #ff0080, #ff0000, #ff8000, #ffff00)' }
+                    ];
+                    
+                    palettes.forEach(pal => {
+                        const tile = document.createElement('div');
+                        tile.className = 'tile';
+                        tile.dataset.value = pal.name;
+                        
+                        const tileLabel = document.createElement('span');
+                        tileLabel.className = 'tile-label';
+                        tileLabel.textContent = pal.label;
+                        
+                        const preview = document.createElement('div');
+                        preview.className = 'palette-preview';
+                        preview.style.background = pal.gradient;
+                        
+                        tile.appendChild(tileLabel);
+                        tile.appendChild(preview);
+                        
+                        tile.onclick = () => {
+                            // Update hidden input
+                            input.value = pal.name;
+                            // Update selected tile
+                            palTilesContainer.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
+                            tile.classList.add('selected');
+                            // Apply changes
+                            applySegmentState();
+                        };
+                        
+                        // Select default
+                        if (pal.name === input.value) {
+                            tile.classList.add('selected');
+                        }
+                        
+                        palTilesContainer.appendChild(tile);
+                    });
+                    
+                    palGroup.appendChild(palLabel);
+                    palGroup.appendChild(palTilesContainer);
+                    palGroup.appendChild(input);
+                    return palGroup;
+                    
+                default:
+                    return null;
             }
         }
 
         // v2: Apply LED state - updates controller + segment 0
         async function applyLedState() {
+            await applyControllerState();
+            await applySegmentState();
+        }
+        
+        // v2: Apply only controller state (power + brightness)
+        async function applyControllerState() {
             const controller = {
                 power: document.getElementById('powerToggle').checked,
                 brightness: parseInt(document.getElementById('brightness').value)
             };
 
-            const paletteName = document.getElementById('palette').value;
-            localStorage.setItem('palettePreset', paletteName);
-
+            try {
+                await apiV2('/controller', 'PUT', controller);
+            } catch (e) {
+                console.error('Failed to apply controller settings:', e);
+            }
+        }
+        
+        // v2: Apply only segment state (effect + params)
+        async function applySegmentState() {
+            const effectId = document.getElementById('effect').value;
             const segment = {
-                effect: document.getElementById('effect').value,
-                speed: parseInt(document.getElementById('speed').value),
-                intensity: parseInt(document.getElementById('intensity').value),
-                primaryColor: hexToRgb(document.getElementById('primaryColor').value),
-                secondaryColor: hexToRgb(document.getElementById('secondaryColor').value),
-                palette: PALETTE_PRESETS[paletteName] ?? 0
+                effect: effectId
             };
+            
+            // Collect schema-based params from dynamic controls
+            const metadata = effectMetadata[effectId];
+            if (metadata && metadata.hasSchema) {
+                const params = {};
+                let paletteValue = null;
+                const schemaContainer = document.getElementById('schemaControls');
+                if (schemaContainer) {
+                    const formGroups = schemaContainer.querySelectorAll('[data-param-id]');
+                    formGroups.forEach(group => {
+                        const paramId = group.dataset.paramId;
+                        let input = group.querySelector('input');
+                        if (!input) input = group.querySelector('select'); // enum/palette uses select
+                        if (input) {
+                            let value;
+                            if (input.type === 'checkbox') {
+                                value = input.checked;
+                            } else if (input.type === 'number') {
+                                value = parseFloat(input.value);
+                            } else if (input.type === 'range') {
+                                value = parseInt(input.value);
+                            } else if (input.type === 'color') {
+                                value = input.value; // hex string
+                            } else if (input.tagName === 'SELECT') {
+                                value = parseInt(input.value); // enum is int
+                            } else {
+                                value = input.value;
+                            }
+                            
+                            // Special handling for palette - send as top-level field
+                            if (paramId === 'palette') {
+                                const paletteName = input.value; // string like 'rainbow'
+                                paletteValue = PALETTE_PRESETS[paletteName] ?? 0;
+                            } else {
+                                params[paramId] = value;
+                            }
+                        }
+                    });
+                    if (Object.keys(params).length > 0) {
+                        segment.params = params;
+                    }
+                    if (paletteValue !== null) {
+                        segment.palette = paletteValue;
+                    }
+                }
+            }
 
             try {
-                // Update controller
-                await apiV2('/controller', 'PUT', controller);
-
-                // Update active segment
                 if (activeSegmentId >= 0) {
                     await apiV2(`/segments/${activeSegmentId}`, 'PUT', segment);
                     showToast('Settings applied!', 'success');
@@ -382,7 +775,7 @@
                     showToast('No segment selected', 'error');
                 }
             } catch (e) {
-                showToast('Failed to apply settings (v2)', 'error');
+                showToast('Failed to apply settings', 'error');
                 console.error(e);
             }
         }
@@ -464,7 +857,12 @@
                 input.addEventListener(evt, () => {
                     if (isDragging) {
                         isDragging = false;
-                        applyLedState();
+                        // Brightness updates controller, other sliders update segment
+                        if (input.id === 'brightness') {
+                            applyControllerState();
+                        } else {
+                            applySegmentState();
+                        }
                     }
                 });
             });
@@ -482,7 +880,7 @@
             const effectId = tile.dataset.value;
             document.getElementById('effect').value = effectId;
             updateEffectControls(effectId);
-            applyLedState();
+            applySegmentState();
         }
         
         function selectPalette(tile) {
@@ -496,7 +894,7 @@
             const currentEffect = document.getElementById('effect').value;
             updateEffectControls(currentEffect);
             
-            applyLedState();
+            applySegmentState();
         }
         
         function selectTileByValue(containerId, value) {
@@ -902,15 +1300,15 @@
         
         // Color pickers auto-apply on change (when picker closes)
         document.getElementById('primaryColor').addEventListener('change', function() {
-            applyLedState();
+            applySegmentState();
         });
         
         document.getElementById('secondaryColor').addEventListener('change', function() {
-            applyLedState();
+            applySegmentState();
         });
         
         document.getElementById('powerToggle').addEventListener('change', function() {
-            applyLedState();
+            applyControllerState();
         });
         
         // Nightlight slider listeners

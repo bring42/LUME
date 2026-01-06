@@ -12,9 +12,9 @@
 
 // NOTE: ESP32-C3 has GPIO 0-21. Safe pins: 0-1, 4-7, 10, 18-21
 // Avoid: GPIO 2-3 (strapping), 8-9 (flash), 11-17 (flash)
-#define LED_DATA_PIN                21               // GPIO8 - adjust for your board
-#define LED_STRIP_TYPE              WS2811         // Common addressable RGB LED
-#define LED_COLOR_MODE              RGB             // Byte order (GRB for WS2812B)
+#define LED_DATA_PIN                3               // GPIO8 - adjust for your board
+#define LED_STRIP_TYPE              WS2812B         // Common addressable RGB LED
+#define LED_COLOR_MODE              GRB             // Byte order (GRB for WS2812B)
 
 // Strip Dimensions
 // MAX_LED_COUNT sets compile-time buffer size (3 bytes per LED)

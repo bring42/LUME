@@ -4,7 +4,11 @@
 
 #pragma once
 
-#include <ESPAsyncWebServer.h>
+#include <cstddef>
+#include <cstdint>
+
+// Forward declaration
+class AsyncWebServerRequest;
 
 // Nightlight API handlers
 void handleApiNightlightGet(AsyncWebServerRequest* request);

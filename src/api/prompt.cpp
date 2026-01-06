@@ -44,8 +44,7 @@ String buildSystemPrompt() {
     prompt += "  \"effect\": \"effect_id\",\n";
     prompt += "  \"speed\": 100,  // 1-200\n";
     prompt += "  \"intensity\": 128,  // 0-255\n";
-    prompt += "  \"primaryColor\": [255, 0, 0],  // RGB\n";
-    prompt += "  \"secondaryColor\": [0, 0, 255],  // RGB\n";
+    prompt += "  \"colors\": [[255, 0, 0], [0, 0, 255], [0, 255, 0]],  // RGB array [primary, secondary, tertiary]\n";
     prompt += "  \"brightness\": 128  // 0-255, optional\n";
     prompt += "}\n\n";
     prompt += "Match user intent to the most appropriate effect. For colors, interpret descriptions like 'warm', 'cool', 'cozy' into RGB values.\n";
@@ -155,6 +154,8 @@ bool applySpec(const JsonDocument& spec, String& error) {
         const char* effectId = spec["effect"].as<const char*>();
         if (!seg->setEffect(effectId)) {
             LOG_WARN(LogTag::WEB, "Unknown effect: %s", effectId);
+        } else {
+            storage.saveLastEffect(effectId);  // Persist for next reboot
         }
     }
     
@@ -168,18 +169,16 @@ bool applySpec(const JsonDocument& spec, String& error) {
         seg->setIntensity(constrain(spec["intensity"].as<int>(), 0, 255));
     }
     
-    // Apply colors
-    if (spec["primaryColor"].is<JsonArrayConst>()) {
-        JsonArrayConst arr = spec["primaryColor"].as<JsonArrayConst>();
-        if (arr.size() >= 3) {
-            seg->setPrimaryColor(CRGB(arr[0].as<uint8_t>(), arr[1].as<uint8_t>(), arr[2].as<uint8_t>()));
-        }
-    }
-    
-    if (spec["secondaryColor"].is<JsonArrayConst>()) {
-        JsonArrayConst arr = spec["secondaryColor"].as<JsonArrayConst>();
-        if (arr.size() >= 3) {
-            seg->setSecondaryColor(CRGB(arr[0].as<uint8_t>(), arr[1].as<uint8_t>(), arr[2].as<uint8_t>()));
+    // Apply colors (WLED format)
+    if (spec["colors"].is<JsonArrayConst>()) {
+        JsonArrayConst colorsArr = spec["colors"].as<JsonArrayConst>();
+        for (uint8_t i = 0; i < 3 && i < colorsArr.size(); i++) {
+            if (colorsArr[i].is<JsonArrayConst>()) {
+                JsonArrayConst arr = colorsArr[i].as<JsonArrayConst>();
+                if (arr.size() >= 3) {
+                    seg->setColor(i, CRGB(arr[0].as<uint8_t>(), arr[1].as<uint8_t>(), arr[2].as<uint8_t>()));
+                }
+            }
         }
     }
     

@@ -187,8 +187,6 @@ void MqttProtocol::publishState() {
         const auto* seg = controller_->getSegment(0);
         if (seg) {
             doc["effect"] = seg->getEffectId();
-            doc["speed"] = seg->getSpeed();
-            doc["intensity"] = seg->getParams().intensity;
         }
     }
     
@@ -392,8 +390,6 @@ void MqttProtocol::updateStateHash() {
                     hash = hash * 31 + *effectId++;
                 }
             }
-            hash ^= seg->getSpeed() << 16;
-            hash ^= seg->getParams().intensity << 24;
         }
     }
     
@@ -416,8 +412,6 @@ bool MqttProtocol::stateChanged() const {
                     currentHash = currentHash * 31 + *effectId++;
                 }
             }
-            currentHash ^= seg->getSpeed() << 16;
-            currentHash ^= seg->getParams().intensity << 24;
         }
     }
     

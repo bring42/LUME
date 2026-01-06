@@ -28,6 +28,6 @@
 #include "core/controller.h"
 
 // Effects (include to register them)
-#include "effects/effects.h"
+#include "visuallib/effects.h"
 
 #endif // LUME_H

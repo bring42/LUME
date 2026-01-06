@@ -81,13 +81,43 @@ static void buildControllerState(JsonDocument& doc) {
         segObj["length"] = seg->getLength();
         segObj["reverse"] = seg->isReversed();
         segObj["effect"] = seg->getEffectId();
-        segObj["speed"] = seg->getSpeed();
-        segObj["intensity"] = seg->getIntensity();
 
-        JsonArray primary = segObj["primaryColor"].to<JsonArray>();
-        appendColorArray(primary, seg->getPrimaryColor());
-        JsonArray secondary = segObj["secondaryColor"].to<JsonArray>();
-        appendColorArray(secondary, seg->getSecondaryColor());
+        // Serialize schema-based params if effect has schema
+        const lume::EffectInfo* effectInfo = seg->getEffect();
+        if (effectInfo && effectInfo->hasSchema()) {
+            const lume::ParamSchema* schema = effectInfo->schema;
+            const lume::ParamValues& paramValues = seg->getParamValues();
+            
+            JsonObject paramsObj = segObj["params"].to<JsonObject>();
+            for (uint8_t i = 0; i < schema->count && i < lume::MAX_EFFECT_PARAMS; i++) {
+                const lume::ParamDesc& desc = schema->params[i];
+                
+                switch (desc.type) {
+                    case lume::ParamType::Int:
+                        paramsObj[desc.id] = paramValues.getInt(i);
+                        break;
+                    case lume::ParamType::Float:
+                        paramsObj[desc.id] = paramValues.getFloat(i);
+                        break;
+                    case lume::ParamType::Color: {
+                        CRGB c = paramValues.getColor(i);
+                        JsonArray colorArr = paramsObj[desc.id].to<JsonArray>();
+                        colorArr.add(c.r);
+                        colorArr.add(c.g);
+                        colorArr.add(c.b);
+                        break;
+                    }
+                    case lume::ParamType::Bool:
+                        paramsObj[desc.id] = paramValues.getBool(i);
+                        break;
+                    case lume::ParamType::Enum:
+                        paramsObj[desc.id] = paramValues.getEnum(i);
+                        break;
+                    case lume::ParamType::Palette:
+                        break;
+                }
+            }
+        }
     }
 }
 
@@ -225,8 +255,6 @@ void setupServer() {
             segObj["length"] = seg->getLength();
             segObj["reverse"] = seg->isReversed();
             segObj["brightness"] = seg->getBrightness();
-            segObj["speed"] = seg->getSpeed();
-            segObj["intensity"] = seg->getParams().intensity;
             
             // Effect info
             JsonObject effectObj = segObj["effect"].to<JsonObject>();
@@ -236,16 +264,41 @@ void setupServer() {
                 effectObj["category"] = seg->getEffect()->categoryName();
             }
             
-            // Colors
-            CRGB primary = seg->getPrimaryColor();
-            CRGB secondary = seg->getSecondaryColor();
-            
-            JsonArray colors = segObj["colors"].to<JsonArray>();
-            char hex1[8], hex2[8];
-            snprintf(hex1, sizeof(hex1), "#%02x%02x%02x", primary.r, primary.g, primary.b);
-            snprintf(hex2, sizeof(hex2), "#%02x%02x%02x", secondary.r, secondary.g, secondary.b);
-            colors.add(hex1);
-            colors.add(hex2);
+            // Schema-based params
+            const lume::EffectInfo* effectInfo = seg->getEffect();
+            if (effectInfo && effectInfo->hasSchema()) {
+                const lume::ParamSchema* schema = effectInfo->schema;
+                const lume::ParamValues& paramValues = seg->getParamValues();
+                
+                JsonObject paramsObj = segObj["params"].to<JsonObject>();
+                for (uint8_t i = 0; i < schema->count && i < lume::MAX_EFFECT_PARAMS; i++) {
+                    const lume::ParamDesc& desc = schema->params[i];
+                    
+                    switch (desc.type) {
+                        case lume::ParamType::Int:
+                            paramsObj[desc.id] = paramValues.getInt(i);
+                            break;
+                        case lume::ParamType::Float:
+                            paramsObj[desc.id] = paramValues.getFloat(i);
+                            break;
+                        case lume::ParamType::Color: {
+                            CRGB c = paramValues.getColor(i);
+                            char hex[8];
+                            snprintf(hex, sizeof(hex), "#%02x%02x%02x", c.r, c.g, c.b);
+                            paramsObj[desc.id] = hex;
+                            break;
+                        }
+                        case lume::ParamType::Bool:
+                            paramsObj[desc.id] = paramValues.getBool(i);
+                            break;
+                        case lume::ParamType::Enum:
+                            paramsObj[desc.id] = paramValues.getEnum(i);
+                            break;
+                        case lume::ParamType::Palette:
+                            break;
+                    }
+                }
+            }
             
             // Capabilities
             const lume::SegmentCapabilities& caps = seg->getCapabilities();
@@ -253,7 +306,7 @@ void setupServer() {
             capsObj["hasSpeed"] = caps.hasSpeed;
             capsObj["hasIntensity"] = caps.hasIntensity;
             capsObj["hasPalette"] = caps.hasPalette;
-            capsObj["hasSecondaryColor"] = caps.hasSecondaryColor;
+            capsObj["colorCount"] = caps.colorCount;
         }
         
         // Available effects
