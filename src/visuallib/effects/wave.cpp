@@ -20,14 +20,13 @@ DEFINE_EFFECT_SCHEMA(waveSchema,
     ParamDesc::Enum("direction", "Direction", "Up|Down|Center", 0)
 );
 
-void effectWave(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectWave(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
-    (void)params;
     
-    CRGB color = paramValues.getColor(wave::COLOR);
-    uint8_t speed = paramValues.getInt(wave::SPEED);
-    uint8_t intensity = paramValues.getInt(wave::INTENSITY);
-    uint8_t direction = paramValues.getEnum(wave::DIRECTION);
+    CRGB color = params.getColor(wave::COLOR);
+    uint8_t speed = params.getInt(wave::SPEED);
+    uint8_t intensity = params.getInt(wave::INTENSITY);
+    uint8_t direction = params.getEnum(wave::DIRECTION);
     
     uint16_t len = view.size();
     if (len == 0) return;

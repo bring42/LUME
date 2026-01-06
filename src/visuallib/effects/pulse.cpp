@@ -19,12 +19,12 @@ DEFINE_EFFECT_SCHEMA(pulseSchema,
     ParamDesc::Int("speed", "Speed", 128, 1, 255)
 );
 
-void effectPulse(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectPulse(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
     
     // Read parameters
-    CRGB color = paramValues.getColor(pulse::COLOR);
-    uint8_t speed = paramValues.getInt(pulse::SPEED);
+    CRGB color = params.getColor(pulse::COLOR);
+    uint8_t speed = params.getInt(pulse::SPEED);
     
     // Use beatsin8 for smooth sine wave
     uint8_t bpm = speed / 4;  // Map 1-255 to reasonable BPM

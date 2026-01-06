@@ -16,13 +16,12 @@ DEFINE_EFFECT_SCHEMA(gradientSchema,
     ParamDesc::Color("colorEnd", "End Color", CRGB::Red)
 );
 
-void effectGradient(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectGradient(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)frame;
     (void)firstFrame;
-    (void)params;
     
-    CRGB colorStart = paramValues.getColor(gradient::COLOR_START);
-    CRGB colorEnd = paramValues.getColor(gradient::COLOR_END);
+    CRGB colorStart = params.getColor(gradient::COLOR_START);
+    CRGB colorEnd = params.getColor(gradient::COLOR_END);
     
     view.gradient(colorStart, colorEnd);
 }

@@ -16,12 +16,11 @@ DEFINE_EFFECT_SCHEMA(meteorSchema,
     ParamDesc::Int("speed", "Fall Speed", 128, 1, 255)
 );
 
-void effectMeteor(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectMeteor(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
-    (void)params;
     
-    CRGB color = paramValues.getColor(meteor::COLOR);
-    uint8_t speed = paramValues.getInt(meteor::SPEED);
+    CRGB color = params.getColor(meteor::COLOR);
+    uint8_t speed = params.getInt(meteor::SPEED);
     
     uint16_t len = view.size();
     if (len == 0) return;

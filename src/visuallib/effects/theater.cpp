@@ -15,12 +15,11 @@ DEFINE_EFFECT_SCHEMA(theaterSchema,
     ParamDesc::Int("speed", "Speed", 128, 1, 255)
 );
 
-void effectTheaterChase(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectTheaterChase(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
-    (void)params;
     
-    const CRGBPalette16& palette = paramValues.getPalette();
-    uint8_t speed = paramValues.getInt(theater::SPEED);
+    const CRGBPalette16& palette = params.getPalette();
+    uint8_t speed = params.getInt(theater::SPEED);
     
     uint16_t len = view.size();
     

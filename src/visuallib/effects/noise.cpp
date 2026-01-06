@@ -15,12 +15,11 @@ DEFINE_EFFECT_SCHEMA(noiseSchema,
     ParamDesc::Int("speed", "Speed", 128, 1, 255)
 );
 
-void effectNoise(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectNoise(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
-    (void)params;
     
-    const CRGBPalette16& palette = paramValues.getPalette();
-    uint8_t speed = paramValues.getInt(noise::SPEED);
+    const CRGBPalette16& palette = params.getPalette();
+    uint8_t speed = params.getInt(noise::SPEED);
     
     uint16_t len = view.size();
     

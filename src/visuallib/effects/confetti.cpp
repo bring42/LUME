@@ -15,13 +15,12 @@ DEFINE_EFFECT_SCHEMA(confettiSchema,
     ParamDesc::Int("speed", "Spawn Rate", 128, 1, 255)
 );
 
-void effectConfetti(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectConfetti(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)frame;
     (void)firstFrame;
-    (void)params;
     
-    const CRGBPalette16& palette = paramValues.getPalette();
-    uint8_t speed = paramValues.getInt(confetti::SPEED);
+    const CRGBPalette16& palette = params.getPalette();
+    uint8_t speed = params.getInt(confetti::SPEED);
     
     // Fade all pixels slightly
     view.fade(10);

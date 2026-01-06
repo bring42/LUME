@@ -19,13 +19,12 @@ DEFINE_EFFECT_SCHEMA(solidSchema,
     ParamDesc::Color("color", "Color", CRGB::Red)
 );
 
-void effectSolid(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectSolid(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)frame;
     (void)firstFrame;
-    (void)params;
     
     // Read from ParamValues slots (schema-aware)
-    CRGB color = paramValues.getColor(solid::COLOR);
+    CRGB color = params.getColor(solid::COLOR);
     
     view.fill(color);
 }

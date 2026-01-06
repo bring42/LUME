@@ -77,52 +77,10 @@ void handleGetEffects(AsyncWebServerRequest* request) {
         effect["name"] = info->displayName;
         effect["category"] = info->categoryName();
         
-        // Include schema if available
+        // All effects now have schemas - serialize params from schema
         JsonArray params = effect["params"]. to<JsonArray>();
         if (info->hasSchema()) {
             schemaToJson(params, info->schema);
-        } else {
-            // Legacy: generate params from flags
-            if (info->usesSpeed) {
-                JsonObject p = params.add<JsonObject>();
-                p["id"] = "speed";
-                p["name"] = "Speed";
-                p["type"] = "int";
-                p["min"] = 0;
-                p["max"] = 255;
-                p["default"] = 128;
-            }
-            if (info->usesIntensity) {
-                JsonObject p = params.add<JsonObject>();
-                p["id"] = "intensity";
-                p["name"] = "Intensity";
-                p["type"] = "int";
-                p["min"] = 0;
-                p["max"] = 255;
-                p["default"] = 128;
-            }
-            // Generate color params based on colorCount
-            for (uint8_t c = 0; c < info->colorCount; c++) {
-                JsonObject p = params.add<JsonObject>();
-                if (c == 0) {
-                    p["id"] = "color";
-                    p["name"] = "Color";
-                } else {
-                    char idBuf[16], nameBuf[16];
-                    snprintf(idBuf, sizeof(idBuf), "color%d", c);
-                    snprintf(nameBuf, sizeof(nameBuf), "Color %d", c + 1);
-                    p["id"] = idBuf;
-                    p["name"] = nameBuf;
-                }
-                p["type"] = "color";
-                p["default"] = "#ff0000";
-            }
-            if (info->usesPalette) {
-                JsonObject p = params.add<JsonObject>();
-                p["id"] = "palette";
-                p["name"] = "Palette";
-                p["type"] = "palette";
-            }
         }
     }
     

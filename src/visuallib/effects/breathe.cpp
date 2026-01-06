@@ -21,13 +21,13 @@ DEFINE_EFFECT_SCHEMA(breatheSchema,
     ParamDesc::Int("speed", "Speed", 128, 1, 255)
 );
 
-void effectBreathe(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectBreathe(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)frame;
     (void)firstFrame;
     
     // Read parameters
-    CRGB color = paramValues.getColor(breathe::COLOR);
-    uint8_t speed = paramValues.getInt(breathe::SPEED);
+    CRGB color = params.getColor(breathe::COLOR);
+    uint8_t speed = params.getInt(breathe::SPEED);
     
     // Map speed to BPM (breaths per minute)
     uint8_t bpm = map(speed, 1, 255, 5, 30);

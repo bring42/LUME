@@ -22,15 +22,14 @@ DEFINE_EFFECT_SCHEMA(cometSchema,
     ParamDesc::Enum("direction", "Direction", "Up|Down", 0)
 );
 
-void effectComet(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectComet(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
-    (void)params;
     
-    CRGB colorHead = paramValues.getColor(comet::COLOR_HEAD);
-    CRGB colorTail = paramValues.getColor(comet::COLOR_TAIL);
-    uint8_t speed = paramValues.getInt(comet::SPEED);
-    uint8_t intensity = paramValues.getInt(comet::INTENSITY);
-    bool goingDown = paramValues.getEnum(comet::DIRECTION) != 0;
+    CRGB colorHead = params.getColor(comet::COLOR_HEAD);
+    CRGB colorTail = params.getColor(comet::COLOR_TAIL);
+    uint8_t speed = params.getInt(comet::SPEED);
+    uint8_t intensity = params.getInt(comet::INTENSITY);
+    bool goingDown = params.getEnum(comet::DIRECTION) != 0;
     
     uint16_t len = view.size();
     if (len == 0) return;

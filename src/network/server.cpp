@@ -300,13 +300,20 @@ void setupServer() {
                 }
             }
             
-            // Capabilities
-            const lume::SegmentCapabilities& caps = seg->getCapabilities();
+            // Capabilities - derived from effect schema
             JsonObject capsObj = segObj["capabilities"].to<JsonObject>();
-            capsObj["hasSpeed"] = caps.hasSpeed;
-            capsObj["hasIntensity"] = caps.hasIntensity;
-            capsObj["hasPalette"] = caps.hasPalette;
-            capsObj["colorCount"] = caps.colorCount;
+            const lume::EffectInfo* effect = seg->getEffect();
+            if (effect) {
+                capsObj["hasSpeed"] = effect->hasParam("speed");
+                capsObj["hasIntensity"] = effect->hasParam("intensity");
+                capsObj["hasPalette"] = effect->usesPalette();
+                capsObj["colorCount"] = effect->colorCount();
+            } else {
+                capsObj["hasSpeed"] = false;
+                capsObj["hasIntensity"] = false;
+                capsObj["hasPalette"] = false;
+                capsObj["colorCount"] = 0;
+            }
         }
         
         // Available effects
@@ -320,9 +327,9 @@ void setupServer() {
             effObj["id"] = info->id;
             effObj["name"] = info->displayName;
             effObj["category"] = info->categoryName();  // Use helper method
-            effObj["usesSpeed"] = info->usesSpeed;
-            effObj["usesIntensity"] = info->usesIntensity;
-            effObj["usesPalette"] = info->usesPalette;
+            effObj["usesSpeed"] = info->hasParam("speed");
+            effObj["usesIntensity"] = info->hasParam("intensity");
+            effObj["usesPalette"] = info->usesPalette();
         }
         
         String response;

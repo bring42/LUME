@@ -16,13 +16,12 @@ DEFINE_EFFECT_SCHEMA(sparkleSchema,
     ParamDesc::Int("speed", "Sparkle Density", 128, 1, 255)
 );
 
-void effectSparkle(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectSparkle(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)frame;
     (void)firstFrame;
-    (void)params;
     
-    CRGB color = paramValues.getColor(sparkle::COLOR);
-    uint8_t speed = paramValues.getInt(sparkle::SPEED);
+    CRGB color = params.getColor(sparkle::COLOR);
+    uint8_t speed = params.getInt(sparkle::SPEED);
     
     // Fill with background color
     view.fill(color);

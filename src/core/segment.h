@@ -12,21 +12,6 @@ namespace lume {
 class LumeController;
 
 /**
- * Segment capabilities - cached "what's meaningful right now" for UI/AI
- * 
- * Updated automatically when effect changes:
- * - UI: Only show sliders for params the effect actually uses
- * - AI: Constrain prompt understanding to meaningful params
- */
-struct SegmentCapabilities {
-    bool hasBrightness = true;   // Always true for segments
-    bool hasSpeed;               // Effect responds to speed
-    bool hasIntensity;           // Effect responds to intensity
-    bool hasPalette;             // Effect uses palette
-    uint8_t colorCount;          // Number of colors used (0-3)
-};
-
-/**
  * Segment - A controllable region of the LED strip
  * 
  * Each segment has:
@@ -46,9 +31,7 @@ public:
     Segment()
         : view()
         , effect(nullptr)
-        , params()
         , paramValues()
-        , caps()
         , brightness(255)
         , blendMode(BlendMode::Replace)
         , active(false)
@@ -62,7 +45,7 @@ public:
     
     // Set the LED range for this segment
     void setRange(CRGB* leds, uint16_t start, uint16_t length, bool reversed = false) {
-        view = SegmentView(leds, start, length, reversed);
+        view = SegmentView(leds, start, length, reversed, scratchpad);
         active = true;
     }
     
@@ -83,12 +66,6 @@ public:
         if (info->hasSchema()) {
             paramValues.applyDefaults(*info->schema);
         }
-        
-        // Update cached capabilities from effect metadata
-        caps.hasSpeed = info->usesSpeed;
-        caps.hasIntensity = info->usesIntensity;
-        caps.hasPalette = info->usesPalette;
-        caps.colorCount = info->colorCount;
     }
     
     // Set effect by id (looks up in registry)
@@ -114,16 +91,19 @@ public:
         return effect ? effect->displayName : "None";
     }
     
-    // Get cached capabilities
-    const SegmentCapabilities& getCapabilities() const { return caps; }
+    // Helper: check if effect has a specific parameter
+    bool hasParam(const char* paramId) const {
+        return effect && effect->hasParam(paramId);
+    }
     
     // --- Parameter accessors ---
     
-    // Legacy palette accessors (kept for now)
-    void setPalette(CRGBPalette16 palette) { params.palette = palette; paramValues.setPalette(palette); }
+    // Palette accessors
+    void setPalette(CRGBPalette16 palette) { 
+        paramValues.setPalette(palette);
+    }
     void setPalette(PalettePreset preset) { 
         CRGBPalette16 pal = getPalette(preset);
-        params.palette = pal;
         paramValues.setPalette(pal);
     }
     
@@ -177,10 +157,6 @@ public:
     SegmentView& getView() { return view; }
     const SegmentView& getView() const { return view; }
     
-    // Direct access to params
-    EffectParams& getParams() { return params; }
-    const EffectParams& getParams() const { return params; }
-    
     // Direct access to param values (schema-aware effects)
     ParamValues& getParamValues() { return paramValues; }
     const ParamValues& getParamValues() const { return paramValues; }
@@ -219,7 +195,7 @@ public:
         }
         
         // Call the effect function
-        effect->fn(view, params, paramValues, frame, firstFrame);
+        effect->fn(view, paramValues, frame, firstFrame);
         
         // Apply segment brightness if not 255
         if (brightness < 255) {
@@ -234,9 +210,7 @@ private:
     
     SegmentView view;
     const EffectInfo* effect;
-    EffectParams params;
     ParamValues paramValues;  // Schema-aware parameter values
-    SegmentCapabilities caps;
     
     uint8_t brightness;
     BlendMode blendMode;

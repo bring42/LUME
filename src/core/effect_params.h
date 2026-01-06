@@ -6,25 +6,6 @@
 namespace lume {
 
 /**
- * EffectParams - Legacy parameters struct (being phased out)
- * 
- * Now only contains palette. All other parameters moved to ParamValues.
- * Kept temporarily for palette initialization until Segment class refactor complete.
- */
-struct EffectParams {
-    // Palette for multi-color effects
-    CRGBPalette16 palette;
-    
-    // Defaults
-    EffectParams()
-        : palette(RainbowColors_p) {}
-    
-    // Constructor from palette
-    EffectParams(CRGBPalette16 pal)
-        : palette(pal) {}
-};
-
-/**
  * BlendMode - How overlapping segments combine
  */
 enum class BlendMode : uint8_t {

@@ -24,53 +24,58 @@ DEFINE_EFFECT_SCHEMA(fireSchema,
     ParamDesc::Bool("reversed", "Reversed", false)
 );
 
-// Static heat array (TODO: move to segment scratchpad when API supports it)
-static uint8_t heat[600];
+// Heat array structure for scratchpad
+struct FireState {
+    uint8_t heat[600];
+};
 
-// Effect function - now uses ParamValues
-void effectFire(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+// Effect function
+void effectFire(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)frame;
-    (void)params;
     
     const uint16_t numLeds = view.size();
     if (numLeds == 0 || numLeds > 600) return;
     
+    // Access scratchpad state
+    FireState* state = view.getScratchpad<FireState>();
+    if (!state) return;
+    
     // Read from ParamValues slots (schema-aware)
-    uint8_t cooling = paramValues.getInt(fire::COOLING);
-    uint8_t sparking = paramValues.getInt(fire::SPARKING);
-    bool reversed = paramValues.getBool(fire::REVERSED);
+    uint8_t cooling = params.getInt(fire::COOLING);
+    uint8_t sparking = params.getInt(fire::SPARKING);
+    bool reversed = params.getBool(fire::REVERSED);
     
     if (firstFrame) {
-        memset(heat, 0, sizeof(heat));
+        memset(state->heat, 0, sizeof(state->heat));
     }
     
     // Fire simulation (standard algorithm)
     // Step 1: Cool down
     for (uint16_t i = 0; i < numLeds; i++) {
-        heat[i] = qsub8(heat[i], random8(0, ((cooling * 10) / numLeds) + 2));
+        state->heat[i] = qsub8(state->heat[i], random8(0, ((cooling * 10) / numLeds) + 2));
     }
     
     // Step 2: Heat diffuses upward
     for (uint16_t i = numLeds - 1; i >= 2; i--) {
-        heat[i] = (heat[i - 1] + heat[i - 2] + heat[i - 2]) / 3;
+        state->heat[i] = (state->heat[i - 1] + state->heat[i - 2] + state->heat[i - 2]) / 3;
     }
     
     // Step 3: Random sparks
     if (random8() < sparking) {
         uint8_t y = random8(7);
         if (y < numLeds) {
-            heat[y] = qadd8(heat[y], random8(160, 255));
+            state->heat[y] = qadd8(state->heat[y], random8(160, 255));
         }
     }
     
     // Step 4: Map heat to colors
     for (uint16_t i = 0; i < numLeds; i++) {
         uint16_t idx = reversed ? (numLeds - 1 - i) : i;
-        view[idx] = HeatColor(heat[i]);
+        view[idx] = HeatColor(state->heat[i]);
     }
 }
 
-// Register with schema
-REGISTER_EFFECT_SCHEMA(effectFire, "fire", "Fire", Animated, fireSchema, 0);
+// Register with schema - now with proper state size
+REGISTER_EFFECT_SCHEMA(effectFire, "fire", "Fire", Animated, fireSchema, sizeof(FireState));
 
 } // namespace lume
