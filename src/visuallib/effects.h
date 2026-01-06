@@ -9,53 +9,58 @@
  * 
  * To add a new effect:
  * 1. Create effects/my_effect.cpp
- * 2. Implement the effect function
- * 3. Use REGISTER_EFFECT macro
- * 4. Add declaration here (optional but good for IDE)
+ * 2. Define schema with DEFINE_EFFECT_SCHEMA
+ * 3. Implement the effect function with new signature
+ * 4. Use REGISTER_EFFECT_SCHEMA macro
  * 5. That's it - no other changes needed
+ * 
+ * Effects are accessed via the effect registry, not by direct function calls.
+ * Forward declarations below are for IDE support only.
  */
 
 #include "../core/effect_registry.h"
+#include "../core/param_schema.h"
 
 namespace lume {
 
 // === Effect function declarations ===
 // Defined in individual .cpp files, auto-registered via macros
+// Note: Effects use the new signature: (SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame)
 
 // Basic effects
-void effectSolid(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectRainbow(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectGradient(SegmentView& view, const EffectParams& params, uint32_t frame);
+void effectSolid(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectRainbow(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectGradient(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 
 // Animated effects
-void effectFire(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectFireUp(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectConfetti(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectColorWaves(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectNoise(SegmentView& view, const EffectParams& params, uint32_t frame);
+void effectFire(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectFireUp(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectConfetti(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectColorWaves(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectNoise(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 
 // Pulse/breathing effects
-void effectPulse(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectBreathe(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectCandle(SegmentView& view, const EffectParams& params, uint32_t frame);
+void effectPulse(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectBreathe(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectCandle(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 
 // Sparkle/twinkle effects
-void effectSparkle(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectTwinkle(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectStrobe(SegmentView& view, const EffectParams& params, uint32_t frame);
+void effectSparkle(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectTwinkle(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectStrobe(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 
 // Moving effects
-void effectMeteor(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectComet(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectScanner(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectSinelon(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectTheaterChase(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectWave(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectRain(SegmentView& view, const EffectParams& params, uint32_t frame);
+void effectMeteor(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectComet(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectScanner(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectSinelon(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectTheaterChase(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectWave(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectRain(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 
 // Special effects
-void effectPride(SegmentView& view, const EffectParams& params, uint32_t frame);
-void effectPacifica(SegmentView& view, const EffectParams& params, uint32_t frame);
+void effectPride(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
+void effectPacifica(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 
 } // namespace lume
 
