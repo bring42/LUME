@@ -39,9 +39,8 @@ DEFINE_GRADIENT_PALETTE(pacifica3) {
   255, 100,180,220
 };
 
-void effectPacifica(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectPacifica(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
-    (void)params;
     
     uint8_t speed = paramValues.getInt(pacifica::SPEED);
     

@@ -15,12 +15,11 @@ DEFINE_EFFECT_SCHEMA(colorwavesSchema,
     ParamDesc::Int("speed", "Speed", 128, 1, 255)
 );
 
-void effectColorWaves(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectColorWaves(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
-    (void)params;
     
-    const CRGBPalette16& palette = paramValues.getPalette();
-    uint8_t speed = paramValues.getInt(colorwaves::SPEED);
+    const CRGBPalette16& palette = params.getPalette();
+    uint8_t speed = params.getInt(colorwaves::SPEED);
     
     uint16_t len = view.size();
     

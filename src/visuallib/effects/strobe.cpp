@@ -16,12 +16,11 @@ DEFINE_EFFECT_SCHEMA(strobeSchema,
     ParamDesc::Int("speed", "Flash Rate", 128, 1, 255)
 );
 
-void effectStrobe(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectStrobe(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
-    (void)params;
     
-    CRGB color = paramValues.getColor(strobe::COLOR);
-    uint8_t speed = paramValues.getInt(strobe::SPEED);
+    CRGB color = params.getColor(strobe::COLOR);
+    uint8_t speed = params.getInt(strobe::SPEED);
     
     // Speed controls flash rate (higher = faster)
     uint8_t rate = (256 - speed) / 8;

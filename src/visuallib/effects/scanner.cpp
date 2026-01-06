@@ -22,29 +22,32 @@ DEFINE_EFFECT_SCHEMA(scannerSchema,
     ParamDesc::Int("intensity", "Tail Length", 80, 1, 255)
 );
 
-// Static position and direction (will move to scratchpad in Phase 1)
-static int16_t scannerPos = 0;
-static int8_t scannerDir = 1;
+// Scanner state structure for scratchpad
+struct ScannerState {
+    int16_t pos;
+    int8_t dir;
+    uint8_t frameCount;
+};
 
-// Static for frame skip timing
-static uint8_t scannerFrameCount = 0;
-
-void effectScanner(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectScanner(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)frame;
-    (void)params;
     
-    CRGB color = paramValues.getColor(scanner::COLOR);
-    uint8_t speed = paramValues.getInt(scanner::SPEED);
-    uint8_t intensity = paramValues.getInt(scanner::INTENSITY);
+    // Access scratchpad state
+    ScannerState* state = view.getScratchpad<ScannerState>();
+    if (!state) return;
+    
+    CRGB color = params.getColor(scanner::COLOR);
+    uint8_t speed = params.getInt(scanner::SPEED);
+    uint8_t intensity = params.getInt(scanner::INTENSITY);
     
     uint16_t len = view.size();
     if (len == 0) return;
     
     // Reset position on first frame (effect change)
     if (firstFrame) {
-        scannerPos = 0;
-        scannerDir = 1;
-        scannerFrameCount = 0;
+        state->pos = 0;
+        state->dir = 1;
+        state->frameCount = 0;
     }
     
     uint8_t tailLength = intensity > 0 ? intensity / 4 : 20;
@@ -57,13 +60,13 @@ void effectScanner(SegmentView& view, const EffectParams& params, const ParamVal
     view.fade(40);
     
     // Main dot
-    if (scannerPos >= 0 && scannerPos < (int16_t)len) {
-        view[scannerPos] = color;
+    if (state->pos >= 0 && state->pos < (int16_t)len) {
+        view[state->pos] = color;
     }
     
     // Tail behind the dot
     for (uint8_t i = 1; i <= tailLength; i++) {
-        int16_t tailPos = scannerPos - (scannerDir * i);
+        int16_t tailPos = state->pos - (state->dir * i);
         if (tailPos >= 0 && tailPos < (int16_t)len) {
             uint8_t fade = 255 - (i * 255 / tailLength);
             CRGB tailColor = color;
@@ -73,19 +76,19 @@ void effectScanner(SegmentView& view, const EffectParams& params, const ParamVal
     }
     
     // Move scanner based on speed
-    scannerFrameCount++;
-    if (scannerFrameCount >= frameSkip) {
-        scannerFrameCount = 0;
-        scannerPos += scannerDir;
+    state->frameCount++;
+    if (state->frameCount >= frameSkip) {
+        state->frameCount = 0;
+        state->pos += state->dir;
     }
     
     // Bounce at edges
-    if (scannerPos >= (int16_t)len || scannerPos < 0) {
-        scannerDir = -scannerDir;
-        scannerPos = constrain(scannerPos, 0, len - 1);
+    if (state->pos >= (int16_t)len || state->pos < 0) {
+        state->dir = -state->dir;
+        state->pos = constrain(state->pos, 0, len - 1);
     }
 }
 
-REGISTER_EFFECT_SCHEMA(effectScanner, "scanner", "Scanner", Moving, scannerSchema, 0);
+REGISTER_EFFECT_SCHEMA(effectScanner, "scanner", "Scanner", Moving, scannerSchema, sizeof(ScannerState));
 
 } // namespace lume

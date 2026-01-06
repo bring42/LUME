@@ -21,13 +21,12 @@ DEFINE_EFFECT_SCHEMA(rainbowSchema,
     ParamDesc::Int("density", "Density", 85, 1, 255)
 );
 
-void effectRainbow(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectRainbow(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
-    (void)params;
     
     // Read from ParamValues slots (schema-aware)
-    uint8_t speed = paramValues.getInt(rainbow::SPEED);
-    uint8_t density = paramValues.getInt(rainbow::DENSITY);
+    uint8_t speed = params.getInt(rainbow::SPEED);
+    uint8_t density = params.getInt(rainbow::DENSITY);
     
     // Speed controls how fast the rainbow moves
     uint8_t hue = (frame * speed) >> 6;

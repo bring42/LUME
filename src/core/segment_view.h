@@ -26,16 +26,18 @@ struct SegmentView {
     uint16_t start;       // First LED index in segment
     uint16_t length;      // Number of LEDs in this segment
     bool reversed;        // Run effect in reverse direction?
+    uint8_t* scratchpad;  // Pointer to segment's scratchpad for stateful effects
     
     // Default constructor (empty view)
-    SegmentView() : base(nullptr), start(0), length(0), reversed(false) {}
+    SegmentView() : base(nullptr), start(0), length(0), reversed(false), scratchpad(nullptr) {}
     
     // Construct view from LED array base
-    SegmentView(CRGB* ledArray, uint16_t startIdx, uint16_t len, bool rev = false)
+    SegmentView(CRGB* ledArray, uint16_t startIdx, uint16_t len, bool rev = false, uint8_t* scratch = nullptr)
         : base(ledArray)
         , start(startIdx)
         , length(len)
-        , reversed(rev) {}
+        , reversed(rev)
+        , scratchpad(scratch) {}
     
     // Indexed access - handles reversal transparently
     CRGB& operator[](uint16_t i) {
@@ -130,6 +132,19 @@ struct SegmentView {
     // Map an 8-bit position (0-255) to LED index
     uint16_t map8(uint8_t pos) const {
         return scale16by8(length - 1, pos);
+    }
+    
+    // --- Scratchpad access for stateful effects ---
+    
+    // Get typed scratchpad pointer (compile-time size check)
+    template<typename T>
+    T* getScratchpad() {
+        return reinterpret_cast<T*>(scratchpad);
+    }
+    
+    template<typename T>
+    const T* getScratchpad() const {
+        return reinterpret_cast<const T*>(scratchpad);
     }
 };
 

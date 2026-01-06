@@ -27,11 +27,10 @@ DEFINE_GRADIENT_PALETTE(prideGradient) {
   255,   255,   0,   0     // Back to red
 };
 
-void effectPride(SegmentView& view, const EffectParams& params, const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
+void effectPride(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame) {
     (void)firstFrame;
-    (void)params;
     
-    uint8_t speed = paramValues.getInt(pride::SPEED);
+    uint8_t speed = params.getInt(pride::SPEED);
     
     uint16_t len = view.size();
     CRGBPalette16 pridePalette = prideGradient;
