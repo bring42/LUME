@@ -10,9 +10,10 @@
 // Settings used to configure FastLED in controller.cpp
 // Customize these for your specific hardware setup
 
-// NOTE: ESP32-C3 has GPIO 0-21. Safe pins: 0-1, 4-7, 10, 18-21
-// Avoid: GPIO 2-3 (strapping), 8-9 (flash), 11-17 (flash)
-#define LED_DATA_PIN                3               // GPIO8 - adjust for your board
+// Pick a free GPIO for the LED data line (board-dependent):
+//   ESP32-C3: safe 0-1, 4-7, 10, 18-21; avoid 2-3 (strapping), 8-9 & 11-17 (flash)
+//   ESP32-S3: most GPIOs are free; avoid 0/3/45/46 (strapping) and 26-32 (flash)
+#define LED_DATA_PIN                2               // GPIO2 (T-Display S3: broken out, not a strapping pin)
 #define LED_STRIP_TYPE              WS2812B         // Common addressable RGB LED
 #define LED_COLOR_MODE              GRB             // Byte order (GRB for WS2812B)
 
