@@ -2,8 +2,9 @@
  * Scanner effect - Larson scanner / Cylon eye
  * 
  * A single dot bounces back and forth with a fading tail
- * 
- * TODO: Migrate static state to scratchpad for multi-segment support
+ *
+ * State lives in the per-segment scratchpad (ScannerState), so each segment
+ * scans independently.
  */
 
 #include "../../core/effect_registry.h"

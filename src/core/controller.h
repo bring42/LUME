@@ -187,6 +187,11 @@ private:
     
     // Internal helpers
     void blendSegment(Segment& seg);
+
+    // Black out only the LEDs not owned by any active segment. Effects manage
+    // their own canvas and many rely on the buffer persisting between frames
+    // (fade-trails), so the render loop must not wipe covered pixels.
+    void clearUncoveredLeds();
 };
 
 // Global controller instance

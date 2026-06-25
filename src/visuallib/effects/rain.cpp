@@ -1,7 +1,8 @@
 /**
  * Rain effect - Drops falling from top
- * 
- * TODO: Migrate static state to scratchpad for multi-segment support
+ *
+ * State lives in the per-segment scratchpad (RainState), so each segment
+ * animates independently.
  */
 
 #include "../../core/effect_registry.h"

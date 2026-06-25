@@ -2,8 +2,9 @@
  * Twinkle effect - Random LEDs fade in and out
  * 
  * Creates a cozy twinkling starfield effect
- * 
- * TODO: Migrate static state to scratchpad for multi-segment support
+ *
+ * State lives in the per-segment scratchpad (TwinkleState), so each segment
+ * twinkles independently.
  */
 
 #include "../../core/effect_registry.h"

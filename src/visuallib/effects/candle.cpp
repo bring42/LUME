@@ -2,8 +2,9 @@
  * Candle effect - Realistic candle flicker
  * 
  * All LEDs flicker together with slight variations for a cozy look
- * 
- * TODO: Migrate static state to scratchpad for multi-segment support
+ *
+ * State lives in the per-segment scratchpad (CandleState), so each segment
+ * flickers independently.
  */
 
 #include "../../core/effect_registry.h"

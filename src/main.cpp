@@ -199,12 +199,9 @@ void setup() {
         }
     }
     
-    // Setup WiFi
+    // Setup WiFi (also starts OTA/mDNS and network protocols once connected)
     setupWiFi();
-    
-    // Setup OTA updates
-    setupOTA();
-    
+
     // Setup web server
     setupServer();
     

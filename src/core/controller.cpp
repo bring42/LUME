@@ -131,10 +131,13 @@ void LumeController::update() {
         return;
     }
     
-    // Clear LED array before rendering segments
-    // (Alternative: only clear if segments don't cover everything)
-    FastLED.clear();
-    
+    // Clear only the LEDs not owned by an active segment. Effects own their
+    // canvas (fill or fade) and many build fade-trails by reading the previous
+    // frame (confetti, sinelon, wave, comet...). A blanket FastLED.clear() here
+    // would wipe that history every frame; clearing only gaps keeps it intact
+    // while still blacking out uncovered pixels (gaps, removed segments).
+    clearUncoveredLeds();
+
     // Update all active segments
     for (uint8_t i = 0; i < segmentCount; i++) {
         if (segments[i].isActive()) {
@@ -234,7 +237,7 @@ void LumeController::executeCommand(const Command& cmd) {
         case CommandType::ApplyEffectSpec:
         case CommandType::SaveScene:
         case CommandType::LoadScene:
-            // TODO: Implement in later phase
+            // Not yet implemented — scene presets are on the roadmap (see README).
             LOG_WARN(LogTag::LED, "Command type %d not yet implemented", static_cast<int>(cmd.type));
             break;
     }
@@ -328,25 +331,30 @@ Segment* LumeController::createFullStrip() {
 }
 
 void LumeController::blendSegment(Segment& seg) {
-    // For overlapping segments with non-Replace blend modes
-    // This would need a secondary buffer to work properly
-    // For now, we just support Replace mode (direct write)
-    
-    // TODO: Implement proper blending with secondary buffer if needed
-    // BlendMode mode = seg.getBlendMode();
-    // switch (mode) {
-    //     case BlendMode::Add:
-    //         // Additive blending
-    //         break;
-    //     case BlendMode::Average:
-    //         // 50/50 blend
-    //         break;
-    //     case BlendMode::Max:
-    //         // Take maximum
-    //         break;
-    //     default:
-    //         break;
-    // }
+    (void)seg;
+    // Not yet implemented. Effects render directly into leds[], so by the time
+    // this runs the segment's pixels are already written — true Add/Average/Max
+    // blending of overlapping segments needs a separate per-segment render buffer
+    // to composite from. Until then, overlap is last-writer-wins (Replace).
+    // See docs/ARCHITECTURE.md, Invariant 1.
+}
+
+void LumeController::clearUncoveredLeds() {
+    for (uint16_t i = 0; i < ledCount; i++) {
+        bool covered = false;
+        for (uint8_t s = 0; s < segmentCount; s++) {
+            const Segment& seg = segments[s];
+            if (!seg.isActive()) continue;
+            uint16_t start = seg.getStart();
+            if (i >= start && i < start + seg.getLength()) {
+                covered = true;
+                break;
+            }
+        }
+        if (!covered) {
+            leds[i] = CRGB::Black;
+        }
+    }
 }
 
 // --- Protocol management ---

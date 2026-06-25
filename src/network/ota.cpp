@@ -20,7 +20,15 @@ void setupOTA() {
         LOG_DEBUG(LogTag::OTA, "Waiting for WiFi connection");
         return;
     }
-    
+
+    // Idempotent: mDNS/OTA only need registering once. Guards against duplicate
+    // MDNS.addService() calls (which log "Failed adding service") when WiFi
+    // reconnects or this is reached more than once during boot.
+    static bool otaStarted = false;
+    if (otaStarted) {
+        return;
+    }
+
     // Start mDNS service for OTA discovery and easy access
     if (!MDNS.begin(MDNS_HOSTNAME)) {
         LOG_ERROR(LogTag::OTA, "Error starting mDNS");
@@ -86,9 +94,9 @@ void setupOTA() {
     });
     
     ArduinoOTA.begin();
-    
-    // Add mDNS service for OTA
-    MDNS.addService("arduino", "tcp", 3232);
-    
+    // ArduinoOTA.begin() already advertises the _arduino._tcp service over mDNS,
+    // so adding it again here is redundant (and logged "Failed adding service").
+
+    otaStarted = true;  // mark success only after full setup
     LOG_INFO(LogTag::OTA, "Ready (Hostname: lume.local, Port: 3232)");
 }

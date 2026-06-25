@@ -96,8 +96,7 @@ struct EffectInfo {
 // Maximum number of registered effects
 constexpr uint8_t MAX_EFFECTS = 32;
 
-// Scratchpad size for stateful effects (per segment)
-constexpr size_t SCRATCHPAD_SIZE = 512;
+// SCRATCHPAD_SIZE / SCRATCHPAD_ALIGN are defined in segment_view.h (included above).
 
 /**
  * EffectRegistry - Singleton registry of all available effects
