@@ -47,7 +47,7 @@ public:
  * Protocols (sACN, Art-Net, DDP, future Matter) are "temporary sole writers"
  * to the LED array. When active, they have priority over effects.
  * 
- * Design principles (from ARCHITECTURE.md):
+ * Design principles (see docs/ARCHITECTURE.md, Invariant 2):
  * - Protocol callbacks run on network tasks, NOT the main loop
  * - Protocols must NOT write to the LED array directly
  * - Instead, they write to a buffer and set a "ready" flag
