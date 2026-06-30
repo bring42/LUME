@@ -20,7 +20,10 @@ jobs:
       
       - name: Install PlatformIO
         run: pip install platformio
-      
+
+      - name: Run native unit tests
+        run: pio test -e native
+
       - name: Build T-Display S3
         run: pio run -e lilygo-t-display-s3
       

@@ -3,6 +3,7 @@
  */
 
 #include "controller.h"
+#include "param_codec.h"
 #include "../protocols/protocol.h"
 #include "../logging.h"
 
@@ -372,26 +373,8 @@ void LumeController::serializeSegments(JsonDocument& doc) const {
 
         const EffectInfo* info = seg.getEffect();
         if (info && info->hasSchema()) {
-            const ParamSchema* schema = info->schema;
-            const ParamValues& pv = seg.getParamValues();
             JsonObject params = o["params"].to<JsonObject>();
-            for (uint8_t k = 0; k < schema->count && k < MAX_EFFECT_PARAMS; k++) {
-                const ParamDesc& d = schema->params[k];
-                switch (d.type) {
-                    case ParamType::Int:   params[d.id] = pv.getInt(k);   break;
-                    case ParamType::Float: params[d.id] = pv.getFloat(k); break;
-                    case ParamType::Bool:  params[d.id] = pv.getBool(k);  break;
-                    case ParamType::Enum:  params[d.id] = pv.getEnum(k);  break;
-                    case ParamType::Color: {
-                        CRGB c = pv.getColor(k);
-                        char hex[8];
-                        snprintf(hex, sizeof(hex), "#%02x%02x%02x", c.r, c.g, c.b);
-                        params[d.id] = hex;
-                        break;
-                    }
-                    case ParamType::Palette: break;  // not round-tripped yet
-                }
-            }
+            paramsToJson(params, *info->schema, seg.getParamValues());
         }
     }
 }
@@ -427,27 +410,8 @@ bool LumeController::restoreSegments(const JsonDocument& doc) {
         if (s["params"].is<JsonObjectConst>()) {
             const EffectInfo* info = seg->getEffect();
             if (info && info->hasSchema()) {
-                const ParamSchema* schema = info->schema;
-                ParamValues& pv = seg->getParamValues();
-                for (JsonPairConst kv : s["params"].as<JsonObjectConst>()) {
-                    int8_t idx = schema->indexOf(kv.key().c_str());
-                    if (idx < 0 || idx >= MAX_EFFECT_PARAMS) continue;
-                    switch (schema->params[idx].type) {
-                        case ParamType::Int:   if (kv.value().is<int>())   pv.setInt(idx, kv.value().as<uint8_t>());  break;
-                        case ParamType::Float: if (kv.value().is<float>()) pv.setFloat(idx, kv.value().as<float>());  break;
-                        case ParamType::Bool:  if (kv.value().is<bool>())  pv.setBool(idx, kv.value().as<bool>());    break;
-                        case ParamType::Enum:  if (kv.value().is<int>())   pv.setEnum(idx, kv.value().as<uint8_t>()); break;
-                        case ParamType::Color: {
-                            const char* hex = kv.value().as<const char*>();
-                            if (hex && hex[0] == '#' && strlen(hex) == 7) {
-                                uint32_t rgb = strtol(hex + 1, nullptr, 16);
-                                pv.setColor(idx, CRGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF));
-                            }
-                            break;
-                        }
-                        case ParamType::Palette: break;
-                    }
-                }
+                paramsFromJson(seg->getParamValues(), *info->schema,
+                               s["params"].as<JsonObjectConst>());
             }
         }
         restored++;
