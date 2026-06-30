@@ -521,27 +521,17 @@ void handleApiV2ControllerUpdate(AsyncWebServerRequest* request, uint8_t* data, 
             return;
         }
         
-        // Update power
+        // Route global mutations through the bus (single writer); no direct
+        // controller mutation on this (AsyncTCP) task.
         if (doc["power"].is<bool>()) {
-            lume::controller.setPower(doc["power"].as<bool>());
-            LOG_INFO(LogTag::LED, "Power set to %s", doc["power"].as<bool>() ? "ON" : "OFF");
+            lume::controller.enqueueCommand(lume::Command::setPower(doc["power"].as<bool>()));
         }
-        
-        // Update brightness
+
         if (doc["brightness"].is<int>()) {
             uint8_t bri = constrain(doc["brightness"].as<int>(), 0, 255);
-            lume::controller.setBrightness(bri);
-            LOG_INFO(LogTag::LED, "Brightness set to %d", bri);
+            lume::controller.enqueueCommand(lume::Command::setGlobalBrightness(bri));
         }
-        
-        // Return updated state
-        JsonDocument responseDoc;
-        responseDoc["power"] = lume::controller.getPower();
-        responseDoc["brightness"] = lume::controller.getBrightness();
-        responseDoc["ledCount"] = lume::controller.getLedCount();
-        
-        String output;
-        serializeJson(responseDoc, output);
-        request->send(200, "application/json", output);
+
+        request->send(202, "application/json", "{\"status\":\"accepted\"}");
     }
 }

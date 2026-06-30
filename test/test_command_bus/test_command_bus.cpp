@@ -100,10 +100,70 @@ void test_remove_is_deferred_then_applied() {
     TEST_ASSERT_EQUAL_UINT8(0, c.getSegmentCount());
 }
 
+// Global power/brightness commands are likewise deferred to the loop.
+void test_power_and_brightness_via_bus() {
+    LumeController c;
+    c.begin(60);
+    TEST_ASSERT_TRUE(c.getPower());            // constructor defaults
+    TEST_ASSERT_EQUAL_UINT8(255, c.getBrightness());
+
+    c.enqueueCommand(Command::setPower(false));
+    c.enqueueCommand(Command::setGlobalBrightness(40));
+    TEST_ASSERT_TRUE(c.getPower());            // not applied yet (single writer)
+    TEST_ASSERT_EQUAL_UINT8(255, c.getBrightness());
+
+    c.update();
+    TEST_ASSERT_FALSE(c.getPower());
+    TEST_ASSERT_EQUAL_UINT8(40, c.getBrightness());
+}
+
+// Nightlight start/stop route through the bus and toggle the active flag.
+void test_nightlight_start_stop_via_bus() {
+    LumeController c;
+    c.begin(60);
+    TEST_ASSERT_FALSE(c.isNightlightActive());
+
+    c.enqueueCommand(Command::startNightlight(/*durationSec=*/900, /*target=*/0));
+    c.update();
+    TEST_ASSERT_TRUE(c.isNightlightActive());
+
+    c.enqueueCommand(Command::stopNightlight());
+    c.update();
+    TEST_ASSERT_FALSE(c.isNightlightActive());
+}
+
+// The AI path carries semantic params (speed/color) that resolve to schema slots
+// on the loop: testfx maps "speed" -> slot 0, "color" -> slot 1.
+void test_ai_semantic_params_via_bus() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::applyEffectSpec(255, makeCreateSpec(0, 10, 128)));
+    c.update();
+
+    EffectSpec es = {};
+    es.hasSpeed = true;
+    es.speed = 77;
+    es.colorCount = 1;
+    es.colors[0] = CRGB(0x10, 0x20, 0x30);
+    c.enqueueCommand(Command::applyEffectSpec(0, es));
+    c.update();
+
+    Segment* s = c.getSegment(0);
+    TEST_ASSERT_NOT_NULL(s);
+    TEST_ASSERT_EQUAL_UINT8(77, s->getParamValues().getInt(0));   // speed -> slot 0
+    CRGB col = s->getParamValues().getColor(1);                   // color -> slot 1
+    TEST_ASSERT_EQUAL_UINT8(0x10, col.r);
+    TEST_ASSERT_EQUAL_UINT8(0x20, col.g);
+    TEST_ASSERT_EQUAL_UINT8(0x30, col.b);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_create_is_deferred_then_applied);
     RUN_TEST(test_update_changes_params);
     RUN_TEST(test_remove_is_deferred_then_applied);
+    RUN_TEST(test_power_and_brightness_via_bus);
+    RUN_TEST(test_nightlight_start_stop_via_bus);
+    RUN_TEST(test_ai_semantic_params_via_bus);
     return UNITY_END();
 }

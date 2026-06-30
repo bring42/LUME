@@ -72,20 +72,11 @@ void handleApiNightlightPost(AsyncWebServerRequest* request, uint8_t* data, size
     
     // Get target brightness (default: 0 = fade to off)
     uint8_t targetBrightness = doc["targetBrightness"] | NIGHTLIGHT_DEFAULT_TARGET;
-    
-    // Start nightlight
-    lume::controller.startNightlight(duration, targetBrightness);
-    
-    // Return status
-    JsonDocument response;
-    response["success"] = true;
-    response["duration"] = duration;
-    response["targetBrightness"] = targetBrightness;
-    response["startBrightness"] = lume::controller.getBrightness();
-    
-    String responseStr;
-    serializeJson(response, responseStr);
-    request->send(200, "application/json", responseStr);
-    
-    LOG_INFO(LogTag::WEB, "Nightlight started: %ds fade to %d", duration, targetBrightness);
+
+    // Route through the bus (single writer); applied by the render loop.
+    lume::controller.enqueueCommand(lume::Command::startNightlight(duration, targetBrightness));
+
+    request->send(202, "application/json", "{\"status\":\"accepted\"}");
+
+    LOG_INFO(LogTag::WEB, "Nightlight start enqueued: %ds fade to %d", duration, targetBrightness);
 }

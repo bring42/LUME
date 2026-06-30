@@ -349,8 +349,8 @@ void setupServer() {
             sendUnauthorized(request);
             return;
         }
-        lume::controller.stopNightlight();
-        request->send(200, "application/json", "{\"success\":true}");
+        lume::controller.enqueueCommand(lume::Command::stopNightlight());
+        request->send(202, "application/json", "{\"status\":\"accepted\"}");
     });
     
     // AI Prompt endpoint
