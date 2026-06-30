@@ -59,9 +59,11 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
         
         // Save to storage
         if (storage.saveConfig(config)) {
-            // Apply changes that can be applied without restart
-            lume::controller.setLedCount(config.ledCount);
-            
+            // ledCount is NOT applied live: it's bound to FastLED at boot via
+            // controller.begin(config.ledCount), so changing it live raced the
+            // render loop and never re-ran addLeds anyway (P0.8). It now takes
+            // effect on the next reboot, from the value just persisted above.
+
             // Handle sACN enable/disable (using new protocol system)
             if (config.sacnEnabled && wifiConnected) {
                 lume::sacnProtocol.stop();

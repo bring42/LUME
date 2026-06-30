@@ -42,10 +42,7 @@ public:
     
     // Initialize with LED count (uses LED_DATA_PIN from constants.h)
     void begin(uint16_t count);
-    
-    // Reconfigure LED count at runtime
-    void setLedCount(uint16_t count);
-    
+
     // --- Frame update ---
     
     // Call this in loop() - handles timing and updates all segments
