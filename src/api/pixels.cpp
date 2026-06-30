@@ -124,9 +124,13 @@ void handleApiPixels(AsyncWebServerRequest* request, uint8_t* data, size_t len, 
             CRGB startColor(from[0].as<uint8_t>(), from[1].as<uint8_t>(), from[2].as<uint8_t>());
             CRGB endColor(to[0].as<uint8_t>(), to[1].as<uint8_t>(), to[2].as<uint8_t>());
             
-            fill_gradient_RGB(leds, 0, startColor, ledCount - 1, endColor);
-            FastLED.show();
-            
+            // Guard ledCount==0: ledCount-1 underflows (uint16_t) to 65535 and
+            // fill_gradient_RGB writes 64k entries off the end of leds[] (P0.2).
+            if (ledCount > 0) {
+                fill_gradient_RGB(leds, 0, startColor, ledCount - 1, endColor);
+                FastLED.show();
+            }
+
             request->send(200, "application/json", "{\"success\":true,\"gradient\":true}");
             return;
         }
