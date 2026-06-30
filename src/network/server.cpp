@@ -70,7 +70,7 @@ static void buildControllerState(JsonDocument& doc) {
     JsonArray segmentsArr = doc["segments"].to<JsonArray>();
     uint8_t segCount = lume::controller.getSegmentCount();
     for (uint8_t i = 0; i < segCount; i++) {
-        lume::Segment* seg = lume::controller.getSegment(i);
+        lume::Segment* seg = lume::controller.getSegmentByIndex(i);
         if (!seg) {
             continue;
         }
@@ -246,9 +246,9 @@ void setupServer() {
         uint8_t segCount = lume::controller.getSegmentCount();
         
         for (uint8_t i = 0; i < segCount; i++) {
-            lume::Segment* seg = lume::controller.getSegment(i);
+            lume::Segment* seg = lume::controller.getSegmentByIndex(i);
             if (!seg) continue;
-            
+
             JsonObject segObj = segArr.add<JsonObject>();
             segObj["id"] = seg->getId();
             segObj["start"] = seg->getStart();
