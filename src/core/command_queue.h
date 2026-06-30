@@ -2,9 +2,9 @@
 #define LUME_COMMAND_QUEUE_H
 
 #include <Arduino.h>
+#include <FastLED.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
-#include "effect_registry.h"
 #include "../logging.h"
 
 namespace lume {
@@ -236,9 +236,6 @@ public:
 private:
     QueueHandle_t queue;
 };
-
-// Global command queue instance
-extern CommandQueue commandQueue;
 
 } // namespace lume
 

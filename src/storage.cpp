@@ -2,7 +2,6 @@
 
 const char* Storage::NAMESPACE_CONFIG = "config";
 const char* Storage::NAMESPACE_LED = "ledstate";
-const char* Storage::NAMESPACE_PROMPT = "prompt";
 const char* Storage::NAMESPACE_SCENES = "scenes";
 
 Storage storage;
@@ -129,47 +128,6 @@ bool Storage::loadLastEffect(String& effectId) {
     }
     
     effectId = prefs.getString("lasteffect", "rainbow");  // Default to rainbow
-    prefs.end();
-    return true;
-}
-
-bool Storage::savePromptSpec(const PromptSpec& spec) {
-    if (!prefs.begin(NAMESPACE_PROMPT, false)) {
-        return false;
-    }
-    
-    // Truncate if too long
-    String jsonToSave = spec.jsonSpec.substring(0, 3900);
-    String promptToSave = spec.prompt.substring(0, 500);
-    
-    prefs.putString("json", jsonToSave);
-    prefs.putString("prompt", promptToSave);
-    prefs.putULong("ts", spec.timestamp);
-    prefs.putBool("valid", spec.valid);
-    
-    prefs.end();
-    return true;
-}
-
-bool Storage::loadPromptSpec(PromptSpec& spec) {
-    if (!prefs.begin(NAMESPACE_PROMPT, true)) {
-        return false;
-    }
-    
-    spec.jsonSpec = prefs.getString("json", "");
-    spec.prompt = prefs.getString("prompt", "");
-    spec.timestamp = prefs.getULong("ts", 0);
-    spec.valid = prefs.getBool("valid", false);
-    
-    prefs.end();
-    return true;
-}
-
-bool Storage::clearPromptSpec() {
-    if (!prefs.begin(NAMESPACE_PROMPT, false)) {
-        return false;
-    }
-    prefs.clear();
     prefs.end();
     return true;
 }

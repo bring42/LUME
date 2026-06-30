@@ -141,18 +141,6 @@ public:
         frameReady.store(true, std::memory_order_release);
     }
     
-    // Write from raw RGB data (DMX format)
-    void writeRGB(const uint8_t* rgbData, uint16_t numLeds, uint16_t startChannel = 0) {
-        numLeds = min(numLeds, MAX_LEDS);
-        for (uint16_t i = 0; i < numLeds; i++) {
-            uint16_t offset = startChannel + (i * 3);
-            buffer[i] = CRGB(rgbData[offset], rgbData[offset + 1], rgbData[offset + 2]);
-        }
-        ledCount = numLeds;
-        lastWriteTime = millis();
-        frameReady.store(true, std::memory_order_release);
-    }
-    
     // Check if new frame is ready (called from main loop)
     bool isReady() const {
         return frameReady.load(std::memory_order_acquire);
@@ -161,8 +149,7 @@ public:
     // Get buffer for reading (main loop only)
     const CRGB* getBuffer() const { return buffer; }
     uint16_t getLedCount() const { return ledCount; }
-    uint32_t getLastWriteTime() const { return lastWriteTime; }
-    
+
     // Clear ready flag after copying
     void clearReady() {
         frameReady.store(false, std::memory_order_release);

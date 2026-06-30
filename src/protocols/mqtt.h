@@ -45,8 +45,7 @@ public:
     
     // Configuration
     void setConfig(const MqttConfig& config);
-    const MqttConfig& getConfig() const { return config_; }
-    
+
     // State publishing
     void publishState();           // Publish full state
     void publishAvailability();    // Publish online status
@@ -55,8 +54,6 @@ public:
     // Status
     bool isConnected() { return client_.connected(); }
     bool isEnabled() const { return config_.enabled; }
-    unsigned long getLastConnectAttempt() const { return lastConnectAttempt_; }
-    uint32_t getReconnectCount() const { return reconnectCount_; }
 
 private:
     // Connection management

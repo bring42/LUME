@@ -86,15 +86,7 @@ struct SegmentView {
     void fade(uint8_t amount) {
         fadeToBlackBy(raw(), length, amount);
     }
-    
-    void blur(uint8_t amount) {
-        blur1d(raw(), length, amount);
-    }
-    
-    void blend(CRGB* source, fract8 amount) {
-        nblend(raw(), source, length, amount);
-    }
-    
+
     // Fill with gradient (respects reversal)
     void gradient(CRGB startColor, CRGB endColor) {
         if (reversed) {
@@ -113,16 +105,6 @@ struct SegmentView {
         }
     }
     
-    // Fill from palette
-    void fillFromPalette(const CRGBPalette16& palette, uint8_t startIndex, 
-                         uint8_t incIndex = 1, TBlendType blendType = LINEARBLEND) {
-        uint8_t index = startIndex;
-        for (uint16_t i = 0; i < length; i++) {
-            (*this)[i] = ColorFromPalette(palette, index, 255, blendType);
-            index += incIndex;
-        }
-    }
-    
     // --- Direct access for advanced operations ---
     
     // Get raw pointer to first LED in segment (for direct FastLED calls)
@@ -137,17 +119,7 @@ struct SegmentView {
     
     // Check if valid
     bool valid() const { return base != nullptr && length > 0; }
-    
-    // Map a normalized position (0.0-1.0) to LED index
-    uint16_t map(float normalized) const {
-        return (uint16_t)(normalized * (length - 1));
-    }
-    
-    // Map an 8-bit position (0-255) to LED index
-    uint16_t map8(uint8_t pos) const {
-        return scale16by8(length - 1, pos);
-    }
-    
+
     // --- Scratchpad access for stateful effects ---
     
     // Get typed scratchpad pointer.

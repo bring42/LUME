@@ -52,8 +52,7 @@ struct EffectInfo {
     
     // Resource hints
     uint16_t stateSize;       // Bytes needed in scratchpad (0 = stateless)
-    uint16_t minLeds;         // Minimum LEDs for effect to look good
-    
+
     EffectFn fn;              // The actual effect function
     
     // Helper: has schema
@@ -125,12 +124,6 @@ public:
         return true;
     }
     
-    // Find effect function by id
-    EffectFn find(const char* id) const {
-        const EffectInfo* info = getInfo(id);
-        return info ? info->fn : nullptr;
-    }
-    
     // Get effect info by id
     const EffectInfo* getInfo(const char* id) const {
         if (!id) return nullptr;
@@ -150,25 +143,7 @@ public:
     
     // Get number of registered effects
     uint8_t getCount() const { return count; }
-    
-    // Get all effect ids (for API)
-    void getIds(const char** ids, uint8_t maxCount) const {
-        for (uint8_t i = 0; i < count && i < maxCount; i++) {
-            ids[i] = effects[i].id;
-        }
-    }
-    
-    // Get effects by category
-    uint8_t getByCategory(EffectCategory cat, const EffectInfo** results, uint8_t maxResults) const {
-        uint8_t found = 0;
-        for (uint8_t i = 0; i < count && found < maxResults; i++) {
-            if (effects[i].category == cat) {
-                results[found++] = &effects[i];
-            }
-        }
-        return found;
-    }
-    
+
 private:
     EffectRegistry() : count(0) {}
     
@@ -191,7 +166,7 @@ public:
     static lume::EffectRegistrar _registrar_##fn({ \
         idStr, dispName, lume::EffectCategory::cat, \
         &schemaRef, \
-        stateSz, 1, fn \
+        stateSz, fn \
     })
 
 // Convenience macro to define schema inline

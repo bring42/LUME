@@ -67,7 +67,6 @@ Config config;
 // WiFi state
 bool wifiConnected = false;
 unsigned long lastWifiAttempt = 0;
-const unsigned long WIFI_RETRY_INTERVAL = 30000;
 
 // Web UI filesystem state
 bool webUiAvailable = false;

@@ -24,7 +24,6 @@
 // sACN protocol limit: 8 universes × 170 LEDs = 1,360 LEDs max
 // See FastLED docs for parallel output to drive more strips simultaneously
 constexpr uint16_t MAX_LED_COUNT            = 1000;
-constexpr uint16_t LEDS_PER_UNIVERSE        = 170;   // 512 DMX channels ÷ 3 bytes/LED
 
 // Power Management
 constexpr uint8_t  LED_VOLTAGE              = 5;     // LED strip voltage
@@ -34,19 +33,11 @@ constexpr uint16_t LED_MAX_MILLIAMPS        = 2000;  // Max current (adjust for 
 // NETWORK CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Network Ports
-constexpr uint16_t WEB_SERVER_PORT          = 80;
-constexpr uint16_t OTA_PORT                 = 3232;
-constexpr uint16_t SACN_PORT                = 5568;
-
 // mDNS Hostname (Access via http://lume.local)
 #define MDNS_HOSTNAME "lume"
 
 // Timeouts (milliseconds)
 constexpr uint32_t WIFI_RETRY_INTERVAL_MS   = 30000;
-constexpr uint32_t SACN_DATA_TIMEOUT_MS     = 5000;
-constexpr uint32_t SACN_SOURCE_TIMEOUT_MS   = 2500;
-constexpr uint32_t HTTP_CLIENT_TIMEOUT_MS   = 30000;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SYSTEM LIMITS & BUFFERS
@@ -54,8 +45,6 @@ constexpr uint32_t HTTP_CLIENT_TIMEOUT_MS   = 30000;
 
 // Memory Buffers
 constexpr size_t MAX_REQUEST_BODY_SIZE      = 16384;  // 16KB max POST body
-constexpr size_t MAX_JSON_STATE_SIZE        = 4000;   // NVS storage limit
-constexpr size_t SYSTEM_PROMPT_BUFFER_SIZE  = 2048;
 
 // Task Configuration
 constexpr size_t   ANTHROPIC_TASK_STACK_SIZE = 16384;
@@ -71,7 +60,6 @@ constexpr uint32_t PROMPT_RATE_LIMIT_MS     = 3000;   // Min time between prompt
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Nightlight Settings
-constexpr uint16_t NIGHTLIGHT_MIN_DURATION      = 1;     // Minimum (seconds)
 constexpr uint16_t NIGHTLIGHT_MAX_DURATION      = 3600;  // Maximum (1 hour)
 constexpr uint16_t NIGHTLIGHT_DEFAULT_DURATION  = 900;   // Default (15 min)
 constexpr uint8_t  NIGHTLIGHT_DEFAULT_TARGET    = 0;     // Target brightness (off)

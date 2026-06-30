@@ -146,11 +146,6 @@ void LumeController::update() {
     for (uint8_t i = 0; i < segmentCount; i++) {
         if (segments[i].isActive()) {
             segments[i].update(frameCounter);
-            
-            // Handle blending if not Replace mode
-            if (segments[i].getBlendMode() != BlendMode::Replace) {
-                blendSegment(segments[i]);
-            }
         }
     }
     
@@ -248,10 +243,6 @@ void LumeController::executeCommand(const Command& cmd) {
 
     // A processed command may have changed the layout or params; schedule a save.
     markSegmentsDirty();
-}
-
-void LumeController::show() {
-    FastLED.show();
 }
 
 Segment* LumeController::createSegment(uint16_t start, uint16_t length, bool reversed) {
@@ -421,15 +412,6 @@ bool LumeController::restoreSegments(const JsonDocument& doc) {
     return restored > 0;
 }
 
-void LumeController::blendSegment(Segment& seg) {
-    (void)seg;
-    // Not yet implemented. Effects render directly into leds[], so by the time
-    // this runs the segment's pixels are already written — true Add/Average/Max
-    // blending of overlapping segments needs a separate per-segment render buffer
-    // to composite from. Until then, overlap is last-writer-wins (Replace).
-    // See docs/ARCHITECTURE.md, Invariant 1.
-}
-
 void LumeController::clearUncoveredLeds() {
     for (uint16_t i = 0; i < ledCount; i++) {
         bool covered = false;
@@ -460,13 +442,6 @@ void LumeController::registerProtocol(IProtocol* protocol) {
     
     protocols_[protocolCount_++] = protocol;
     LOG_INFO(LogTag::LED, "Registered protocol: %s", protocol->name());
-}
-
-const char* LumeController::getActiveProtocolName() const {
-    if (activeProtocol_) {
-        return activeProtocol_->name();
-    }
-    return nullptr;
 }
 
 void LumeController::processProtocols() {

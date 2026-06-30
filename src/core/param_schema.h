@@ -93,9 +93,6 @@ struct ParamSchema {
         }
         return -1;
     }
-    
-    // Empty schema singleton
-    static const ParamSchema empty;
 };
 
 // ============================================

@@ -50,10 +50,7 @@ public:
     
     // Call this in loop() - handles timing and updates all segments
     void update();
-    
-    // Force immediate show (bypasses frame timing)
-    void show();
-    
+
     // --- Segment management ---
     
     // Create a new segment (returns nullptr if max segments reached)
@@ -87,9 +84,6 @@ public:
     }
     uint8_t getBrightness() const { return globalBrightness; }
     
-    void setTargetFps(uint16_t fps) { targetFps = fps; }
-    uint16_t getTargetFps() const { return targetFps; }
-    
     // --- Nightlight ---
     
     void startNightlight(uint16_t durationSeconds, uint8_t targetBrightness);
@@ -97,38 +91,16 @@ public:
     bool isNightlightActive() const { return nightlightActive; }
     float getNightlightProgress() const;
     
-    // --- FastLED passthrough ---
-    
-    void setColorCorrection(CRGB correction) {
-        FastLED.setCorrection(correction);
-    }
-    
-    void setMaxPower(uint8_t volts, uint16_t milliamps) {
-        FastLED.setMaxPowerInVoltsAndMilliamps(volts, milliamps);
-    }
-    
     // --- Protocol management ---
     
     // Register a protocol (called at startup)
     void registerProtocol(IProtocol* protocol);
-    
-    // Check if any protocol is currently active (receiving data)
-    bool isProtocolActive() const { return protocolActive_; }
-    
-    // Get active protocol name (or nullptr if none)
-    const char* getActiveProtocolName() const;
     
     // --- Direct LED access (for protocols like sACN) ---
     
     CRGB* getLeds() { return leds; }
     const CRGB* getLeds() const { return leds; }
     uint16_t getLedCount() const { return ledCount; }
-    
-    // Get frame counter (for effects)
-    uint32_t getFrame() const { return frameCounter; }
-    
-    // Get actual FPS (for diagnostics)
-    uint16_t getActualFps() const { return actualFps; }
     
     // --- Command queue access (for handlers) ---
     
@@ -207,9 +179,6 @@ private:
     bool suppressDirty_;          // set while restoring, so restore doesn't re-save
     uint32_t lastSegmentChange_;
     static constexpr uint32_t SEGMENT_SAVE_DEBOUNCE_MS = 2000;
-
-    // Internal helpers
-    void blendSegment(Segment& seg);
 
     // Black out only the LEDs not owned by any active segment. Effects manage
     // their own canvas and many rely on the buffer persisting between frames
