@@ -28,6 +28,15 @@ DEFINE_EFFECT_SCHEMA(kBusSchema,
 );
 REGISTER_EFFECT_SCHEMA(testfx, "testfx", "Test FX", Animated, kBusSchema, 0);
 
+// A two-color effect for exercising setColor's index -> ordered-slot mapping.
+static void twocolorfx(SegmentView&, const ParamValues&, uint32_t, bool) {}
+DEFINE_EFFECT_SCHEMA(kTwoColorSchema,
+    ParamDesc::Int("speed", "Speed", 128, 1, 255),
+    ParamDesc::Color("colorStart", "Start", CRGB(0, 0, 0)),   // slot 1
+    ParamDesc::Color("colorEnd",   "End",   CRGB(0, 0, 0))    // slot 2
+);
+REGISTER_EFFECT_SCHEMA(twocolorfx, "twocolor", "Two Color", Animated, kTwoColorSchema, 0);
+
 // Build the spec a web handler would for a create.
 static EffectSpec makeCreateSpec(uint16_t start, uint16_t length, uint8_t speed) {
     EffectSpec spec = {};
@@ -157,6 +166,26 @@ void test_ai_semantic_params_via_bus() {
     TEST_ASSERT_EQUAL_UINT8(0x30, col.b);
 }
 
+// setColor(i) maps to the i-th color param in schema order — not always the
+// first (the P0.6 bug, which collapsed multi-color effects into one slot).
+void test_setcolor_maps_index_to_ordered_color_slot() {
+    Segment seg;
+    TEST_ASSERT_TRUE(seg.setEffect("twocolor"));
+    seg.setColor(0, CRGB(0x11, 0x22, 0x33));   // -> colorStart, slot 1
+    seg.setColor(1, CRGB(0x44, 0x55, 0x66));   // -> colorEnd,   slot 2
+    seg.setColor(2, CRGB(0x77, 0x88, 0x99));   // out of range -> no-op
+
+    const ParamValues& pv = seg.getParamValues();
+    CRGB start = pv.getColor(1);
+    CRGB end   = pv.getColor(2);
+    TEST_ASSERT_EQUAL_UINT8(0x11, start.r);    // index 0 did NOT get clobbered
+    TEST_ASSERT_EQUAL_UINT8(0x22, start.g);
+    TEST_ASSERT_EQUAL_UINT8(0x33, start.b);
+    TEST_ASSERT_EQUAL_UINT8(0x44, end.r);
+    TEST_ASSERT_EQUAL_UINT8(0x55, end.g);
+    TEST_ASSERT_EQUAL_UINT8(0x66, end.b);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_create_is_deferred_then_applied);
@@ -165,5 +194,6 @@ int main(int, char**) {
     RUN_TEST(test_power_and_brightness_via_bus);
     RUN_TEST(test_nightlight_start_stop_via_bus);
     RUN_TEST(test_ai_semantic_params_via_bus);
+    RUN_TEST(test_setcolor_maps_index_to_ordered_color_slot);
     return UNITY_END();
 }
