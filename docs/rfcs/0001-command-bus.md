@@ -170,6 +170,27 @@ Each step ships independently and pays for itself.
   S3/C3 have no 802.15.4) **and** a **process** gate (CSA membership + real VID +
   certification). Separately scoped; not incremental.
 
+## Matter strategy: bridge-first (free), native-later (finances permitting)
+
+You do **not** need on-device Matter — or ESP-IDF — to reach Matter ecosystems today.
+Two tiers, same Matter-shaped bus:
+
+- **Tier 0 — Bridge (now, $0, stays on Arduino).** Keep the Arduino build and expose
+  the bus over **MQTT with Home Assistant auto-discovery** (LUME already has the MQTT
+  plumbing). HA then bridges LUME to Apple Home / Google / Alexa via its HomeKit/Matter
+  bridge. No `esp-matter`, no IDF migration, no CSA fees, no flash/heap hit — the only
+  cost is "needs a hub," which most target users already run. Because the bus mirrors
+  the cluster model (segment = endpoint; on/off/level/color + a `LumeEffect`
+  namespace), the MQTT/HTTP semantics already line up. **This is the prep.**
+- **Tier 1 — Native Matter (later).** A device-side Matter adapter on the same bus.
+  This is the tier that costs: the ESP-IDF migration, ~1.5 MB flash + heap, and — to
+  ship "Matter Certified" — CSA membership + a real VID + certification. Deferred
+  behind the bus seam, it's a thin, well-scoped addition, not a rewrite.
+
+**Net:** be a great MQTT/HTTP citizen now (Arduino, light, free); native Matter becomes
+an optional upgrade, not a prerequisite. **Avoiding ESP-IDF = choosing Tier 0** — and
+the Matter-shaped bus makes that choice free of regret.
+
 ## Risks / open questions
 
 - **RMT + WiFi jitter** under Matter-over-WiFi — mitigate via I2S/SPI output; verify on
