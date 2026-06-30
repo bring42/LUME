@@ -141,52 +141,62 @@ bool callAnthropicAPI(const String& userPrompt, String& response, String& error)
     }
 }
 
-// Apply the AI-generated spec to the controller
+// Translate the AI-generated spec into bus commands (single-writer path). The
+// segment/global mutations are applied by the render loop, not this task.
 bool applySpec(const JsonDocument& spec, String& error) {
-    lume::Segment* seg = lume::controller.getSegment(0);
-    if (!seg) {
+    // Existence check only (read); the AI targets segment 0.
+    if (!lume::controller.getSegment(0)) {
         error = "No active segment";
         return false;
     }
-    
-    // Apply effect
+
+    lume::EffectSpec es = {};
+
+    // Effect (validated against the registry; effectId is copied into the spec).
     if (spec["effect"].is<const char*>()) {
         const char* effectId = spec["effect"].as<const char*>();
-        if (!seg->setEffect(effectId)) {
-            LOG_WARN(LogTag::WEB, "Unknown effect: %s", effectId);
-        } else {
+        if (lume::effects().getInfo(effectId)) {
+            es.hasEffect = true;
+            strncpy(es.effectId, effectId, lume::MAX_EFFECT_ID_LEN - 1);
+            es.effectId[lume::MAX_EFFECT_ID_LEN - 1] = '\0';
             storage.saveLastEffect(effectId);  // Persist for next reboot
+        } else {
+            LOG_WARN(LogTag::WEB, "Unknown effect: %s", effectId);
         }
     }
-    
-    // Apply speed
+
+    // Semantic params — resolved to slots on the loop via the name-aware setters.
     if (spec["speed"].is<int>()) {
-        seg->setSpeed(constrain(spec["speed"].as<int>(), 1, 200));
+        es.hasSpeed = true;
+        es.speed = constrain(spec["speed"].as<int>(), 1, 200);
     }
-    
-    // Apply intensity
     if (spec["intensity"].is<int>()) {
-        seg->setIntensity(constrain(spec["intensity"].as<int>(), 0, 255));
+        es.hasIntensity = true;
+        es.intensity = constrain(spec["intensity"].as<int>(), 0, 255);
     }
-    
-    // Apply colors (WLED format)
+
+    // Colors (WLED format): up to 3, applied via setColor(i, ...) on the loop.
     if (spec["colors"].is<JsonArrayConst>()) {
         JsonArrayConst colorsArr = spec["colors"].as<JsonArrayConst>();
         for (uint8_t i = 0; i < 3 && i < colorsArr.size(); i++) {
             if (colorsArr[i].is<JsonArrayConst>()) {
                 JsonArrayConst arr = colorsArr[i].as<JsonArrayConst>();
                 if (arr.size() >= 3) {
-                    seg->setColor(i, CRGB(arr[0].as<uint8_t>(), arr[1].as<uint8_t>(), arr[2].as<uint8_t>()));
+                    es.colors[es.colorCount++] =
+                        CRGB(arr[0].as<uint8_t>(), arr[1].as<uint8_t>(), arr[2].as<uint8_t>());
                 }
             }
         }
     }
-    
-    // Apply brightness
+
+    lume::controller.enqueueCommand(lume::Command::applyEffectSpec(0, es));
+
+    // Brightness is global.
     if (spec["brightness"].is<int>()) {
-        lume::controller.setBrightness(constrain(spec["brightness"].as<int>(), 0, 255));
+        lume::controller.enqueueCommand(
+            lume::Command::setGlobalBrightness(constrain(spec["brightness"].as<int>(), 0, 255)));
     }
-    
+
     return true;
 }
 

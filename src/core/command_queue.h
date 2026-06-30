@@ -38,7 +38,11 @@ enum class CommandType : uint8_t {
     // Global control
     SetPower,           // Power on/off
     SetGlobalBrightness,// Global brightness
-    
+
+    // Nightlight
+    StartNightlight,    // Begin a timed fade
+    StopNightlight,     // Cancel an active nightlight
+
     // Advanced
     ApplyEffectSpec,    // Apply AI-generated effect spec
     SaveScene,          // Persist current state
@@ -62,6 +66,14 @@ struct SegmentData {
     uint16_t start;
     uint16_t length;
     bool reversed;
+};
+
+/**
+ * Nightlight start data
+ */
+struct NightlightData {
+    uint16_t durationSec;
+    uint8_t  targetBrightness;
 };
 
 /**
@@ -90,6 +102,16 @@ struct EffectSpec {
     // against the effect schema; applied verbatim after the effect is set.
     bool                hasParams;
     ParamValues::Slot   slots[MAX_EFFECT_PARAMS];
+
+    // Semantic params (AI path): applied via the name-resolving setters on the
+    // loop (setSpeed/setIntensity/setColor), so the producer needn't know the
+    // effect's slot layout.
+    bool     hasSpeed;
+    uint8_t  speed;
+    bool     hasIntensity;
+    uint8_t  intensity;
+    uint8_t  colorCount;        // 0..3, applied via setColor(i, colors[i])
+    CRGB     colors[3];
 
     // Palette preset (PalettePreset enum value).
     bool     hasPalette;
@@ -128,6 +150,9 @@ struct Command {
 
         // Generic 32-bit value
         uint32_t value32;
+
+        // StartNightlight
+        NightlightData nightlight;
 
         // ApplyEffectSpec — the compound segment mutation (create/update)
         EffectSpec spec;
@@ -220,6 +245,21 @@ struct Command {
         cmd.type = CommandType::ApplyEffectSpec;
         cmd.segmentId = segId;
         cmd.data.spec = spec;
+        return cmd;
+    }
+
+    static Command startNightlight(uint16_t durationSec, uint8_t targetBrightness) {
+        Command cmd;
+        cmd.type = CommandType::StartNightlight;
+        cmd.segmentId = 255;
+        cmd.data.nightlight = { durationSec, targetBrightness };
+        return cmd;
+    }
+
+    static Command stopNightlight() {
+        Command cmd;
+        cmd.type = CommandType::StopNightlight;
+        cmd.segmentId = 255;
         return cmd;
     }
 };

@@ -99,7 +99,11 @@ void LumeController::update() {
     
     // Update nightlight if active
     if (nightlightActive) {
-        uint32_t elapsed = (now - nightlightStartTime) / 1000;  // Convert to seconds
+        // Guard the subtraction: a StartNightlight command is applied inside this
+        // frame *after* `now` was captured, so nightlightStartTime can be slightly
+        // ahead of `now` on the first frame. Clamp to 0 to avoid unsigned underflow
+        // (which would otherwise insta-complete the fade).
+        uint32_t elapsed = (now > nightlightStartTime) ? (now - nightlightStartTime) / 1000 : 0;
         if (elapsed >= nightlightDuration) {
             // Nightlight complete - set target brightness and stop
             setBrightness(nightlightTargetBrightness);
@@ -250,10 +254,24 @@ void LumeController::executeCommand(const Command& cmd) {
 
             if (spec.hasEffect)     target->setEffect(spec.effectId);
             if (spec.hasParams)     target->getParamValues().setSlots(spec.slots);
+            // Semantic params (AI path) resolve param names on the loop.
+            if (spec.hasSpeed)      target->setSpeed(spec.speed);
+            if (spec.hasIntensity)  target->setIntensity(spec.intensity);
+            for (uint8_t i = 0; i < spec.colorCount && i < 3; i++) {
+                target->setColor(i, spec.colors[i]);
+            }
             if (spec.hasPalette)    target->setPalette(static_cast<PalettePreset>(spec.palette));
             if (spec.hasBrightness) target->setBrightness(spec.brightness);
             break;
         }
+
+        case CommandType::StartNightlight:
+            startNightlight(cmd.data.nightlight.durationSec, cmd.data.nightlight.targetBrightness);
+            break;
+
+        case CommandType::StopNightlight:
+            stopNightlight();
+            break;
 
         case CommandType::SaveScene:
         case CommandType::LoadScene:
