@@ -92,10 +92,7 @@ public:
     uint32_t getLastPacketTime() const override { return lastAnyPacketTime_; }
     
     // --- sACN-specific accessors ---
-    
-    uint16_t getStartUniverse() const { return startUniverse_; }
-    uint8_t getUniverseCount() const { return universeCount_; }
-    bool isUnicastMode() const { return unicastMode_; }
+
     const char* getActiveSourceName() const;
     uint8_t getActivePriority() const;
 

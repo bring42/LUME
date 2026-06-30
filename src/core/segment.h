@@ -33,7 +33,6 @@ public:
         , effect(nullptr)
         , paramValues()
         , brightness(255)
-        , blendMode(BlendMode::Replace)
         , active(false)
         , id(0)
         , scratchpadVersion(0)
@@ -138,15 +137,11 @@ public:
     
     void setBrightness(uint8_t bri) { brightness = bri; }
     uint8_t getBrightness() const { return brightness; }
-    
-    void setBlendMode(BlendMode mode) { blendMode = mode; }
-    BlendMode getBlendMode() const { return blendMode; }
-    
+
     // --- State ---
-    
+
     bool isActive() const { return active && view.valid(); }
-    void setActive(bool a) { active = a; }
-    
+
     uint8_t getId() const { return id; }
     
     uint16_t getStart() const { return view.getStart(); }
@@ -177,10 +172,6 @@ public:
         static_assert(alignof(T) <= SCRATCHPAD_ALIGN, "State type needs stronger alignment than the scratchpad guarantees");
         return reinterpret_cast<const T*>(scratchpad);
     }
-    
-    // Raw scratchpad access
-    uint8_t* getScratchpadRaw() { return scratchpad; }
-    const uint8_t* getScratchpadRaw() const { return scratchpad; }
     
     // --- Update ---
     
@@ -215,7 +206,6 @@ private:
     ParamValues paramValues;  // Schema-aware parameter values
     
     uint8_t brightness;
-    BlendMode blendMode;
     bool active;
     uint8_t id;
     

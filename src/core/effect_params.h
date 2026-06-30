@@ -6,17 +6,6 @@
 namespace lume {
 
 /**
- * BlendMode - How overlapping segments combine
- */
-enum class BlendMode : uint8_t {
-    Replace = 0,   // Overwrite (default)
-    Add,           // Additive blending
-    Average,       // 50/50 blend
-    Max,           // Take brighter value
-    Overlay        // Complex blend (multiply darks, screen lights)
-};
-
-/**
  * Built-in palette definitions
  */
 enum class PalettePreset : uint8_t {
@@ -77,47 +66,6 @@ inline CRGBPalette16 getPalette(PalettePreset preset) {
         default:
             return RainbowColors_p;
     }
-}
-
-// Palette name lookup
-inline const char* paletteName(PalettePreset preset) {
-    switch (preset) {
-        case PalettePreset::Rainbow: return "rainbow";
-        case PalettePreset::Lava:    return "lava";
-        case PalettePreset::Ocean:   return "ocean";
-        case PalettePreset::Party:   return "party";
-        case PalettePreset::Forest:  return "forest";
-        case PalettePreset::Cloud:   return "cloud";
-        case PalettePreset::Heat:    return "heat";
-        case PalettePreset::Sunset:  return "sunset";
-        case PalettePreset::Autumn:  return "autumn";
-        case PalettePreset::Retro:   return "retro";
-        case PalettePreset::Ice:     return "ice";
-        case PalettePreset::Pink:    return "pink";
-        case PalettePreset::Custom:  return "custom";
-        default: return "rainbow";
-    }
-}
-
-// Parse palette name
-inline PalettePreset parsePalette(const char* name) {
-    if (!name) return PalettePreset::Rainbow;
-    
-    if (strcmp(name, "rainbow") == 0) return PalettePreset::Rainbow;
-    if (strcmp(name, "lava") == 0)    return PalettePreset::Lava;
-    if (strcmp(name, "ocean") == 0)   return PalettePreset::Ocean;
-    if (strcmp(name, "party") == 0)   return PalettePreset::Party;
-    if (strcmp(name, "forest") == 0)  return PalettePreset::Forest;
-    if (strcmp(name, "cloud") == 0)   return PalettePreset::Cloud;
-    if (strcmp(name, "heat") == 0)    return PalettePreset::Heat;
-    if (strcmp(name, "sunset") == 0)  return PalettePreset::Sunset;
-    if (strcmp(name, "autumn") == 0)  return PalettePreset::Autumn;
-    if (strcmp(name, "retro") == 0)   return PalettePreset::Retro;
-    if (strcmp(name, "ice") == 0)     return PalettePreset::Ice;
-    if (strcmp(name, "pink") == 0)    return PalettePreset::Pink;
-    if (strcmp(name, "custom") == 0)  return PalettePreset::Custom;
-    
-    return PalettePreset::Rainbow;
 }
 
 } // namespace lume

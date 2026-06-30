@@ -42,14 +42,6 @@ void sendUnauthorized(AsyncWebServerRequest* request);
 // These handlers remain in main.cpp as they are core to the application
 
 // ===========================================================================
-// API Handler Functions - Segments (v2 Architecture)
-// ===========================================================================
-// New segment-based control for multi-zone LED management
-
-void handleApiSegments(AsyncWebServerRequest* request);
-void handleApiSegmentsPost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total);
-
-// ===========================================================================
 // Modular API Handlers (see src/api/ directory)
 // ===========================================================================
 // Nightlight: api/nightlight.{h,cpp} - Fade-to-sleep timer functionality

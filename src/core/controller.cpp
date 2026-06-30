@@ -146,11 +146,6 @@ void LumeController::update() {
     for (uint8_t i = 0; i < segmentCount; i++) {
         if (segments[i].isActive()) {
             segments[i].update(frameCounter);
-            
-            // Handle blending if not Replace mode
-            if (segments[i].getBlendMode() != BlendMode::Replace) {
-                blendSegment(segments[i]);
-            }
         }
     }
     
@@ -238,7 +233,28 @@ void LumeController::executeCommand(const Command& cmd) {
             setBrightness(cmd.data.value8);
             break;
             
-        case CommandType::ApplyEffectSpec:
+        case CommandType::ApplyEffectSpec: {
+            // Compound segment mutation (create/update) — the single-writer path
+            // that replaces direct handler mutation (RFC 0001 §3).
+            const EffectSpec& spec = cmd.data.spec;
+            Segment* target = seg;
+            if (spec.create) {
+                target = createSegment(spec.start, spec.length, spec.reversed);
+                if (!target) {
+                    LOG_WARN(LogTag::LED, "ApplyEffectSpec: create failed (start=%d len=%d)",
+                             spec.start, spec.length);
+                    break;
+                }
+            }
+            if (!target) break;  // update targeting an unknown segment
+
+            if (spec.hasEffect)     target->setEffect(spec.effectId);
+            if (spec.hasParams)     target->getParamValues().setSlots(spec.slots);
+            if (spec.hasPalette)    target->setPalette(static_cast<PalettePreset>(spec.palette));
+            if (spec.hasBrightness) target->setBrightness(spec.brightness);
+            break;
+        }
+
         case CommandType::SaveScene:
         case CommandType::LoadScene:
             // Not yet implemented — scene presets are on the roadmap (see README).
@@ -248,10 +264,6 @@ void LumeController::executeCommand(const Command& cmd) {
 
     // A processed command may have changed the layout or params; schedule a save.
     markSegmentsDirty();
-}
-
-void LumeController::show() {
-    FastLED.show();
 }
 
 Segment* LumeController::createSegment(uint16_t start, uint16_t length, bool reversed) {
@@ -421,15 +433,6 @@ bool LumeController::restoreSegments(const JsonDocument& doc) {
     return restored > 0;
 }
 
-void LumeController::blendSegment(Segment& seg) {
-    (void)seg;
-    // Not yet implemented. Effects render directly into leds[], so by the time
-    // this runs the segment's pixels are already written — true Add/Average/Max
-    // blending of overlapping segments needs a separate per-segment render buffer
-    // to composite from. Until then, overlap is last-writer-wins (Replace).
-    // See docs/ARCHITECTURE.md, Invariant 1.
-}
-
 void LumeController::clearUncoveredLeds() {
     for (uint16_t i = 0; i < ledCount; i++) {
         bool covered = false;
@@ -460,13 +463,6 @@ void LumeController::registerProtocol(IProtocol* protocol) {
     
     protocols_[protocolCount_++] = protocol;
     LOG_INFO(LogTag::LED, "Registered protocol: %s", protocol->name());
-}
-
-const char* LumeController::getActiveProtocolName() const {
-    if (activeProtocol_) {
-        return activeProtocol_->name();
-    }
-    return nullptr;
 }
 
 void LumeController::processProtocols() {

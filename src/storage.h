@@ -50,16 +50,6 @@ struct Config {
         mqttTopicPrefix("lume") {}
 };
 
-// Last generated effect spec storage
-struct PromptSpec {
-    String jsonSpec;
-    String prompt;
-    unsigned long timestamp;
-    bool valid;
-    
-    PromptSpec() : jsonSpec(""), prompt(""), timestamp(0), valid(false) {}
-};
-
 // Scene storage (saved AI-generated effects)
 #define MAX_SCENES 10
 
@@ -90,12 +80,7 @@ public:
     // Effect persistence (for restoring last effect after reboot)
     bool saveLastEffect(const char* effectId);
     bool loadLastEffect(String& effectId);
-    
-    // Prompt spec operations
-    bool savePromptSpec(const PromptSpec& spec);
-    bool loadPromptSpec(PromptSpec& spec);
-    bool clearPromptSpec();
-    
+
     // Export config to JSON (with optional API key masking)
     void configToJson(const Config& config, JsonDocument& doc, bool maskApiKey = true);
     
@@ -113,7 +98,6 @@ private:
     Preferences prefs;
     static const char* NAMESPACE_CONFIG;
     static const char* NAMESPACE_LED;
-    static const char* NAMESPACE_PROMPT;
     static const char* NAMESPACE_SCENES;
 };
 

@@ -6,6 +6,7 @@
 #include "../core/controller.h"
 #include "../core/effect_registry.h"
 #include "../core/param_schema.h"
+#include "../core/param_codec.h"
 #include <ArduinoJson.h>
 
 // External globals
@@ -90,6 +91,43 @@ void sendJsonError(AsyncWebServerRequest* request, int status, const char* code,
     request->send(status, "application/json", output);
 }
 
+// Populate the effect/palette/param fields of a (zero-initialized) EffectSpec
+// from a parsed request body, on the web task. Params are resolved to typed
+// slots against the *static* effect schema here, so the render loop applies pure
+// data with no further lookups (RFC 0001 §3). `currentEffect` is the segment's
+// existing effect (used to resolve params when the body doesn't change the
+// effect); pass nullptr for create. Saves last-effect as a side effect, matching
+// the prior handler behavior.
+void populateEffectSpecFromBody(lume::EffectSpec& spec, JsonDocument& doc,
+                                const lume::EffectInfo* currentEffect) {
+    const lume::EffectInfo* paramEffect = currentEffect;
+
+    if (doc["effect"].is<const char*>()) {
+        const char* effectId = doc["effect"].as<const char*>();
+        const lume::EffectInfo* info = lume::effects().getInfo(effectId);
+        if (info) {  // only a valid effect changes state (matches setEffect's contract)
+            spec.hasEffect = true;
+            strncpy(spec.effectId, effectId, lume::MAX_EFFECT_ID_LEN - 1);
+            spec.effectId[lume::MAX_EFFECT_ID_LEN - 1] = '\0';
+            storage.saveLastEffect(effectId);
+            paramEffect = info;  // params resolve against the NEW effect
+        }
+    }
+
+    if (doc["palette"].is<int>()) {
+        spec.hasPalette = true;
+        spec.palette = static_cast<uint8_t>(doc["palette"].as<int>());
+    }
+
+    if (doc["params"].is<JsonObjectConst>() && paramEffect && paramEffect->hasSchema()) {
+        lume::ParamValues tmp = {};
+        tmp.applyDefaults(*paramEffect->schema);
+        lume::paramsFromJson(tmp, *paramEffect->schema, doc["params"].as<JsonObjectConst>());
+        for (uint8_t i = 0; i < lume::MAX_EFFECT_PARAMS; i++) spec.slots[i] = tmp.slots[i];
+        spec.hasParams = true;
+    }
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -109,34 +147,7 @@ void segmentToJson(JsonObject& obj, lume::Segment* segment, uint8_t id) {
         const lume::ParamValues& paramValues = segment->getParamValues();
         
         JsonObject paramsObj = obj["params"].to<JsonObject>();
-        for (uint8_t i = 0; i < schema->count && i < lume::MAX_EFFECT_PARAMS; i++) {
-            const lume::ParamDesc& desc = schema->params[i];
-            
-            switch (desc.type) {
-                case lume::ParamType::Int:
-                    paramsObj[desc.id] = paramValues.getInt(i);
-                    break;
-                case lume::ParamType::Float:
-                    paramsObj[desc.id] = paramValues.getFloat(i);
-                    break;
-                case lume::ParamType::Color: {
-                    CRGB c = paramValues.getColor(i);
-                    char hex[8];
-                    snprintf(hex, sizeof(hex), "#%02x%02x%02x", c.r, c.g, c.b);
-                    paramsObj[desc.id] = hex;
-                    break;
-                }
-                case lume::ParamType::Bool:
-                    paramsObj[desc.id] = paramValues.getBool(i);
-                    break;
-                case lume::ParamType::Enum:
-                    paramsObj[desc.id] = paramValues.getEnum(i);
-                    break;
-                case lume::ParamType::Palette:
-                    // Palette handled separately or as string
-                    break;
-            }
-        }
+        lume::paramsToJson(paramsObj, *schema, paramValues);
     }
     
     // Reverse flag
@@ -248,108 +259,26 @@ void handleApiV2SegmentCreate(AsyncWebServerRequest* request, uint8_t* data, siz
             return;
         }
         
-        uint16_t start = doc["start"].as<uint16_t>();
-        uint16_t length = doc["length"].as<uint16_t>();
-        bool reversed = doc["reverse"].is<bool>() ? doc["reverse"].as<bool>() : false;
-        
-        // Create segment
-        lume::Segment* seg = lume::controller.createSegment(start, length, reversed);
-        if (!seg) {
-            sendJsonError(request, 500, "creation_failed", "Failed to create segment");
+        // Best-effort capacity check (the render loop is authoritative, but this
+        // gives the client immediate feedback instead of a silent no-op).
+        if (lume::controller.getSegmentCount() >= lume::MAX_SEGMENTS) {
+            sendJsonError(request, 409, "max_segments", "Maximum number of segments reached");
             return;
         }
-        
-        // Find segment ID
-        uint8_t segmentId = 0;
-        for (uint8_t i = 0; i < 8; i++) {
-            if (lume::controller.getSegment(i) == seg) {
-                segmentId = i;
-                break;
-            }
-        }
-        
-        // Apply optional settings
-        if (doc["effect"].is<const char*>()) {
-            const char* effectId = doc["effect"].as<const char*>();
-            if (seg->setEffect(effectId)) {
-                storage.saveLastEffect(effectId);  // Only save if effect exists
-            }
-        }
-        
-        // Palette - use enum value or preset name
-        if (doc["palette"].is<int>()) {
-            seg->setPalette(static_cast<lume::PalettePreset>(doc["palette"].as<int>()));
-        }
-        
-        // Schema-aware parameters
-        if (doc["params"].is<JsonObjectConst>()) {
-            JsonObjectConst paramsObj = doc["params"].as<JsonObjectConst>();
-            const lume::EffectInfo* effectInfo = seg->getEffect();
-            
-            if (effectInfo && effectInfo->hasSchema()) {
-                lume::ParamValues& paramValues = seg->getParamValues();
-                const lume::ParamSchema* schema = effectInfo->schema;
-                
-                for (JsonPairConst kv : paramsObj) {
-                    const char* paramId = kv.key().c_str();
-                    int8_t slotIdx = schema->indexOf(paramId);
-                    
-                    if (slotIdx >= 0 && slotIdx < lume::MAX_EFFECT_PARAMS) {
-                        const lume::ParamDesc& desc = schema->params[slotIdx];
-                        
-                        switch (desc.type) {
-                            case lume::ParamType::Int:
-                                if (kv.value().is<int>()) {
-                                    paramValues.setInt(slotIdx, kv.value().as<uint8_t>());
-                                }
-                                break;
-                            case lume::ParamType::Float:
-                                if (kv.value().is<float>()) {
-                                    paramValues.setFloat(slotIdx, kv.value().as<float>());
-                                }
-                                break;
-                            case lume::ParamType::Color:
-                                if (kv.value().is<const char*>()) {
-                                    const char* hex = kv.value().as<const char*>();
-                                    if (hex[0] == '#' && strlen(hex) == 7) {
-                                        uint32_t rgb = strtol(hex + 1, nullptr, 16);
-                                        paramValues.setColor(slotIdx, CRGB(
-                                            (rgb >> 16) & 0xFF,
-                                            (rgb >> 8) & 0xFF,
-                                            rgb & 0xFF
-                                        ));
-                                    }
-                                }
-                                break;
-                            case lume::ParamType::Bool:
-                                if (kv.value().is<bool>()) {
-                                    paramValues.setBool(slotIdx, kv.value().as<bool>());
-                                }
-                                break;
-                            case lume::ParamType::Enum:
-                                if (kv.value().is<int>()) {
-                                    paramValues.setEnum(slotIdx, kv.value().as<uint8_t>());
-                                }
-                                break;
-                            case lume::ParamType::Palette:
-                                break;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Return created segment
-        JsonDocument responseDoc;
-        JsonObject obj = responseDoc.to<JsonObject>();
-        segmentToJson(obj, seg, segmentId);
-        
-        String output;
-        serializeJson(responseDoc, output);
-        request->send(201, "application/json", output);
-        
-        lume::controller.markSegmentsDirty();
-        LOG_INFO(LogTag::LED, "Created segment %d: start=%d length=%d", segmentId, start, length);
+
+        // Build a self-contained spec and hand it to the render loop (single
+        // writer). No segment mutation happens on this (AsyncTCP) task.
+        lume::EffectSpec spec = {};
+        spec.create = true;
+        spec.start = doc["start"].as<uint16_t>();
+        spec.length = doc["length"].as<uint16_t>();
+        spec.reversed = doc["reverse"].is<bool>() ? doc["reverse"].as<bool>() : false;
+        populateEffectSpecFromBody(spec, doc, /*currentEffect=*/nullptr);
+
+        lume::controller.enqueueCommand(lume::Command::applyEffectSpec(255, spec));
+
+        request->send(202, "application/json", "{\"status\":\"accepted\"}");
+        LOG_INFO(LogTag::LED, "Enqueued segment create: start=%d length=%d", spec.start, spec.length);
     }
 }
 
@@ -393,100 +322,24 @@ void handleApiV2SegmentUpdate(AsyncWebServerRequest* request, uint8_t* data, siz
             sendJsonError(request, 404, "not_found", "Segment not found", "id");
             return;
         }
-        
+
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, segmentUpdateBuffer);
-        
+
         if (error) {
             sendJsonError(request, 400, "invalid_json", "Unable to parse JSON payload");
             return;
         }
-        
-        // Update fields if present
-        if (doc["effect"].is<const char*>()) {
-            const char* effectId = doc["effect"].as<const char*>();
-            if (seg->setEffect(effectId)) {
-                storage.saveLastEffect(effectId);  // Only save if effect exists
-            }
-        }
-        
-        // Palette - use enum value
-        if (doc["palette"].is<int>()) {
-            seg->setPalette(static_cast<lume::PalettePreset>(doc["palette"].as<int>()));
-        }
-        
-        // Custom parameters (schema-aware effects)
-        if (doc["params"].is<JsonObjectConst>()) {
-            JsonObjectConst paramsObj = doc["params"].as<JsonObjectConst>();
-            const lume::EffectInfo* effectInfo = seg->getEffect();
-            
-            if (effectInfo && effectInfo->hasSchema()) {
-                lume::ParamValues& paramValues = seg->getParamValues();
-                const lume::ParamSchema* schema = effectInfo->schema;
-                
-                // Iterate over provided params and update values
-                for (JsonPairConst kv : paramsObj) {
-                    const char* paramId = kv.key().c_str();
-                    int8_t slotIdx = schema->indexOf(paramId);
-                    
-                    if (slotIdx >= 0 && slotIdx < lume::MAX_EFFECT_PARAMS) {
-                        const lume::ParamDesc& desc = schema->params[slotIdx];
-                        
-                        switch (desc.type) {
-                            case lume::ParamType::Int:
-                                if (kv.value().is<int>()) {
-                                    paramValues.setInt(slotIdx, kv.value().as<uint8_t>());
-                                }
-                                break;
-                            case lume::ParamType::Float:
-                                if (kv.value().is<float>()) {
-                                    paramValues.setFloat(slotIdx, kv.value().as<float>());
-                                }
-                                break;
-                            case lume::ParamType::Color:
-                                if (kv.value().is<const char*>()) {
-                                    // Parse hex color "#RRGGBB"
-                                    const char* hex = kv.value().as<const char*>();
-                                    if (hex[0] == '#' && strlen(hex) == 7) {
-                                        uint32_t rgb = strtol(hex + 1, nullptr, 16);
-                                        paramValues.setColor(slotIdx, CRGB(
-                                            (rgb >> 16) & 0xFF,
-                                            (rgb >> 8) & 0xFF,
-                                            rgb & 0xFF
-                                        ));
-                                    }
-                                }
-                                break;
-                            case lume::ParamType::Bool:
-                                if (kv.value().is<bool>()) {
-                                    paramValues.setBool(slotIdx, kv.value().as<bool>());
-                                }
-                                break;
-                            case lume::ParamType::Enum:
-                                if (kv.value().is<int>()) {
-                                    paramValues.setEnum(slotIdx, kv.value().as<uint8_t>());
-                                }
-                                break;
-                            case lume::ParamType::Palette:
-                                // Palette handled separately above
-                                break;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Return updated segment
-        JsonDocument responseDoc;
-        JsonObject obj = responseDoc.to<JsonObject>();
-        segmentToJson(obj, seg, id);
-        
-        String output;
-        serializeJson(responseDoc, output);
-        request->send(200, "application/json", output);
-        
-        lume::controller.markSegmentsDirty();
-        LOG_INFO(LogTag::LED, "Updated segment %d", id);
+
+        // Resolve params against the segment's current effect when the body
+        // doesn't change it; the spec then carries pure, pre-resolved data.
+        lume::EffectSpec spec = {};
+        populateEffectSpecFromBody(spec, doc, /*currentEffect=*/seg->getEffect());
+
+        lume::controller.enqueueCommand(lume::Command::applyEffectSpec(id, spec));
+
+        request->send(202, "application/json", "{\"status\":\"accepted\"}");
+        LOG_INFO(LogTag::LED, "Enqueued segment %d update", id);
     }
 }
 
@@ -514,9 +367,9 @@ void handleApiV2SegmentDelete(AsyncWebServerRequest* request) {
         return;
     }
     
-    lume::controller.removeSegment(id);
-    request->send(200, "application/json", "{\"success\":true}");
-    LOG_INFO(LogTag::LED, "Deleted segment %d", id);
+    lume::controller.enqueueCommand(lume::Command::removeSegment(id));
+    request->send(202, "application/json", "{\"status\":\"accepted\"}");
+    LOG_INFO(LogTag::LED, "Enqueued segment %d delete", id);
 }
 
 // ===========================================================================
