@@ -1,4 +1,5 @@
 #include "storage.h"
+#include "constants.h"  // MAX_LED_COUNT (ledCount clamp, P0.2)
 
 const char* Storage::NAMESPACE_CONFIG = "config";
 const char* Storage::NAMESPACE_LED = "ledstate";
@@ -22,7 +23,8 @@ bool Storage::loadConfig(Config& config) {
     config.aiApiKey = prefs.getString("ai_apikey", "");
     config.aiModel = prefs.getString("ai_model", "claude-3-5-haiku-20241022");
     config.authToken = prefs.getString("authtoken", "");
-    config.ledCount = prefs.getUShort("ledcount", 160);
+    // Clamp on load too, in case NVS holds an out-of-range value (P0.2).
+    config.ledCount = constrain((int)prefs.getUShort("ledcount", 160), 1, (int)MAX_LED_COUNT);
     config.defaultBrightness = prefs.getUChar("brightness", 128);
     config.sacnEnabled = prefs.getBool("sacn_en", false);
     config.sacnUniverse = prefs.getUShort("sacn_uni", 1);
@@ -186,7 +188,9 @@ bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
         }
     }
     if (doc["ledCount"].is<int>()) {
-        config.ledCount = doc["ledCount"].as<uint16_t>();
+        // Constrain to [1, MAX_LED_COUNT]: 0 underflows the pixels gradient
+        // (ledCount-1 -> 65535) into a heap OOB write; >MAX overruns leds[] (P0.2).
+        config.ledCount = constrain(doc["ledCount"].as<int>(), 1, (int)MAX_LED_COUNT);
     }
     if (doc["defaultBrightness"].is<int>()) {
         config.defaultBrightness = doc["defaultBrightness"].as<uint8_t>();

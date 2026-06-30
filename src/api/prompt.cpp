@@ -16,6 +16,10 @@
 // Request body buffer for async handling
 static String promptBodyBuffer;
 
+// Timestamp of the last accepted prompt, for rate limiting (P0.7). Combined with
+// the blocking upstream call, an unthrottled /api/prompt is a DoS + billing burn.
+static uint32_t lastPromptMs = 0;
+
 extern Config config;
 extern bool checkAuth(AsyncWebServerRequest* request);
 extern void sendUnauthorized(AsyncWebServerRequest* request);
@@ -208,7 +212,18 @@ void handleApiPromptPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
         sendUnauthorized(request);
         return;
     }
-    
+
+    // Rate limit at the start of a new request (P0.7). Auth is optional, so this
+    // is the only throttle on the expensive upstream call.
+    if (index == 0) {
+        uint32_t now = millis();
+        if (lastPromptMs != 0 && (now - lastPromptMs) < PROMPT_RATE_LIMIT_MS) {
+            request->send(429, "application/json", "{\"error\":\"Rate limited, try again shortly\"}");
+            return;
+        }
+        lastPromptMs = now;
+    }
+
     // Body size validation
     if (index == 0) {
         if (total > MAX_REQUEST_BODY_SIZE) {

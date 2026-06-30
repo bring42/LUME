@@ -40,7 +40,9 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
         }
     }
     
-    configBodyBuffer += String((char*)data).substring(0, len);
+    // Length-aware: the chunk isn't NUL-terminated, so String((char*)data) would
+    // strlen past `len` into adjacent memory (P0.9 over-read).
+    configBodyBuffer += String((char*)data, len);
     
     if (index + len >= total) {
         // Body complete, process
