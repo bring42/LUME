@@ -16,6 +16,19 @@ extern unsigned long lastWifiAttempt;
 #define AP_SSID "LUME-Setup"
 #define AP_PASSWORD "ledcontrol"
 
+// Run each time WiFi comes up (initial connect or reconnect): start OTA/mDNS
+// and (re)configure protocols that need the network. setupOTA() is idempotent,
+// so calling this again on reconnect won't re-register mDNS services.
+static void onWifiConnected() {
+    LOG_INFO(LogTag::WIFI, "Connected! IP: %s", WiFi.localIP().toString().c_str());
+    setupOTA();
+    if (config.sacnEnabled) {
+        lume::sacnProtocol.configure(config.sacnUniverse, config.sacnUniverseCount,
+                                      config.sacnUnicast, config.sacnStartChannel);
+        lume::sacnProtocol.begin();
+    }
+}
+
 void setupWiFi() {
     // Always start AP mode for initial access
     WiFi.mode(WIFI_AP_STA);
@@ -41,7 +54,7 @@ void setupWiFi() {
         
         if (WiFi.status() == WL_CONNECTED) {
             wifiConnected = true;
-            LOG_INFO(LogTag::WIFI, "Connected! IP: %s", WiFi.localIP().toString().c_str());
+            onWifiConnected();
         } else {
             LOG_WARN(LogTag::WIFI, "Connection failed, AP mode active");
         }
@@ -63,22 +76,17 @@ void handleWifiMaintenance() {
         }
     }
     
-    // Check WiFi status change
-    static bool lastWifiState = false;
+    // Check WiFi status change. Seed from the state already established during
+    // setupWiFi(), so the first loop iteration doesn't see a phantom transition
+    // and re-run the post-connect setup (which caused duplicate mDNS/OTA init).
+    static bool lastWifiState = wifiConnected;
     bool currentWifiState = (WiFi.status() == WL_CONNECTED);
     if (currentWifiState != lastWifiState) {
         lastWifiState = currentWifiState;
         wifiConnected = currentWifiState;
         if (currentWifiState) {
-            LOG_INFO(LogTag::WIFI, "Connected! IP: %s", WiFi.localIP().toString().c_str());
-            // Setup OTA when WiFi connects
-            setupOTA();
-            // Start sACN protocol if enabled
-            if (config.sacnEnabled) {
-                lume::sacnProtocol.configure(config.sacnUniverse, config.sacnUniverseCount,
-                                              config.sacnUnicast, config.sacnStartChannel);
-                lume::sacnProtocol.begin();
-            }
+            // WiFi came back after a drop: restart OTA/protocols.
+            onWifiConnected();
             // MQTT will auto-reconnect in its update() cycle
         } else {
             LOG_WARN(LogTag::WIFI, "WiFi disconnected");

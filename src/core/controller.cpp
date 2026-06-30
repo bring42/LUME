@@ -3,6 +3,7 @@
  */
 
 #include "controller.h"
+#include "param_codec.h"
 #include "../protocols/protocol.h"
 #include "../logging.h"
 
@@ -30,8 +31,11 @@ LumeController::LumeController()
     , lastFrameTime(0)
     , actualFps(0)
     , fpsUpdateTime(0)
-    , fpsFrameCount(0) {
-    
+    , fpsFrameCount(0)
+    , segmentsDirty_(false)
+    , suppressDirty_(false)
+    , lastSegmentChange_(0) {
+
     memset(leds, 0, sizeof(leds));
     memset(protocols_, 0, sizeof(protocols_));
 }
@@ -131,10 +135,13 @@ void LumeController::update() {
         return;
     }
     
-    // Clear LED array before rendering segments
-    // (Alternative: only clear if segments don't cover everything)
-    FastLED.clear();
-    
+    // Clear only the LEDs not owned by an active segment. Effects own their
+    // canvas (fill or fade) and many build fade-trails by reading the previous
+    // frame (confetti, sinelon, wave, comet...). A blanket FastLED.clear() here
+    // would wipe that history every frame; clearing only gaps keeps it intact
+    // while still blacking out uncovered pixels (gaps, removed segments).
+    clearUncoveredLeds();
+
     // Update all active segments
     for (uint8_t i = 0; i < segmentCount; i++) {
         if (segments[i].isActive()) {
@@ -234,10 +241,13 @@ void LumeController::executeCommand(const Command& cmd) {
         case CommandType::ApplyEffectSpec:
         case CommandType::SaveScene:
         case CommandType::LoadScene:
-            // TODO: Implement in later phase
+            // Not yet implemented — scene presets are on the roadmap (see README).
             LOG_WARN(LogTag::LED, "Command type %d not yet implemented", static_cast<int>(cmd.type));
             break;
     }
+
+    // A processed command may have changed the layout or params; schedule a save.
+    markSegmentsDirty();
 }
 
 void LumeController::show() {
@@ -281,7 +291,8 @@ Segment* LumeController::createSegment(uint16_t start, uint16_t length, bool rev
     seg->setRange(leds, start, actualLength, reversed);
     seg->id = newId;
     segmentCount++;
-    
+
+    markSegmentsDirty();
     return seg;
 }
 
@@ -305,6 +316,7 @@ bool LumeController::removeSegment(uint8_t id) {
             
             // Clear the removed slot
             segments[segmentCount] = Segment();
+            markSegmentsDirty();
             return true;
         }
     }
@@ -316,6 +328,7 @@ void LumeController::clearSegments() {
         segments[i] = Segment();
     }
     segmentCount = 0;
+    markSegmentsDirty();
 }
 
 uint8_t LumeController::getSegmentCount() const {
@@ -327,26 +340,112 @@ Segment* LumeController::createFullStrip() {
     return createSegment(0, ledCount, false);
 }
 
+void LumeController::markSegmentsDirty() {
+    if (suppressDirty_) return;
+    segmentsDirty_ = true;
+    lastSegmentChange_ = millis();
+}
+
+bool LumeController::takeSegmentSaveDue() {
+    if (!segmentsDirty_) return false;
+    if (millis() - lastSegmentChange_ < SEGMENT_SAVE_DEBOUNCE_MS) return false;
+    segmentsDirty_ = false;
+    return true;
+}
+
+void LumeController::serializeSegments(JsonDocument& doc) const {
+    doc["v"] = 1;
+    doc["ledCount"] = ledCount;
+    doc["power"] = power;
+    doc["brightness"] = globalBrightness;
+
+    JsonArray segs = doc["segments"].to<JsonArray>();
+    for (uint8_t i = 0; i < segmentCount; i++) {
+        const Segment& seg = segments[i];
+        if (!seg.isActive()) continue;
+
+        JsonObject o = segs.add<JsonObject>();
+        o["start"]      = seg.getStart();
+        o["length"]     = seg.getLength();
+        o["reverse"]    = seg.isReversed();
+        o["brightness"] = seg.getBrightness();
+        o["effect"]     = seg.getEffectId();
+
+        const EffectInfo* info = seg.getEffect();
+        if (info && info->hasSchema()) {
+            JsonObject params = o["params"].to<JsonObject>();
+            paramsToJson(params, *info->schema, seg.getParamValues());
+        }
+    }
+}
+
+bool LumeController::restoreSegments(const JsonDocument& doc) {
+    JsonArrayConst segs = doc["segments"].as<JsonArrayConst>();
+    if (segs.isNull() || segs.size() == 0) {
+        return false;
+    }
+
+    suppressDirty_ = true;  // don't let the rebuild schedule a redundant save
+    clearSegments();
+
+    if (doc["power"].is<bool>())     setPower(doc["power"].as<bool>());
+    if (doc["brightness"].is<int>()) setBrightness(doc["brightness"].as<uint8_t>());
+
+    uint8_t restored = 0;
+    for (JsonObjectConst s : segs) {
+        uint16_t start  = s["start"].as<uint16_t>();
+        uint16_t length = s["length"].as<uint16_t>();
+        bool reverse    = s["reverse"].is<bool>() ? s["reverse"].as<bool>() : false;
+
+        Segment* seg = createSegment(start, length, reverse);
+        if (!seg) continue;
+
+        if (s["effect"].is<const char*>()) {
+            seg->setEffect(s["effect"].as<const char*>());
+        }
+        if (s["brightness"].is<int>()) {
+            seg->setBrightness(s["brightness"].as<uint8_t>());
+        }
+
+        if (s["params"].is<JsonObjectConst>()) {
+            const EffectInfo* info = seg->getEffect();
+            if (info && info->hasSchema()) {
+                paramsFromJson(seg->getParamValues(), *info->schema,
+                               s["params"].as<JsonObjectConst>());
+            }
+        }
+        restored++;
+    }
+
+    suppressDirty_ = false;
+    return restored > 0;
+}
+
 void LumeController::blendSegment(Segment& seg) {
-    // For overlapping segments with non-Replace blend modes
-    // This would need a secondary buffer to work properly
-    // For now, we just support Replace mode (direct write)
-    
-    // TODO: Implement proper blending with secondary buffer if needed
-    // BlendMode mode = seg.getBlendMode();
-    // switch (mode) {
-    //     case BlendMode::Add:
-    //         // Additive blending
-    //         break;
-    //     case BlendMode::Average:
-    //         // 50/50 blend
-    //         break;
-    //     case BlendMode::Max:
-    //         // Take maximum
-    //         break;
-    //     default:
-    //         break;
-    // }
+    (void)seg;
+    // Not yet implemented. Effects render directly into leds[], so by the time
+    // this runs the segment's pixels are already written — true Add/Average/Max
+    // blending of overlapping segments needs a separate per-segment render buffer
+    // to composite from. Until then, overlap is last-writer-wins (Replace).
+    // See docs/ARCHITECTURE.md, Invariant 1.
+}
+
+void LumeController::clearUncoveredLeds() {
+    for (uint16_t i = 0; i < ledCount; i++) {
+        bool covered = false;
+        for (uint8_t s = 0; s < segmentCount; s++) {
+            const Segment& seg = segments[s];
+            if (!seg.isActive()) continue;
+            uint16_t start = seg.getStart();
+            if (i >= start && i < start + seg.getLength()) {
+                covered = true;
+                break;
+            }
+        }
+        if (!covered) {
+            leds[i] = CRGB::Black;
+        }
+    }
 }
 
 // --- Protocol management ---

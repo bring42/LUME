@@ -20,7 +20,7 @@ class LumeController;
  * - Effect parameters (colors, speed, palette)
  * - Fixed-size scratchpad for stateful effects
  * 
- * Scratchpad design (see ARCHITECTURE.md Invariant 3):
+ * Scratchpad design (see docs/ARCHITECTURE.md, Invariant 3):
  * - 512 bytes per segment for effect state
  * - Cleared automatically when effect changes
  * - Effects use getScratchpad<T>() to access typed state
@@ -163,16 +163,18 @@ public:
     
     // --- Scratchpad access for stateful effects ---
     
-    // Get typed scratchpad pointer (compile-time size check)
+    // Get typed scratchpad pointer (compile-time size + alignment check)
     template<typename T>
     T* getScratchpad() {
         static_assert(sizeof(T) <= SCRATCHPAD_SIZE, "State type exceeds scratchpad size");
+        static_assert(alignof(T) <= SCRATCHPAD_ALIGN, "State type needs stronger alignment than the scratchpad guarantees");
         return reinterpret_cast<T*>(scratchpad);
     }
-    
+
     template<typename T>
     const T* getScratchpad() const {
         static_assert(sizeof(T) <= SCRATCHPAD_SIZE, "State type exceeds scratchpad size");
+        static_assert(alignof(T) <= SCRATCHPAD_ALIGN, "State type needs stronger alignment than the scratchpad guarantees");
         return reinterpret_cast<const T*>(scratchpad);
     }
     
@@ -217,8 +219,12 @@ private:
     bool active;
     uint8_t id;
     
-    // Scratchpad for stateful effects (see ARCHITECTURE.md Invariant 3)
-    uint8_t scratchpad[SCRATCHPAD_SIZE];
+    // Scratchpad for stateful effects (see docs/ARCHITECTURE.md, Invariant 3).
+    // alignas guarantees the buffer is suitably aligned for any effect state
+    // struct, since effects reinterpret_cast it to types containing uint32_t
+    // fields. Without this the alignment would depend on incidental struct
+    // layout, and an unaligned word access would fault on Xtensa/RISC-V.
+    alignas(SCRATCHPAD_ALIGN) uint8_t scratchpad[SCRATCHPAD_SIZE];
     uint8_t scratchpadVersion;   // Incremented when effect changes
     uint8_t lastSeenVersion;     // Tracks when effect last saw reset
 };

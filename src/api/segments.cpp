@@ -348,6 +348,7 @@ void handleApiV2SegmentCreate(AsyncWebServerRequest* request, uint8_t* data, siz
         serializeJson(responseDoc, output);
         request->send(201, "application/json", output);
         
+        lume::controller.markSegmentsDirty();
         LOG_INFO(LogTag::LED, "Created segment %d: start=%d length=%d", segmentId, start, length);
     }
 }
@@ -484,6 +485,7 @@ void handleApiV2SegmentUpdate(AsyncWebServerRequest* request, uint8_t* data, siz
         serializeJson(responseDoc, output);
         request->send(200, "application/json", output);
         
+        lume::controller.markSegmentsDirty();
         LOG_INFO(LogTag::LED, "Updated segment %d", id);
     }
 }

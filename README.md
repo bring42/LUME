@@ -69,16 +69,16 @@ cd LUME
 
 ### Step 2: Configure for Your Board
 
-**If you have a generic ESP32-S3 or ESP32-C3 DevKit board:** Check the default in `platformio.ini` and change if needed. Currently set to ESP32-C3.
+**If you have a generic ESP32-S3 or ESP32-C3 DevKit board:** Check the default in `platformio.ini` and change if needed. Currently set to the generic ESP32-S3 (`esp32-s3-devkitc-1`).
 
 **If you have a different board:** Edit these files:
 
 #### `platformio.ini` — Set your environment
 
-The default is currently set to `esp32-c3-devkitm-1`. Available configurations:
-- `esp32-c3-devkitm-1` — ESP32-C3 DevKit (untested on hardware)
-- `esp32-s3-devkitc-1` — Generic ESP32-S3 DevKit (untested on hardware)
+The default is `esp32-s3-devkitc-1`. Available configurations:
+- `esp32-s3-devkitc-1` — Generic ESP32-S3 DevKit (default, untested on hardware)
 - `lilygo-t-display-s3` — LILYGO T-Display S3 (tested ✅)
+- `esp32-c3-devkitm-1` — ESP32-C3 DevKit (untested on hardware)
 
 **To change board:**
 ```ini

@@ -5,6 +5,20 @@
 
 namespace lume {
 
+// --- Scratchpad sizing (per segment) ---
+// SCRATCHPAD_SIZE  : max bytes an effect may stash in its segment scratchpad.
+//   Must hold the largest effect state struct; the static_assert in
+//   getScratchpad enforces this per effect at compile time. Currently the
+//   ceiling is fire's FireState (heat[600]). At MAX_SEGMENTS=8 the total cost
+//   is 8 * SCRATCHPAD_SIZE bytes of RAM.
+// SCRATCHPAD_ALIGN : alignment guaranteed for the raw buffer. Effects
+//   reinterpret_cast the buffer to their own state struct, so this must be at
+//   least as strict as the alignment of any field those structs contain
+//   (uint32_t/uint64_t). Defined here, the lowest-level header, so getScratchpad
+//   can enforce it at compile time.
+constexpr size_t SCRATCHPAD_SIZE  = 640;
+constexpr size_t SCRATCHPAD_ALIGN = 8;
+
 /**
  * SegmentView - A non-owning view into a CRGB array
  * 
@@ -136,14 +150,27 @@ struct SegmentView {
     
     // --- Scratchpad access for stateful effects ---
     
-    // Get typed scratchpad pointer (compile-time size check)
+    // Get typed scratchpad pointer.
+    // Guards (caught at compile time, for every effect that calls this):
+    //  - state must fit in the buffer
+    //  - state must not need stronger alignment than the buffer guarantees,
+    //    otherwise the reinterpret_cast below yields unaligned word access and
+    //    faults on Xtensa/RISC-V at runtime.
     template<typename T>
     T* getScratchpad() {
+        static_assert(sizeof(T) <= SCRATCHPAD_SIZE,
+                      "Effect state exceeds scratchpad size (SCRATCHPAD_SIZE)");
+        static_assert(alignof(T) <= SCRATCHPAD_ALIGN,
+                      "Effect state needs stronger alignment than the scratchpad guarantees");
         return reinterpret_cast<T*>(scratchpad);
     }
-    
+
     template<typename T>
     const T* getScratchpad() const {
+        static_assert(sizeof(T) <= SCRATCHPAD_SIZE,
+                      "Effect state exceeds scratchpad size (SCRATCHPAD_SIZE)");
+        static_assert(alignof(T) <= SCRATCHPAD_ALIGN,
+                      "Effect state needs stronger alignment than the scratchpad guarantees");
         return reinterpret_cast<const T*>(scratchpad);
     }
 };

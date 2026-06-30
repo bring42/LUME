@@ -1,7 +1,8 @@
 /**
  * Fire Up effect - Fire flames rising upward (inverted fire)
- * 
- * TODO: Migrate static heat array to scratchpad for multi-segment support
+ *
+ * Heat array lives in the per-segment scratchpad (FireUpState), so each
+ * segment burns independently.
  */
 
 #include "../../core/effect_registry.h"
