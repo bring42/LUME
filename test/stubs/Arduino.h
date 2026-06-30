@@ -14,8 +14,14 @@
 using std::min;
 using std::max;
 
-// Monotonic-ish clock. Tests don't depend on real time; a fixed value is fine.
-inline uint32_t millis() { return 0; }
+// Monotonic clock that advances on each read, so a single LumeController::update()
+// always clears its frame-rate gate and drains the command queue in tests. The
+// step is far larger than any frame interval; tests don't assert on time.
+inline uint32_t millis() {
+    static uint32_t t = 0;
+    t += 1000;
+    return t;
+}
 
 // Serial: swallow everything. Logging routes here.
 struct SerialStub {

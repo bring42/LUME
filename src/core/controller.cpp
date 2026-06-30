@@ -233,7 +233,28 @@ void LumeController::executeCommand(const Command& cmd) {
             setBrightness(cmd.data.value8);
             break;
             
-        case CommandType::ApplyEffectSpec:
+        case CommandType::ApplyEffectSpec: {
+            // Compound segment mutation (create/update) — the single-writer path
+            // that replaces direct handler mutation (RFC 0001 §3).
+            const EffectSpec& spec = cmd.data.spec;
+            Segment* target = seg;
+            if (spec.create) {
+                target = createSegment(spec.start, spec.length, spec.reversed);
+                if (!target) {
+                    LOG_WARN(LogTag::LED, "ApplyEffectSpec: create failed (start=%d len=%d)",
+                             spec.start, spec.length);
+                    break;
+                }
+            }
+            if (!target) break;  // update targeting an unknown segment
+
+            if (spec.hasEffect)     target->setEffect(spec.effectId);
+            if (spec.hasParams)     target->getParamValues().setSlots(spec.slots);
+            if (spec.hasPalette)    target->setPalette(static_cast<PalettePreset>(spec.palette));
+            if (spec.hasBrightness) target->setBrightness(spec.brightness);
+            break;
+        }
+
         case CommandType::SaveScene:
         case CommandType::LoadScene:
             // Not yet implemented — scene presets are on the roadmap (see README).

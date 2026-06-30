@@ -5,9 +5,14 @@
 #include <FastLED.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include "param_schema.h"   // ParamValues::Slot / MAX_EFFECT_PARAMS for EffectSpec
 #include "../logging.h"
 
 namespace lume {
+
+// Max bytes (incl. NUL) for an effect id copied into a queued command. Effect
+// ids are short machine names ("rainbow", "fire"); 24 is comfortable headroom.
+constexpr uint8_t MAX_EFFECT_ID_LEN = 24;
 
 /**
  * Command types for the single-writer command queue
@@ -60,33 +65,72 @@ struct SegmentData {
 };
 
 /**
+ * EffectSpec - a bounded, self-contained "make this segment look like X".
+ *
+ * This is the payload that lets handlers stop mutating segments directly
+ * (RFC 0001 §3): a single compound change — optional create + effect + params +
+ * palette + brightness — carried inline with NO borrowed pointers (effectId is
+ * copied; params are pre-resolved to typed slots against the effect's static
+ * schema on the producer's task). The render loop applies it as pure data.
+ */
+// Trivial aggregate (no in-class initializers) so it stays usable as a union
+// member — producers zero-init with `EffectSpec spec = {};` then set fields.
+struct EffectSpec {
+    // Geometry — only used when `create` is true (segmentId is then 255).
+    bool     create;
+    uint16_t start;
+    uint16_t length;
+    bool     reversed;
+
+    // Effect change (effectId already validated against the registry).
+    bool     hasEffect;
+    char     effectId[MAX_EFFECT_ID_LEN];
+
+    // Param values — slot-indexed (defaults+overrides), resolved by the producer
+    // against the effect schema; applied verbatim after the effect is set.
+    bool                hasParams;
+    ParamValues::Slot   slots[MAX_EFFECT_PARAMS];
+
+    // Palette preset (PalettePreset enum value).
+    bool     hasPalette;
+    uint8_t  palette;
+
+    // Per-segment brightness.
+    bool     hasBrightness;
+    uint8_t  brightness;
+};
+
+/**
  * Command - Discriminated union for state mutations
- * 
+ *
  * Fixed-size to work with FreeRTOS queue.
  * Union holds command-specific data.
  */
 struct Command {
     CommandType type;
     uint8_t segmentId;      // Target segment (255 = all/global)
-    
+
     union {
         // SetEffect
         const char* effectId;
-        
+
         // SetBrightness, SetSpeed, SetIntensity, SetPalette
         uint8_t value8;
-        
+
         // SetColor
         ColorData color;
-        
+
         // CreateSegment
         SegmentData segment;
-        
+
         // SetPower
         bool power;
-        
+
         // Generic 32-bit value
         uint32_t value32;
+
+        // ApplyEffectSpec — the compound segment mutation (create/update)
+        EffectSpec spec;
     } data;
     
     // Constructors for common commands
@@ -166,6 +210,16 @@ struct Command {
         Command cmd;
         cmd.type = CommandType::RemoveSegment;
         cmd.segmentId = segId;
+        return cmd;
+    }
+
+    // Compound segment mutation (create or update). segId == 255 with
+    // spec.create == true creates a new segment; otherwise segId targets one.
+    static Command applyEffectSpec(uint8_t segId, const EffectSpec& spec) {
+        Command cmd;
+        cmd.type = CommandType::ApplyEffectSpec;
+        cmd.segmentId = segId;
+        cmd.data.spec = spec;
         return cmd;
     }
 };

@@ -135,6 +135,12 @@ struct ParamValues {
     void setBool(uint8_t slot, bool v) { slots[slot].boolVal = v; }
     void setEnum(uint8_t slot, uint8_t v) { slots[slot].enumVal = v; }
     void setPalette(const CRGBPalette16& p) { palette = p; }
+
+    // Replace all slot values (leaves the palette untouched). Used to apply a
+    // pre-resolved EffectSpec from the command bus.
+    void setSlots(const Slot src[MAX_EFFECT_PARAMS]) {
+        for (uint8_t i = 0; i < MAX_EFFECT_PARAMS; i++) slots[i] = src[i];
+    }
     
     // Initialize from schema defaults
     void applyDefaults(const ParamSchema& schema) {
