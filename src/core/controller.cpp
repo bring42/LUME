@@ -62,20 +62,6 @@ void LumeController::begin(uint16_t count) {
     fpsUpdateTime = millis();
 }
 
-void LumeController::setLedCount(uint16_t count) {
-    ledCount = min(count, (uint16_t)MAX_LED_COUNT);
-    
-    // Clear any LEDs beyond new count
-    for (uint16_t i = ledCount; i < MAX_LED_COUNT; i++) {
-        leds[i] = CRGB::Black;
-    }
-    
-    // Invalidate segments that extend beyond new count
-    for (uint8_t i = 0; i < segmentCount; i++) {
-        // Segments would need to be reconfigured by user
-    }
-}
-
 void LumeController::update() {
     // Frame rate limiting
     uint32_t now = millis();
