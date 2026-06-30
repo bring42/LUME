@@ -30,8 +30,11 @@ LumeController::LumeController()
     , lastFrameTime(0)
     , actualFps(0)
     , fpsUpdateTime(0)
-    , fpsFrameCount(0) {
-    
+    , fpsFrameCount(0)
+    , segmentsDirty_(false)
+    , suppressDirty_(false)
+    , lastSegmentChange_(0) {
+
     memset(leds, 0, sizeof(leds));
     memset(protocols_, 0, sizeof(protocols_));
 }
@@ -241,6 +244,9 @@ void LumeController::executeCommand(const Command& cmd) {
             LOG_WARN(LogTag::LED, "Command type %d not yet implemented", static_cast<int>(cmd.type));
             break;
     }
+
+    // A processed command may have changed the layout or params; schedule a save.
+    markSegmentsDirty();
 }
 
 void LumeController::show() {
@@ -284,7 +290,8 @@ Segment* LumeController::createSegment(uint16_t start, uint16_t length, bool rev
     seg->setRange(leds, start, actualLength, reversed);
     seg->id = newId;
     segmentCount++;
-    
+
+    markSegmentsDirty();
     return seg;
 }
 
@@ -308,6 +315,7 @@ bool LumeController::removeSegment(uint8_t id) {
             
             // Clear the removed slot
             segments[segmentCount] = Segment();
+            markSegmentsDirty();
             return true;
         }
     }
@@ -319,6 +327,7 @@ void LumeController::clearSegments() {
         segments[i] = Segment();
     }
     segmentCount = 0;
+    markSegmentsDirty();
 }
 
 uint8_t LumeController::getSegmentCount() const {
@@ -328,6 +337,124 @@ uint8_t LumeController::getSegmentCount() const {
 Segment* LumeController::createFullStrip() {
     clearSegments();
     return createSegment(0, ledCount, false);
+}
+
+void LumeController::markSegmentsDirty() {
+    if (suppressDirty_) return;
+    segmentsDirty_ = true;
+    lastSegmentChange_ = millis();
+}
+
+bool LumeController::takeSegmentSaveDue() {
+    if (!segmentsDirty_) return false;
+    if (millis() - lastSegmentChange_ < SEGMENT_SAVE_DEBOUNCE_MS) return false;
+    segmentsDirty_ = false;
+    return true;
+}
+
+void LumeController::serializeSegments(JsonDocument& doc) const {
+    doc["v"] = 1;
+    doc["ledCount"] = ledCount;
+    doc["power"] = power;
+    doc["brightness"] = globalBrightness;
+
+    JsonArray segs = doc["segments"].to<JsonArray>();
+    for (uint8_t i = 0; i < segmentCount; i++) {
+        const Segment& seg = segments[i];
+        if (!seg.isActive()) continue;
+
+        JsonObject o = segs.add<JsonObject>();
+        o["start"]      = seg.getStart();
+        o["length"]     = seg.getLength();
+        o["reverse"]    = seg.isReversed();
+        o["brightness"] = seg.getBrightness();
+        o["effect"]     = seg.getEffectId();
+
+        const EffectInfo* info = seg.getEffect();
+        if (info && info->hasSchema()) {
+            const ParamSchema* schema = info->schema;
+            const ParamValues& pv = seg.getParamValues();
+            JsonObject params = o["params"].to<JsonObject>();
+            for (uint8_t k = 0; k < schema->count && k < MAX_EFFECT_PARAMS; k++) {
+                const ParamDesc& d = schema->params[k];
+                switch (d.type) {
+                    case ParamType::Int:   params[d.id] = pv.getInt(k);   break;
+                    case ParamType::Float: params[d.id] = pv.getFloat(k); break;
+                    case ParamType::Bool:  params[d.id] = pv.getBool(k);  break;
+                    case ParamType::Enum:  params[d.id] = pv.getEnum(k);  break;
+                    case ParamType::Color: {
+                        CRGB c = pv.getColor(k);
+                        char hex[8];
+                        snprintf(hex, sizeof(hex), "#%02x%02x%02x", c.r, c.g, c.b);
+                        params[d.id] = hex;
+                        break;
+                    }
+                    case ParamType::Palette: break;  // not round-tripped yet
+                }
+            }
+        }
+    }
+}
+
+bool LumeController::restoreSegments(const JsonDocument& doc) {
+    JsonArrayConst segs = doc["segments"].as<JsonArrayConst>();
+    if (segs.isNull() || segs.size() == 0) {
+        return false;
+    }
+
+    suppressDirty_ = true;  // don't let the rebuild schedule a redundant save
+    clearSegments();
+
+    if (doc["power"].is<bool>())     setPower(doc["power"].as<bool>());
+    if (doc["brightness"].is<int>()) setBrightness(doc["brightness"].as<uint8_t>());
+
+    uint8_t restored = 0;
+    for (JsonObjectConst s : segs) {
+        uint16_t start  = s["start"].as<uint16_t>();
+        uint16_t length = s["length"].as<uint16_t>();
+        bool reverse    = s["reverse"].is<bool>() ? s["reverse"].as<bool>() : false;
+
+        Segment* seg = createSegment(start, length, reverse);
+        if (!seg) continue;
+
+        if (s["effect"].is<const char*>()) {
+            seg->setEffect(s["effect"].as<const char*>());
+        }
+        if (s["brightness"].is<int>()) {
+            seg->setBrightness(s["brightness"].as<uint8_t>());
+        }
+
+        if (s["params"].is<JsonObjectConst>()) {
+            const EffectInfo* info = seg->getEffect();
+            if (info && info->hasSchema()) {
+                const ParamSchema* schema = info->schema;
+                ParamValues& pv = seg->getParamValues();
+                for (JsonPairConst kv : s["params"].as<JsonObjectConst>()) {
+                    int8_t idx = schema->indexOf(kv.key().c_str());
+                    if (idx < 0 || idx >= MAX_EFFECT_PARAMS) continue;
+                    switch (schema->params[idx].type) {
+                        case ParamType::Int:   if (kv.value().is<int>())   pv.setInt(idx, kv.value().as<uint8_t>());  break;
+                        case ParamType::Float: if (kv.value().is<float>()) pv.setFloat(idx, kv.value().as<float>());  break;
+                        case ParamType::Bool:  if (kv.value().is<bool>())  pv.setBool(idx, kv.value().as<bool>());    break;
+                        case ParamType::Enum:  if (kv.value().is<int>())   pv.setEnum(idx, kv.value().as<uint8_t>()); break;
+                        case ParamType::Color: {
+                            const char* hex = kv.value().as<const char*>();
+                            if (hex && hex[0] == '#' && strlen(hex) == 7) {
+                                uint32_t rgb = strtol(hex + 1, nullptr, 16);
+                                pv.setColor(idx, CRGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF));
+                            }
+                            break;
+                        }
+                        case ParamType::Palette: break;
+                    }
+                }
+            }
+        }
+        restored++;
+    }
+
+    suppressDirty_ = false;
+    return restored > 0;
 }
 
 void LumeController::blendSegment(Segment& seg) {

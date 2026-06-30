@@ -185,17 +185,25 @@ void setup() {
         lume::mqtt.begin(mqttConfig, &lume::controller);
     }
     
-    // Create full-strip segment and set default effect
-    lume::Segment* mainSegment = lume::controller.createFullStrip();
-    if (mainSegment) {
-        // Try to load the last effect, or use rainbow as default
-        String lastEffect;
-        if (storage.loadLastEffect(lastEffect) && lastEffect.length() > 0) {
-            mainSegment->setEffect(lastEffect.c_str());
-            LOG_INFO(LogTag::LED, "Restored last effect: %s", lastEffect.c_str());
+    // Restore the saved segment layout, or fall back to a single full-strip
+    // segment with the last-used effect.
+    {
+        JsonDocument savedState;
+        if (storage.loadLedState(savedState) && lume::controller.restoreSegments(savedState)) {
+            LOG_INFO(LogTag::LED, "Restored %d segment(s) from storage",
+                     lume::controller.getSegmentCount());
         } else {
-            mainSegment->setEffect("rainbow");
-            LOG_INFO(LogTag::LED, "No saved effect, using default: rainbow");
+            lume::Segment* mainSegment = lume::controller.createFullStrip();
+            if (mainSegment) {
+                String lastEffect;
+                if (storage.loadLastEffect(lastEffect) && lastEffect.length() > 0) {
+                    mainSegment->setEffect(lastEffect.c_str());
+                    LOG_INFO(LogTag::LED, "Restored last effect: %s", lastEffect.c_str());
+                } else {
+                    mainSegment->setEffect("rainbow");
+                    LOG_INFO(LogTag::LED, "No saved effect, using default: rainbow");
+                }
+            }
         }
     }
     
@@ -230,7 +238,15 @@ void loop() {
     
     // WiFi maintenance (reconnection, status monitoring)
     handleWifiMaintenance();
-    
+
+    // Persist the segment layout shortly after changes settle (debounced).
+    if (lume::controller.takeSegmentSaveDue()) {
+        JsonDocument stateDoc;
+        lume::controller.serializeSegments(stateDoc);
+        storage.saveLedState(stateDoc);
+        LOG_DEBUG(LogTag::STORAGE, "Segment layout persisted");
+    }
+
     // Reset watchdog - proves loop is still running
     esp_task_wdt_reset();
     

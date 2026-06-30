@@ -3,6 +3,7 @@
 
 #include <FastLED.h>
 #include <atomic>
+#include <ArduinoJson.h>
 #include "segment.h"
 #include "command_queue.h"
 #include "../constants.h"
@@ -135,7 +136,23 @@ public:
     bool enqueueCommand(const Command& cmd) {
         return commandQueue.enqueue(cmd);
     }
-    
+
+    // --- Segment-layout persistence ---
+
+    // Serialize the current segment layout (+ power/brightness) to JSON.
+    void serializeSegments(JsonDocument& doc) const;
+
+    // Rebuild segments from a previously serialized layout. Returns true if at
+    // least one segment was restored (false => caller falls back to default).
+    bool restoreSegments(const JsonDocument& doc);
+
+    // Flag the layout as changed; a debounced save then becomes due.
+    void markSegmentsDirty();
+
+    // Returns true once when a save is due (dirty + debounce elapsed), clearing
+    // the flag. Call from loop() and persist the layout when it returns true.
+    bool takeSegmentSaveDue();
+
 private:
     // Process pending commands (called at start of each frame)
     void processCommands();
@@ -184,7 +201,13 @@ private:
     uint16_t actualFps;
     uint32_t fpsUpdateTime;
     uint16_t fpsFrameCount;
-    
+
+    // Segment-layout persistence (debounced autosave)
+    bool segmentsDirty_;
+    bool suppressDirty_;          // set while restoring, so restore doesn't re-save
+    uint32_t lastSegmentChange_;
+    static constexpr uint32_t SEGMENT_SAVE_DEBOUNCE_MS = 2000;
+
     // Internal helpers
     void blendSegment(Segment& seg);
 
