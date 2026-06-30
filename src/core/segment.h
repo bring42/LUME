@@ -121,16 +121,20 @@ public:
         }
     }
     
+    // Set the colorIdx-th color parameter (in schema order). Previously this
+    // ignored colorIdx and always wrote the first color param, so multi-color
+    // effects collapsed to a single slot (P0.6). Out-of-range colorIdx is a no-op.
     void setColor(uint8_t colorIdx, CRGB color) {
-        if (effect && effect->hasSchema()) {
-            // Try common color param names
-            const char* names[] = {"color", "colorStart", "colorHead", "colorEnd", "colorTail"};
-            for (const char* name : names) {
-                int8_t idx = effect->schema->indexOf(name);
-                if (idx >= 0) {
-                    paramValues.setColor(idx, color);
+        if (!effect || !effect->hasSchema()) return;
+        const ParamSchema* schema = effect->schema;
+        uint8_t seen = 0;
+        for (uint8_t i = 0; i < schema->count && i < MAX_EFFECT_PARAMS; i++) {
+            if (schema->params[i].type == ParamType::Color) {
+                if (seen == colorIdx) {
+                    paramValues.setColor(i, color);
                     return;
                 }
+                seen++;
             }
         }
     }
