@@ -186,6 +186,32 @@ void test_setcolor_maps_index_to_ordered_color_slot() {
     TEST_ASSERT_EQUAL_UINT8(0x66, end.b);
 }
 
+// After deleting a middle segment, IDs go non-contiguous ({0,2}); enumerating by
+// index must still find every survivor, where the old by-id loop dropped id 2 (P0.5).
+void test_enumeration_survives_middle_delete() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::applyEffectSpec(255, makeCreateSpec(0,  10, 100)));  // id 0
+    c.enqueueCommand(Command::applyEffectSpec(255, makeCreateSpec(10, 10, 100)));  // id 1
+    c.enqueueCommand(Command::applyEffectSpec(255, makeCreateSpec(20, 10, 100)));  // id 2
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(3, c.getSegmentCount());
+
+    c.enqueueCommand(Command::removeSegment(1));  // delete the middle one
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(2, c.getSegmentCount());
+
+    TEST_ASSERT_NULL(c.getSegment(1));            // by-id lookup of the gone id
+
+    Segment* s0 = c.getSegmentByIndex(0);
+    Segment* s1 = c.getSegmentByIndex(1);
+    TEST_ASSERT_NOT_NULL(s0);
+    TEST_ASSERT_NOT_NULL(s1);
+    TEST_ASSERT_EQUAL_UINT8(0, s0->getId());
+    TEST_ASSERT_EQUAL_UINT8(2, s1->getId());      // survivor a by-id loop would drop
+    TEST_ASSERT_NULL(c.getSegmentByIndex(2));     // out of range
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_create_is_deferred_then_applied);
@@ -195,5 +221,6 @@ int main(int, char**) {
     RUN_TEST(test_nightlight_start_stop_via_bus);
     RUN_TEST(test_ai_semantic_params_via_bus);
     RUN_TEST(test_setcolor_maps_index_to_ordered_color_slot);
+    RUN_TEST(test_enumeration_survives_middle_delete);
     return UNITY_END();
 }

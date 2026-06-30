@@ -170,13 +170,15 @@ void handleApiV2SegmentsList(AsyncWebServerRequest* request) {
     doc["brightness"] = lume::controller.getBrightness();
     doc["ledCount"] = lume::controller.getLedCount();
     
-    // List all segments
+    // List all segments by index (not by probing the ID space) and report each
+    // segment's real id, so survivors of a middle delete aren't dropped (P0.5).
     JsonArray segments = doc["segments"].to<JsonArray>();
-    for (uint8_t i = 0; i < 8; i++) {  // Max 8 segments
-        lume::Segment* seg = lume::controller.getSegment(i);
+    uint8_t segCount = lume::controller.getSegmentCount();
+    for (uint8_t i = 0; i < segCount; i++) {
+        lume::Segment* seg = lume::controller.getSegmentByIndex(i);
         if (seg) {
             JsonObject segObj = segments.add<JsonObject>();
-            segmentToJson(segObj, seg, i);
+            segmentToJson(segObj, seg, seg->getId());
         }
     }
     

@@ -335,6 +335,11 @@ Segment* LumeController::getSegment(uint8_t id) {
     return nullptr;
 }
 
+Segment* LumeController::getSegmentByIndex(uint8_t index) {
+    if (index >= segmentCount) return nullptr;
+    return &segments[index];
+}
+
 bool LumeController::removeSegment(uint8_t id) {
     for (uint8_t i = 0; i < segmentCount; i++) {
         if (segments[i].getId() == id) {

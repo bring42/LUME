@@ -58,7 +58,12 @@ public:
     
     // Get segment by ID
     Segment* getSegment(uint8_t id);
-    
+
+    // Get the index-th active segment (0..getSegmentCount()-1). Use this to
+    // enumerate — IDs are non-contiguous after a middle delete, so looping
+    // getSegment(0..count) by ID silently drops survivors (P0.5).
+    Segment* getSegmentByIndex(uint8_t index);
+
     // Remove segment by ID
     bool removeSegment(uint8_t id);
     
