@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 
 #include "core/controller.cpp"
+#include "core/segment_serializer.h"
 
 using namespace lume;
 
@@ -252,8 +253,35 @@ void test_direct_pixels_are_deferred_then_applied() {
     TEST_ASSERT_EQUAL_UINT8(0x55, leds[5].g);
 }
 
+// P1.7: the one canonical projection — colors as #rrggbb hex (not [r,g,b]), a
+// string `effect`, and stop/brightness present. Every transport shares this.
+void test_serialize_segment_canonical_shape() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::applyEffectSpec(255, makeCreateSpec(3, 10, 128)));
+    c.update();
+    Segment* s = c.getSegment(0);
+    TEST_ASSERT_NOT_NULL(s);
+    s->getParamValues().setColor(1, CRGB(0x11, 0x22, 0x33));  // testfx slot 1 = "color"
+
+    JsonDocument doc;
+    JsonObject obj = doc.to<JsonObject>();
+    serializeSegment(obj, s);
+
+    TEST_ASSERT_EQUAL_INT(0, obj["id"].as<int>());
+    TEST_ASSERT_EQUAL_INT(3, obj["start"].as<int>());
+    TEST_ASSERT_EQUAL_INT(12, obj["stop"].as<int>());        // 3 + 10 - 1 (inclusive)
+    TEST_ASSERT_EQUAL_INT(10, obj["length"].as<int>());
+    TEST_ASSERT_EQUAL_INT(255, obj["brightness"].as<int>()); // default
+    TEST_ASSERT_EQUAL_STRING("testfx", obj["effect"].as<const char*>());  // string, not object
+    TEST_ASSERT_TRUE(obj["params"]["color"].is<const char*>());           // hex, not [r,g,b]
+    TEST_ASSERT_FALSE(obj["params"]["color"].is<JsonArrayConst>());
+    TEST_ASSERT_EQUAL_STRING("#112233", obj["params"]["color"].as<const char*>());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
+    RUN_TEST(test_serialize_segment_canonical_shape);
     RUN_TEST(test_create_is_deferred_then_applied);
     RUN_TEST(test_update_changes_params);
     RUN_TEST(test_remove_is_deferred_then_applied);

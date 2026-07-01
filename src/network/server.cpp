@@ -8,6 +8,7 @@
 #include "../protocols/mqtt.h"
 #include "../api/status.h"
 #include "../api/config.h"
+#include "../core/segment_serializer.h"   // canonical serializeSegment (P1.7)
 #include "../api/pixels.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -53,12 +54,6 @@ static String contentTypeFromPath(const String& path) {
     return "application/octet-stream";
 }
 
-static void appendColorArray(JsonArray& arr, const CRGB& color) {
-    arr.add(color.r);
-    arr.add(color.g);
-    arr.add(color.b);
-}
-
 static void buildControllerState(JsonDocument& doc) {
     doc["type"] = "state";
 
@@ -74,50 +69,8 @@ static void buildControllerState(JsonDocument& doc) {
         if (!seg) {
             continue;
         }
-
         JsonObject segObj = segmentsArr.add<JsonObject>();
-        segObj["id"] = seg->getId();
-        segObj["start"] = seg->getStart();
-        segObj["length"] = seg->getLength();
-        segObj["reverse"] = seg->isReversed();
-        segObj["effect"] = seg->getEffectId();
-
-        // Serialize schema-based params if effect has schema
-        const lume::EffectInfo* effectInfo = seg->getEffect();
-        if (effectInfo && effectInfo->hasSchema()) {
-            const lume::ParamSchema* schema = effectInfo->schema;
-            const lume::ParamValues& paramValues = seg->getParamValues();
-            
-            JsonObject paramsObj = segObj["params"].to<JsonObject>();
-            for (uint8_t i = 0; i < schema->count && i < lume::MAX_EFFECT_PARAMS; i++) {
-                const lume::ParamDesc& desc = schema->params[i];
-                
-                switch (desc.type) {
-                    case lume::ParamType::Int:
-                        paramsObj[desc.id] = paramValues.getInt(i);
-                        break;
-                    case lume::ParamType::Float:
-                        paramsObj[desc.id] = paramValues.getFloat(i);
-                        break;
-                    case lume::ParamType::Color: {
-                        CRGB c = paramValues.getColor(i);
-                        JsonArray colorArr = paramsObj[desc.id].to<JsonArray>();
-                        colorArr.add(c.r);
-                        colorArr.add(c.g);
-                        colorArr.add(c.b);
-                        break;
-                    }
-                    case lume::ParamType::Bool:
-                        paramsObj[desc.id] = paramValues.getBool(i);
-                        break;
-                    case lume::ParamType::Enum:
-                        paramsObj[desc.id] = paramValues.getEnum(i);
-                        break;
-                    case lume::ParamType::Palette:
-                        break;
-                }
-            }
-        }
+        lume::serializeSegment(segObj, seg);   // one canonical shape (P1.7)
     }
 }
 
@@ -264,42 +217,15 @@ void setupServer() {
                 effectObj["category"] = seg->getEffect()->categoryName();
             }
             
-            // Schema-based params
+            // Schema-based params (through the shared codec — the last P1.1 copy).
+            // v1 keeps its own richer envelope (effect object + capabilities), but
+            // param values are hex, identical to the canonical shape.
             const lume::EffectInfo* effectInfo = seg->getEffect();
             if (effectInfo && effectInfo->hasSchema()) {
-                const lume::ParamSchema* schema = effectInfo->schema;
-                const lume::ParamValues& paramValues = seg->getParamValues();
-                
                 JsonObject paramsObj = segObj["params"].to<JsonObject>();
-                for (uint8_t i = 0; i < schema->count && i < lume::MAX_EFFECT_PARAMS; i++) {
-                    const lume::ParamDesc& desc = schema->params[i];
-                    
-                    switch (desc.type) {
-                        case lume::ParamType::Int:
-                            paramsObj[desc.id] = paramValues.getInt(i);
-                            break;
-                        case lume::ParamType::Float:
-                            paramsObj[desc.id] = paramValues.getFloat(i);
-                            break;
-                        case lume::ParamType::Color: {
-                            CRGB c = paramValues.getColor(i);
-                            char hex[8];
-                            snprintf(hex, sizeof(hex), "#%02x%02x%02x", c.r, c.g, c.b);
-                            paramsObj[desc.id] = hex;
-                            break;
-                        }
-                        case lume::ParamType::Bool:
-                            paramsObj[desc.id] = paramValues.getBool(i);
-                            break;
-                        case lume::ParamType::Enum:
-                            paramsObj[desc.id] = paramValues.getEnum(i);
-                            break;
-                        case lume::ParamType::Palette:
-                            break;
-                    }
-                }
+                lume::paramsToJson(paramsObj, *effectInfo->schema, seg->getParamValues());
             }
-            
+
             // Capabilities - derived from effect schema
             JsonObject capsObj = segObj["capabilities"].to<JsonObject>();
             const lume::EffectInfo* effect = seg->getEffect();

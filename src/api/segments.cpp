@@ -7,6 +7,7 @@
 #include "../core/effect_registry.h"
 #include "../core/param_schema.h"
 #include "../core/param_codec.h"
+#include "../core/segment_serializer.h"
 #include <ArduinoJson.h>
 
 // External globals
@@ -131,30 +132,6 @@ void populateEffectSpecFromBody(lume::EffectSpec& spec, JsonDocument& doc,
 }  // namespace
 
 // ===========================================================================
-// Helper: Serialize segment to JSON
-// ===========================================================================
-void segmentToJson(JsonObject& obj, lume::Segment* segment, uint8_t id) {
-    obj["id"] = id;
-    obj["start"] = segment->getStart();
-    obj["stop"] = segment->getStart() + segment->getLength() - 1;  // Calculate stop from start + length
-    obj["length"] = segment->getLength();
-    obj["effect"] = segment->getEffectId();
-    
-    // Serialize schema-based params if effect has schema
-    const lume::EffectInfo* effectInfo = segment->getEffect();
-    if (effectInfo && effectInfo->hasSchema()) {
-        const lume::ParamSchema* schema = effectInfo->schema;
-        const lume::ParamValues& paramValues = segment->getParamValues();
-        
-        JsonObject paramsObj = obj["params"].to<JsonObject>();
-        lume::paramsToJson(paramsObj, *schema, paramValues);
-    }
-    
-    // Reverse flag
-    obj["reverse"] = segment->isReversed();
-}
-
-// ===========================================================================
 // GET /api/v2/segments - List all segments
 // ===========================================================================
 void handleApiV2SegmentsList(AsyncWebServerRequest* request) {
@@ -178,7 +155,7 @@ void handleApiV2SegmentsList(AsyncWebServerRequest* request) {
         lume::Segment* seg = lume::controller.getSegmentByIndex(i);
         if (seg) {
             JsonObject segObj = segments.add<JsonObject>();
-            segmentToJson(segObj, seg, seg->getId());
+            lume::serializeSegment(segObj, seg);
         }
     }
     
@@ -214,7 +191,7 @@ void handleApiV2SegmentGet(AsyncWebServerRequest* request) {
     
     JsonDocument doc;
     JsonObject obj = doc.to<JsonObject>();
-    segmentToJson(obj, seg, id);
+    lume::serializeSegment(obj, seg);
     
     String output;
     serializeJson(doc, output);
