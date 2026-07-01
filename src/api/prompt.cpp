@@ -12,6 +12,10 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#include <atomic>
 
 // Request body buffer for async handling
 static String promptBodyBuffer;
@@ -204,7 +208,67 @@ bool applySpec(const JsonDocument& spec, String& error) {
     return true;
 }
 
+// --- P0.4: offload the blocking Anthropic call off the AsyncTCP task ---
+//
+// Running callAnthropicAPI (a ~30s HTTPS request) on the async web task froze the
+// whole server and put a large TLS arena on the 8KB async stack. Because applySpec
+// now only enqueues bus commands (thread-safe), the work is trivially relocatable:
+// a persistent worker task does the call + applySpec, and the handler returns 202.
+
+constexpr size_t AI_PROMPT_MAX_LEN = 512;
+
+struct AiJob {
+    char prompt[AI_PROMPT_MAX_LEN];
+};
+
+QueueHandle_t       aiJobQueue  = nullptr;
+TaskHandle_t        aiTaskHandle = nullptr;
+std::atomic<bool>   aiBusy{false};   // one AI request in flight at a time
+
+void aiWorkerTask(void*) {
+    AiJob job;
+    for (;;) {
+        if (xQueueReceive(aiJobQueue, &job, portMAX_DELAY) != pdTRUE) continue;
+
+        // The submitting request was already answered (202) and may be destroyed.
+        // Touch NOTHING request/AsyncWebServer-related here — only the copied prompt.
+        String userPrompt(job.prompt);
+        String aiResponse, apiError;
+
+        if (callAnthropicAPI(userPrompt, aiResponse, apiError)) {
+            JsonDocument specDoc;
+            if (deserializeJson(specDoc, aiResponse) == DeserializationError::Ok) {
+                String applyError;
+                if (!applySpec(specDoc, applyError)) {
+                    LOG_WARN(LogTag::WEB, "AI applySpec failed: %s", applyError.c_str());
+                }
+            } else {
+                LOG_WARN(LogTag::WEB, "AI returned invalid format");
+            }
+        } else {
+            LOG_ERROR(LogTag::WEB, "AI call failed: %s", apiError.c_str());
+        }
+        aiBusy.store(false);   // single release point for the busy flag
+    }
+}
+
+// Lazily create the worker task + queue (idempotent).
+bool ensureAiWorker() {
+    if (aiTaskHandle) return true;
+    if (!aiJobQueue) {
+        aiJobQueue = xQueueCreate(1, sizeof(AiJob));
+        if (!aiJobQueue) { LOG_ERROR(LogTag::WEB, "AI job queue create failed"); return false; }
+    }
+    BaseType_t ok = xTaskCreatePinnedToCore(
+        aiWorkerTask, "ai_prompt", ANTHROPIC_TASK_STACK_SIZE, nullptr,
+        ANTHROPIC_TASK_PRIORITY, &aiTaskHandle, ANTHROPIC_TASK_CORE);
+    if (ok != pdPASS) { LOG_ERROR(LogTag::WEB, "AI task create failed"); aiTaskHandle = nullptr; return false; }
+    return true;
+}
+
 } // namespace
+
+void initAiPromptWorker() { ensureAiWorker(); }
 
 void handleApiPromptPost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
     // Auth check at start of request
@@ -257,61 +321,38 @@ void handleApiPromptPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
     
     String userPrompt = doc["prompt"].as<String>();
     LOG_INFO(LogTag::WEB, "AI Prompt: %s", userPrompt.c_str());
-    
-    // Call Anthropic API
-    String aiResponse;
-    String apiError;
-    
-    if (!callAnthropicAPI(userPrompt, aiResponse, apiError)) {
-        JsonDocument response;
-        response["success"] = false;
-        response["error"] = apiError;
-        
-        String output;
-        serializeJson(response, output);
-        request->send(500, "application/json", output);
+
+    if (userPrompt.length() >= AI_PROMPT_MAX_LEN) {
+        request->send(413, "application/json", "{\"error\":\"Prompt too long\"}");
         return;
     }
-    
-    LOG_DEBUG(LogTag::WEB, "AI Response: %s", aiResponse.c_str());
-    
-    // Parse AI response as JSON spec
-    JsonDocument specDoc;
-    DeserializationError specError = deserializeJson(specDoc, aiResponse);
-    
-    if (specError) {
-        JsonDocument response;
-        response["success"] = false;
-        response["error"] = "AI returned invalid format";
-        
-        String output;
-        serializeJson(response, output);
-        request->send(500, "application/json", output);
+
+    // Ensure the worker exists (lazy, in case the setup() hook didn't run).
+    if (!ensureAiWorker()) {
+        request->send(503, "application/json", "{\"error\":\"AI worker unavailable\"}");
         return;
     }
-    
-    // Apply the spec
-    String applyError;
-    if (!applySpec(specDoc, applyError)) {
-        JsonDocument response;
-        response["success"] = false;
-        response["error"] = applyError;
-        
-        String output;
-        serializeJson(response, output);
-        request->send(500, "application/json", output);
+
+    // One AI request at a time. The ~30s upstream call outlasts the P0.7 rate
+    // window (3s), so the rate limit alone can't prevent overlap.
+    bool expected = false;
+    if (!aiBusy.compare_exchange_strong(expected, true)) {
+        request->send(409, "application/json", "{\"error\":\"AI request already in progress\"}");
         return;
     }
-    
-    // Success
-    JsonDocument response;
-    response["success"] = true;
-    response["message"] = "Lights updated successfully!";
-    response["spec"] = specDoc;
-    
-    String output;
-    serializeJson(response, output);
-    request->send(200, "application/json", output);
-    
-    LOG_INFO(LogTag::WEB, "AI prompt applied successfully");
+
+    AiJob job;
+    strncpy(job.prompt, userPrompt.c_str(), AI_PROMPT_MAX_LEN - 1);
+    job.prompt[AI_PROMPT_MAX_LEN - 1] = '\0';
+
+    if (xQueueSend(aiJobQueue, &job, 0) != pdTRUE) {
+        aiBusy.store(false);   // release on enqueue failure
+        request->send(503, "application/json", "{\"error\":\"AI queue full\"}");
+        return;
+    }
+
+    // Accepted. The worker does the blocking call + applySpec (which enqueues bus
+    // commands); the UI reconciles via the ~1s WebSocket state push.
+    request->send(202, "application/json", "{\"status\":\"accepted\"}");
+    LOG_INFO(LogTag::WEB, "AI prompt enqueued");
 }
