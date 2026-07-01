@@ -232,20 +232,26 @@ void handleApiV2SegmentCreate(AsyncWebServerRequest* request, uint8_t* data, siz
     
     // Validate size at first chunk
     if (index == 0) {
+        if (!beginBody(request)) {  // P0.3: one body at a time
+            sendJsonError(request, 409, "busy", "Another request body is in progress");
+            return;
+        }
         segmentCreateBuffer = "";
         if (total > MAX_REQUEST_BODY_SIZE) {
+            endBody(request);
             sendJsonError(request, 413, "payload_too_large", "Request body exceeds MAX_REQUEST_BODY_SIZE");
             return;
         }
     }
-    
+
     // Accumulate chunks
     for (size_t i = 0; i < len; i++) {
         segmentCreateBuffer += (char)data[i];
     }
-    
+
     // Process when complete
     if (index + len >= total) {
+        endBody(request);   // P0.3: body fully assembled; release the slot
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, segmentCreateBuffer);
         
@@ -305,20 +311,26 @@ void handleApiV2SegmentUpdate(AsyncWebServerRequest* request, uint8_t* data, siz
     
     // Validate size at first chunk
     if (index == 0) {
+        if (!beginBody(request)) {  // P0.3: one body at a time
+            sendJsonError(request, 409, "busy", "Another request body is in progress");
+            return;
+        }
         segmentUpdateBuffer = "";
         if (total > MAX_REQUEST_BODY_SIZE) {
+            endBody(request);
             sendJsonError(request, 413, "payload_too_large", "Request body exceeds MAX_REQUEST_BODY_SIZE");
             return;
         }
     }
-    
+
     // Accumulate chunks
     for (size_t i = 0; i < len; i++) {
         segmentUpdateBuffer += (char)data[i];
     }
-    
+
     // Process when complete
     if (index + len >= total) {
+        endBody(request);   // P0.3: body fully assembled; release the slot
         lume::Segment* seg = lume::controller.getSegment(id);
         if (!seg) {
             sendJsonError(request, 404, "not_found", "Segment not found", "id");
@@ -501,20 +513,26 @@ void handleApiV2ControllerUpdate(AsyncWebServerRequest* request, uint8_t* data, 
     
     // Validate size at first chunk
     if (index == 0) {
+        if (!beginBody(request)) {  // P0.3: one body at a time
+            sendJsonError(request, 409, "busy", "Another request body is in progress");
+            return;
+        }
         controllerUpdateBuffer = "";
         if (total > MAX_REQUEST_BODY_SIZE) {
+            endBody(request);
             sendJsonError(request, 413, "payload_too_large", "Request body exceeds MAX_REQUEST_BODY_SIZE");
             return;
         }
     }
-    
+
     // Accumulate chunks
     for (size_t i = 0; i < len; i++) {
         controllerUpdateBuffer += (char)data[i];
     }
-    
+
     // Process when complete
     if (index + len >= total) {
+        endBody(request);   // P0.3: body fully assembled; release the slot
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, controllerUpdateBuffer);
         

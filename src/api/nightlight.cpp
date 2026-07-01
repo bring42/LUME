@@ -31,22 +31,28 @@ void handleApiNightlightPost(AsyncWebServerRequest* request, uint8_t* data, size
     
     // Body size validation
     if (index == 0) {
+        if (!beginBody(request)) {  // P0.3: one body at a time
+            request->send(409, "application/json", "{\"error\":\"Busy, retry\"}");
+            return;
+        }
         if (total > MAX_REQUEST_BODY_SIZE) {
+            endBody(request);
             request->send(413, "application/json", "{\"error\":\"Request too large\"}");
             return;
         }
         nightlightBodyBuffer = "";
         nightlightBodyBuffer.reserve(total);
     }
-    
+
     // Accumulate body chunks
     nightlightBodyBuffer += String((char*)data, len);
-    
+
     // Only process when complete
     if (index + len < total) {
         return;
     }
-    
+    endBody(request);   // P0.3: body fully assembled; release the slot
+
     LOG_DEBUG(LogTag::WEB, "Nightlight request: %s", nightlightBodyBuffer.c_str());
     
     JsonDocument doc;

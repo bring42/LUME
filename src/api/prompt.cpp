@@ -288,24 +288,31 @@ void handleApiPromptPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
         lastPromptMs = now;
     }
 
-    // Body size validation
+    // Body size validation. beginBody() is claimed AFTER the rate-limit check so
+    // a throttled (429) request never touches the body slot (P0.3).
     if (index == 0) {
+        if (!beginBody(request)) {
+            request->send(409, "application/json", "{\"error\":\"Busy, retry\"}");
+            return;
+        }
         if (total > MAX_REQUEST_BODY_SIZE) {
+            endBody(request);
             request->send(413, "application/json", "{\"error\":\"Request too large\"}");
             return;
         }
         promptBodyBuffer = "";
         promptBodyBuffer.reserve(total);
     }
-    
+
     // Accumulate body chunks
     promptBodyBuffer += String((char*)data, len);
-    
+
     // Only process when complete
     if (index + len < total) {
         return;
     }
-    
+    endBody(request);   // P0.3: body fully assembled; release the slot
+
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, promptBodyBuffer);
     

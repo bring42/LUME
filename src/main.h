@@ -36,6 +36,12 @@ extern bool webUiAvailable;
 bool checkAuth(AsyncWebServerRequest* request);
 void sendUnauthorized(AsyncWebServerRequest* request);
 
+// P0.3: chunked-body assembly guard. beginBody() claims the single body slot at
+// the first chunk (returns false -> caller sends 409); endBody() releases it and
+// MUST be called on every terminal path after a successful beginBody().
+bool beginBody(AsyncWebServerRequest* request);
+void endBody(AsyncWebServerRequest* request);
+
 // ===========================================================================
 // API Handler Functions - Main Routes
 // ===========================================================================

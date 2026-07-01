@@ -30,19 +30,25 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
     }
     
     if (index == 0) {
+        if (!beginBody(request)) {  // P0.3: one body at a time
+            request->send(409, "application/json", "{\"error\":\"Busy, retry\"}");
+            return;
+        }
         configBodyBuffer = "";
         // Validate total size
         if (total > MAX_REQUEST_BODY_SIZE) {
+            endBody(request);
             request->send(413, "application/json", "{\"error\":\"Request body too large\"}");
             return;
         }
     }
-    
+
     // Length-aware: the chunk isn't NUL-terminated, so String((char*)data) would
     // strlen past `len` into adjacent memory (P0.9 over-read).
     configBodyBuffer += String((char*)data, len);
-    
+
     if (index + len >= total) {
+        endBody(request);   // P0.3: body fully assembled; release the slot
         // Body complete, process
         JsonDocument doc;
         DeserializationError err = deserializeJson(doc, configBodyBuffer);
