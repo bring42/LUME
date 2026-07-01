@@ -40,6 +40,34 @@ enum class EffectCategory : uint8_t {
 };
 
 /**
+ * Effect dimensionality (TECH_DEBT P1.2)
+ *
+ * Declares the canvas shape an effect is written for, so a 2D/matrix build can
+ * filter its palette (show only what will look right) and refuse to assign a
+ * strip-only effect to a matrix segment. On a plain 1D strip this metadata is
+ * inert — everything renders — so it costs nothing today.
+ *
+ * Values are ordered so OneD == 0: EffectInfo is an aggregate initialized by the
+ * REGISTER_EFFECT_SCHEMA macro's brace-init, which omits the trailing `dims`
+ * member. Under the board toolchain's C++11 aggregate rules the omitted member is
+ * value-initialized to 0, so the default is OneD *without* a default member
+ * initializer (which would make EffectInfo a non-aggregate and break the macro).
+ *
+ *  - OneD : written for a strip; reads/writes assume 1D contiguous order. This is
+ *           the honest default for today's effects — most still touch pixels via
+ *           SegmentView::raw() (see P1.4), which a serpentine/tiled remap breaks.
+ *           An effect graduates to TwoD/Any once it is remap-safe (operator[]-only).
+ *  - TwoD : needs a 2D canvas (uses row/column geometry); meaningless on a strip.
+ *  - Any  : dimension-agnostic — remap-safe and correct on both a strip and a
+ *           matrix (e.g. solid fill, a per-pixel palette wash).
+ */
+enum class EffectDims : uint8_t {
+    OneD = 0,   // strip-only (default)
+    TwoD,       // matrix-only
+    Any         // runs correctly on either
+};
+
+/**
  * Effect metadata - enables rich UI/AI integration
  */
 struct EffectInfo {
@@ -54,7 +82,12 @@ struct EffectInfo {
     uint16_t stateSize;       // Bytes needed in scratchpad (0 = stateless)
 
     EffectFn fn;              // The actual effect function
-    
+
+    // Dimensionality (TECH_DEBT P1.2). MUST stay the last member: the
+    // REGISTER_EFFECT_SCHEMA macro omits it, so it is value-initialized to
+    // EffectDims::OneD (== 0). Use REGISTER_EFFECT_SCHEMA_DIMS to override.
+    EffectDims dims;
+
     // Helper: has schema
     bool hasSchema() const { return schema != nullptr && schema->count > 0; }
     
@@ -89,6 +122,24 @@ struct EffectInfo {
             case EffectCategory::Special:  return "Special";
             default:                       return "Unknown";
         }
+    }
+
+    // Helper to get dimensionality name (API/UI exposure)
+    const char* dimsName() const {
+        switch (dims) {
+            case EffectDims::OneD: return "1d";
+            case EffectDims::TwoD: return "2d";
+            case EffectDims::Any:  return "any";
+            default:               return "1d";
+        }
+    }
+
+    // Whether this effect may be assigned to a canvas of the given shape.
+    // A 2D/matrix build calls runsOn(EffectDims::TwoD) to filter its palette;
+    // a 1D build calls runsOn(EffectDims::OneD). `Any` runs on either; a
+    // dimension-specific effect runs only on its own shape.
+    bool runsOn(EffectDims canvas) const {
+        return dims == EffectDims::Any || dims == canvas;
     }
 };
 
@@ -161,12 +212,23 @@ public:
     }
 };
 
-// Schema-aware registration macro
+// Schema-aware registration macro. Leaves `dims` defaulted to EffectDims::OneD
+// (see EffectInfo::dims) — the honest default for today's strip effects.
 #define REGISTER_EFFECT_SCHEMA(fn, idStr, dispName, cat, schemaRef, stateSz) \
     static lume::EffectRegistrar _registrar_##fn({ \
         idStr, dispName, lume::EffectCategory::cat, \
         &schemaRef, \
         stateSz, fn \
+    })
+
+// As above, but declares the effect's dimensionality explicitly (TECH_DEBT P1.2).
+// Use this for an effect that is remap-safe (EffectDims::Any) or matrix-native
+// (EffectDims::TwoD); `dimsEnum` is a bare EffectDims enumerator (OneD/TwoD/Any).
+#define REGISTER_EFFECT_SCHEMA_DIMS(fn, idStr, dispName, cat, schemaRef, stateSz, dimsEnum) \
+    static lume::EffectRegistrar _registrar_##fn({ \
+        idStr, dispName, lume::EffectCategory::cat, \
+        &schemaRef, \
+        stateSz, fn, lume::EffectDims::dimsEnum \
     })
 
 // Convenience macro to define schema inline

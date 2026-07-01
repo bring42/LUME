@@ -38,6 +38,18 @@ void effectMyEffect(SegmentView& view, const ParamValues& params, uint32_t frame
 REGISTER_EFFECT_SCHEMA(effectMyEffect, "myeffect", "My Effect", Animated, myeffectSchema, 0);
 ```
 
+`REGISTER_EFFECT_SCHEMA` registers a **1D (strip)** effect — the default and correct
+choice for effects that walk pixels in order (or reach for `SegmentView::raw()`). If
+your effect is remap-safe (touches pixels only via `view[i]`) or matrix-native, declare
+its dimensionality so a 2D/matrix build can offer or refuse it (TECH_DEBT P1.2):
+
+```cpp
+// Runs correctly on both a strip and a matrix (remap-safe):
+REGISTER_EFFECT_SCHEMA_DIMS(effectMyEffect, "myeffect", "My Effect", Animated, myeffectSchema, 0, Any);
+// Matrix-only (uses row/column geometry):
+REGISTER_EFFECT_SCHEMA_DIMS(effectMyEffect, "myeffect", "My Effect", Special, myeffectSchema, 0, TwoD);
+```
+
 ---
 
 See the rest of this file for parameter types and complete examples.
