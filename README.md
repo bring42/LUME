@@ -218,6 +218,59 @@ Integrate with Home Assistant or Node-RED using MQTT topics. See the [MQTT Guide
 
 ---
 
+## 🏗️ Architecture
+
+LUME is built around a **single-writer command bus**. Every input — HTTP, WebSocket, MQTT, and the AI prompt handler — is a thin *adapter* that drops a typed command onto a thread-safe queue. The render loop is the **only** thing that mutates state or drives the LEDs, so cross-task data races are gone by construction (not by locking).
+
+```mermaid
+flowchart LR
+    subgraph in["Input adapters"]
+        HTTP["HTTP / REST"]
+        WS["WebSocket"]
+        MQTT["MQTT"]
+        AI["AI prompt · task"]
+    end
+    HTTP --> Q
+    WS --> Q
+    MQTT --> Q
+    AI --> Q
+    Q[["Command Queue<br/>thread-safe, fixed-size"]] --> LOOP
+    SACN["sACN / E1.31"] -->|"double-buffer + ready flag"| LOOP
+    LOOP{{"Render loop<br/>— single writer —"}} --> HAL["ILedOutput HAL"]
+    HAL --> STRIP["LED strip · FastLED RMT"]
+    LOOP -.->|"state on change"| WS
+```
+
+A write from the web never blocks and never races the renderer: it's accepted, queued, and reconciled on the next frame over the WebSocket.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Web UI
+    participant Web as Web task (AsyncTCP)
+    participant Bus as Command Queue
+    participant Loop as Render loop
+    participant Out as ILedOutput
+    UI->>Web: POST /api/v2/segments
+    Web->>Bus: enqueue(Command)
+    Web-->>UI: 202 Accepted
+    Loop->>Bus: drain (next frame)
+    Loop->>Loop: apply — sole writer
+    Loop->>Out: show()
+    Loop-->>UI: WebSocket state push
+```
+
+**Why it's built this way**
+
+- 🔒 **Race-free by design** — one writer (the render loop); every input only enqueues. No locks in the hot path.
+- 🧪 **Host-tested** — a native unit suite (`pio test -e native`) runs the core logic off-device in CI *before* the board builds: command bus, param codec, persistence round-trip, and the request-body guard.
+- 🔌 **Pluggable output** — effects render through an `ILedOutput` HAL; FastLED's RMT driver is the default, and other backends (ESP-IDF `led_strip`, an emulator) drop in without touching a single effect.
+- 🎛️ **Schema-driven effects** — each effect is a pure `(view, params, frame)` function that self-registers with typed parameter metadata, so the REST API and Web UI controls are generated from the effect itself.
+
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [command-bus RFC](docs/rfcs/0001-command-bus.md) for the full design.
+
+---
+
 ## 📖 Documentation
 
 | Doc | What's Inside |
@@ -227,7 +280,9 @@ Integrate with Home Assistant or Node-RED using MQTT topics. See the [MQTT Guide
 | [Adding Effects](docs/ADDING_EFFECTS.md) | Guide to creating custom LED effects |
 | [sACN Guide](docs/SACN.md) | E1.31 protocol setup and Python examples |
 | [MQTT Guide](docs/MQTT.md) | Home Assistant, Node-RED, topic structure |
-| [Development](docs/DEVELOPMENT.md) | Architecture, building, contributing |
+| [Development](docs/DEVELOPMENT.md) | Building, testing, contributing |
+| [Architecture](docs/ARCHITECTURE.md) | The single-writer render model & invariants |
+| [Command-bus RFC](docs/rfcs/0001-command-bus.md) | The bus-as-API design (Matter-native) |
 
 ---
 
@@ -288,10 +343,10 @@ Tested on LILYGO T-Display S3 with WS2811 and WS2812B strips. Memory supports mu
 This project is in active development. On the horizon:
 
 - 📊 More effects and palettes
-- 🔲 2D matrix support
+- 🔲 2D matrix support *(the canvas/region foundations are underway)*
 - 🎛️ Physical button controls
 - 🎬 Scene presets and scheduling
-- 🔮 Matter/Thread support
+- 🔮 Matter — bridge-first via MQTT → Home Assistant today, native later
 
 ---
 
