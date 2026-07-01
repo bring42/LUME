@@ -13,11 +13,14 @@
 typedef uint8_t  fract8;
 typedef uint16_t fract16;
 
+struct CHSV;  // fwd-declare: CRGB has a converting ctor from CHSV (P1.4 rainbow())
+
 struct CRGB {
     uint8_t r, g, b;
 
     CRGB() = default;  // trivial -> usable as a union member (matches FastLED)
     constexpr CRGB(uint8_t ir, uint8_t ig, uint8_t ib) : r(ir), g(ig), b(ib) {}
+    CRGB(const CHSV&);  // defined out-of-line once CHSV is complete (below)
     constexpr CRGB(uint32_t code)
         : r((code >> 16) & 0xFF), g((code >> 8) & 0xFF), b(code & 0xFF) {}
 
@@ -31,6 +34,7 @@ struct CRGB {
           b(static_cast<uint32_t>(c) & 0xFF) {}
 
     CRGB& nscale8(uint8_t) { return *this; }
+    CRGB& fadeToBlackBy(uint8_t) { return *this; }  // per-pixel fade (P1.4 fade())
     CRGB& operator+=(const CRGB&) { return *this; }
     CRGB& operator|=(const CRGB&) { return *this; }
 };
@@ -40,6 +44,10 @@ struct CHSV {
     CHSV() = default;
     constexpr CHSV(uint8_t ih, uint8_t is, uint8_t iv) : h(ih), s(is), v(iv) {}
 };
+
+// CHSV -> CRGB conversion (no-op values; tests never render). Defined here now
+// that CHSV is complete.
+inline CRGB::CRGB(const CHSV&) : r(0), g(0), b(0) {}
 
 struct CRGBPalette16 {
     CRGB entries[16];

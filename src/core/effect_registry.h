@@ -53,10 +53,11 @@ enum class EffectCategory : uint8_t {
  * value-initialized to 0, so the default is OneD *without* a default member
  * initializer (which would make EffectInfo a non-aggregate and break the macro).
  *
- *  - OneD : written for a strip; reads/writes assume 1D contiguous order. This is
- *           the honest default for today's effects — most still touch pixels via
- *           SegmentView::raw() (see P1.4), which a serpentine/tiled remap breaks.
- *           An effect graduates to TwoD/Any once it is remap-safe (operator[]-only).
+ *  - OneD : written for a strip; reads/writes assume 1D adjacency (a moving dot,
+ *           a linear gradient). This is the honest default until an effect is
+ *           validated on a 2D canvas — P1.4 made the pixel primitives remap-safe,
+ *           but an effect may still assume its neighbours are physically adjacent.
+ *           An effect graduates to TwoD/Any once its *logic* is dimension-agnostic.
  *  - TwoD : needs a 2D canvas (uses row/column geometry); meaningless on a strip.
  *  - Any  : dimension-agnostic — remap-safe and correct on both a strip and a
  *           matrix (e.g. solid fill, a per-pixel palette wash).

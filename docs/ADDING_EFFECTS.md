@@ -38,10 +38,15 @@ void effectMyEffect(SegmentView& view, const ParamValues& params, uint32_t frame
 REGISTER_EFFECT_SCHEMA(effectMyEffect, "myeffect", "My Effect", Animated, myeffectSchema, 0);
 ```
 
+Always touch pixels through `view[i]` and the `view.fill()/fade()/gradient()/…`
+primitives — they are remap-safe (they apply the segment's mapping and reversal). There
+is no flat raw-pointer escape hatch; that path broke under any 2D remap and was removed
+(TECH_DEBT P1.4).
+
 `REGISTER_EFFECT_SCHEMA` registers a **1D (strip)** effect — the default and correct
-choice for effects that walk pixels in order (or reach for `SegmentView::raw()`). If
-your effect is remap-safe (touches pixels only via `view[i]`) or matrix-native, declare
-its dimensionality so a 2D/matrix build can offer or refuse it (TECH_DEBT P1.2):
+choice for effects whose *logic* assumes 1D adjacency (a moving dot, a linear gradient).
+If your effect's logic is dimension-agnostic or matrix-native, declare its dimensionality
+so a 2D/matrix build can offer or refuse it (TECH_DEBT P1.2):
 
 ```cpp
 // Runs correctly on both a strip and a matrix (remap-safe):

@@ -198,10 +198,11 @@ public:
         // Call the effect function
         effect->fn(view, paramValues, frame, firstFrame);
         
-        // Apply segment brightness if not 255
+        // Apply segment brightness if not 255. Through operator[] so it stays
+        // remap-safe (P1.4) — the same reason effects never touch a raw pointer.
         if (brightness < 255) {
             for (uint16_t i = 0; i < view.size(); i++) {
-                view.raw()[i].nscale8(brightness);
+                view[i].nscale8(brightness);
             }
         }
     }

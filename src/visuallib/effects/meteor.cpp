@@ -44,7 +44,7 @@ void effectMeteor(SegmentView& view, const ParamValues& params, uint32_t frame, 
     // Random trail sparkle
     for (uint16_t i = 0; i < len; i++) {
         if (random8() < 20) {
-            view.raw()[i].fadeToBlackBy(random8(20, 60));
+            view[i].fadeToBlackBy(random8(20, 60));
         }
     }
 }

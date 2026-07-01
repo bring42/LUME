@@ -63,52 +63,55 @@ struct SegmentView {
         return base[region.start + idx];
     }
     
-    // --- FastLED primitive wrappers ---
-    // These operate on the raw segment, ignoring reversal
-    // (most FastLED operations don't care about direction)
-    
+    // --- Canvas primitives (P1.4) ---
+    // Every primitive writes through operator[], so it is remap-safe: on a strip
+    // [i] is contiguous; under a future 2D serpentine/tiled map [i] is the ONLY
+    // correct pixel path. They deliberately do not reach for a flat raw() pointer
+    // + FastLED whole-buffer call — that was the 1D-only escape hatch that defeated
+    // the 2D abstraction, and it has been removed from the effect-facing contract.
+    // operator[] already applies reversal, so the primitives address the segment
+    // in logical order (index 0 = first pixel the effect sees).
+
     void fill(CRGB color) {
-        fill_solid(raw(), region.length, color);
+        for (uint16_t i = 0; i < region.length; i++) (*this)[i] = color;
     }
 
     void fill(CRGB color, uint16_t offset, uint16_t count) {
-        if (offset < region.length) {
-            uint16_t actualCount = min(count, (uint16_t)(region.length - offset));
-            fill_solid(raw() + offset, actualCount, color);
-        }
+        if (offset >= region.length) return;
+        uint16_t actualCount = min(count, (uint16_t)(region.length - offset));
+        for (uint16_t i = 0; i < actualCount; i++) (*this)[offset + i] = color;
     }
 
     void clear() {
-        fill_solid(raw(), region.length, CRGB::Black);
+        for (uint16_t i = 0; i < region.length; i++) (*this)[i] = CRGB::Black;
     }
 
     void fade(uint8_t amount) {
-        fadeToBlackBy(raw(), region.length, amount);
+        for (uint16_t i = 0; i < region.length; i++) (*this)[i].fadeToBlackBy(amount);
     }
 
-    // Fill with gradient (respects reversal)
+    // Logical gradient: index 0 is startColor, index size()-1 is endColor. Because
+    // operator[] applies any reversal, we no longer swap the endpoints by hand.
     void gradient(CRGB startColor, CRGB endColor) {
-        if (reversed) {
-            fill_gradient_RGB(raw(), region.length, endColor, startColor);
-        } else {
-            fill_gradient_RGB(raw(), region.length, startColor, endColor);
+        if (region.length == 0) return;
+        if (region.length == 1) { (*this)[0] = startColor; return; }
+        for (uint16_t i = 0; i < region.length; i++) {
+            uint8_t frac = (uint8_t)((uint16_t)i * 255 / (region.length - 1));
+            (*this)[i] = blend(startColor, endColor, frac);
         }
     }
 
-    // Fill with rainbow
+    // Logical rainbow: index 0 is startHue, advancing by deltaHue. operator[]
+    // applies any reversal, matching the old wrapper's forward/reverse result.
     void rainbow(uint8_t startHue, uint8_t deltaHue = 5) {
-        if (reversed) {
-            fill_rainbow(raw(), region.length, startHue + (deltaHue * region.length), -deltaHue);
-        } else {
-            fill_rainbow(raw(), region.length, startHue, deltaHue);
+        uint8_t hue = startHue;
+        for (uint16_t i = 0; i < region.length; i++) {
+            (*this)[i] = CHSV(hue, 255, 255);
+            hue += deltaHue;
         }
     }
 
-    // --- Direct access for advanced operations ---
-
-    // Get raw pointer to first LED in segment (for direct FastLED calls)
-    CRGB* raw() { return base + region.start; }
-    const CRGB* raw() const { return base + region.start; }
+    // --- Geometry accessors ---
 
     // Get the pixel region this view covers (P1.3)
     const Region& getRegion() const { return region; }
