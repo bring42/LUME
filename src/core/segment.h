@@ -36,36 +36,65 @@ public:
         , active(false)
         , id(0)
         , scratchpadVersion(0)
-        , lastSeenVersion(0) {
+        , lastSeenVersion(0)
+        , externalScratchpad_(false) {
         memset(scratchpad, 0, SCRATCHPAD_SIZE);
     }
     
     // --- Configuration ---
     
-    // Set the LED range for this segment
+    // Set the LED range for this segment. Points the view at the fixed inline
+    // pad (any borrowed workbuffer is dropped — the caller re-borrows if needed).
     void setRange(CRGB* leds, uint16_t start, uint16_t length, bool reversed = false) {
-        view = SegmentView(leds, start, length, reversed, scratchpad);
+        externalScratchpad_ = false;
+        view = SegmentView(leds, start, length, reversed, scratchpad, SCRATCHPAD_SIZE);
         active = true;
     }
     
     // Set effect by EffectInfo pointer (preferred)
     void setEffect(const EffectInfo* info) {
         if (!info) return;
-        
-        // Validate stateSize fits in scratchpad
-        if (info->stateSize > SCRATCHPAD_SIZE) {
+
+        // Validate stateSize fits in whatever pad is active — the fixed inline
+        // pad, or a larger borrowed workbuffer if one is attached (P1.5).
+        if (info->stateSize > scratchpadCapacity()) {
             return;  // Refuse invalid effect
         }
-        
+
         effect = info;
-        scratchpadVersion++;  // Signal scratchpad reset
-        memset(scratchpad, 0, SCRATCHPAD_SIZE);
-        
+        scratchpadVersion++;      // Signal scratchpad reset
+        resetScratchpad();        // Clears the active pad (inline or borrowed)
+
         // Initialize ParamValues with defaults if effect has schema
         if (info->hasSchema()) {
             paramValues.applyDefaults(*info->schema);
         }
     }
+
+    // --- Large-state (2D) scratchpad borrowing (P1.5) ---
+    // Point this segment's scratchpad at an externally-owned buffer (the shared
+    // workbuffer) so a canvas-spanning 2D effect can hold state larger than the
+    // fixed per-segment pad. The buffer must outlive the segment and satisfy
+    // SCRATCHPAD_ALIGN. Resets state (bumps the version, zeroes the buffer).
+    void attachScratchpad(uint8_t* buffer, uint16_t capacity) {
+        if (!buffer || capacity == 0) return;
+        externalScratchpad_ = true;
+        view.scratchpad = buffer;
+        view.scratchpadCapacity = capacity;
+        scratchpadVersion++;
+        memset(buffer, 0, capacity);
+    }
+
+    // Return to the fixed inline pad (e.g. when the workbuffer is reclaimed).
+    void detachScratchpad() {
+        externalScratchpad_ = false;
+        view.scratchpad = scratchpad;
+        view.scratchpadCapacity = SCRATCHPAD_SIZE;
+        scratchpadVersion++;
+        memset(scratchpad, 0, SCRATCHPAD_SIZE);
+    }
+
+    bool usesExternalScratchpad() const { return externalScratchpad_; }
     
     // Set effect by id (looks up in registry)
     bool setEffect(const char* id) {
@@ -226,6 +255,26 @@ private:
     alignas(SCRATCHPAD_ALIGN) uint8_t scratchpad[SCRATCHPAD_SIZE];
     uint8_t scratchpadVersion;   // Incremented when effect changes
     uint8_t lastSeenVersion;     // Tracks when effect last saw reset
+
+    // True while the view points at a borrowed workbuffer instead of the inline
+    // pad (P1.5). Tracked explicitly rather than by comparing view.scratchpad to
+    // &scratchpad, so the pre-existing copy-by-value segment shift (TECH_DEBT P2)
+    // can't be misread as an external attachment.
+    bool externalScratchpad_;
+
+    // Bytes available in the currently-active pad.
+    uint16_t scratchpadCapacity() const {
+        return externalScratchpad_ ? view.scratchpadCapacity : (uint16_t)SCRATCHPAD_SIZE;
+    }
+
+    // Zero the active pad (inline or borrowed) — the effect-change reset.
+    void resetScratchpad() {
+        if (externalScratchpad_ && view.scratchpad) {
+            memset(view.scratchpad, 0, view.scratchpadCapacity);
+        } else {
+            memset(scratchpad, 0, SCRATCHPAD_SIZE);
+        }
+    }
 };
 
 } // namespace lume

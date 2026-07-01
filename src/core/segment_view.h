@@ -7,11 +7,16 @@
 namespace lume {
 
 // --- Scratchpad sizing (per segment) ---
-// SCRATCHPAD_SIZE  : max bytes an effect may stash in its segment scratchpad.
-//   Must hold the largest effect state struct; the static_assert in
+// SCRATCHPAD_SIZE  : max bytes an effect may stash in its FIXED per-segment pad.
+//   Must hold the largest 1D effect state struct; the static_assert in
 //   getScratchpad enforces this per effect at compile time. Currently the
 //   ceiling is fire's FireState (heat[600]). At MAX_SEGMENTS=8 the total cost
 //   is 8 * SCRATCHPAD_SIZE bytes of RAM.
+//   Large / 2D effect state (a 32x32 grid needs >=1024 B) does NOT come from
+//   here — paying the worst case x8 segments would be wasteful. Instead one
+//   canvas-spanning segment borrows a single shared workbuffer via
+//   Segment::attachScratchpad and reads it with view.getScratchpadChecked<T>()
+//   (runtime-guarded). See docs/rfcs/0002-scratchpad-strategy.md (P1.5).
 // SCRATCHPAD_ALIGN : alignment guaranteed for the raw buffer. Effects
 //   reinterpret_cast the buffer to their own state struct, so this must be at
 //   least as strict as the alignment of any field those structs contain
@@ -19,6 +24,21 @@ namespace lume {
 //   can enforce it at compile time.
 constexpr size_t SCRATCHPAD_SIZE  = 640;
 constexpr size_t SCRATCHPAD_ALIGN = 8;
+
+// LUME_WORKBUFFER_SIZE : bytes of the single shared workbuffer a canvas-spanning
+//   segment may borrow for large / 2D effect state (P1.5). Default 0 = feature
+//   off (a 1D build pays nothing). A matrix build overrides it, e.g.
+//   -DLUME_WORKBUFFER_SIZE=2048 for a 32x32 grid. Defined in this low-level
+//   header so the effect registry and the controller agree on the ceiling.
+#ifndef LUME_WORKBUFFER_SIZE
+#define LUME_WORKBUFFER_SIZE 0
+#endif
+
+// The largest effect state a segment can EVER hold: the fixed pad, or the shared
+// workbuffer if bigger. The registry validates a registered effect against this;
+// per-segment setEffect() then enforces the ACTUAL active pad at assignment time.
+constexpr size_t MAX_EFFECT_STATE =
+    SCRATCHPAD_SIZE > LUME_WORKBUFFER_SIZE ? SCRATCHPAD_SIZE : (size_t)LUME_WORKBUFFER_SIZE;
 
 /**
  * SegmentView - A non-owning view into a CRGB array
@@ -40,17 +60,24 @@ struct SegmentView {
     CRGB* base;           // Pointer to controller's LED array base
     Region region;        // Which pixels this segment covers (P1.3)
     bool reversed;        // Run effect in reverse direction?
-    uint8_t* scratchpad;  // Pointer to segment's scratchpad for stateful effects
+    uint8_t* scratchpad;  // Pointer to the segment's active scratchpad
+    uint16_t scratchpadCapacity;  // Bytes available at `scratchpad` (P1.5)
 
     // Default constructor (empty view)
-    SegmentView() : base(nullptr), region(), reversed(false), scratchpad(nullptr) {}
+    SegmentView()
+        : base(nullptr), region(), reversed(false)
+        , scratchpad(nullptr), scratchpadCapacity(0) {}
 
-    // Construct view from LED array base
-    SegmentView(CRGB* ledArray, uint16_t startIdx, uint16_t len, bool rev = false, uint8_t* scratch = nullptr)
+    // Construct view from LED array base. `scratchCap` is the size of the buffer
+    // at `scratch`; it defaults to the fixed per-segment pad (SCRATCHPAD_SIZE),
+    // but a 2D/large-state segment may point at a bigger borrowed buffer (P1.5).
+    SegmentView(CRGB* ledArray, uint16_t startIdx, uint16_t len, bool rev = false,
+                uint8_t* scratch = nullptr, uint16_t scratchCap = SCRATCHPAD_SIZE)
         : base(ledArray)
         , region(startIdx, len)
         , reversed(rev)
-        , scratchpad(scratch) {}
+        , scratchpad(scratch)
+        , scratchpadCapacity(scratch ? scratchCap : 0) {}
 
     // Indexed access - handles reversal transparently
     CRGB& operator[](uint16_t i) {
@@ -148,6 +175,29 @@ struct SegmentView {
                       "Effect state exceeds scratchpad size (SCRATCHPAD_SIZE)");
         static_assert(alignof(T) <= SCRATCHPAD_ALIGN,
                       "Effect state needs stronger alignment than the scratchpad guarantees");
+        return reinterpret_cast<const T*>(scratchpad);
+    }
+
+    // Runtime-checked scratchpad access for LARGE / dimension-dependent state
+    // (P1.5). Unlike getScratchpad<T>() — whose compile-time guard is fixed to
+    // the small per-segment pad (SCRATCHPAD_SIZE) — this validates T against the
+    // *actual* capacity of the attached buffer, which may be a bigger borrowed
+    // workbuffer. Returns nullptr if the state doesn't fit (or no pad is
+    // attached), so a 2D effect degrades gracefully instead of scribbling past
+    // the buffer. Alignment is still enforced at compile time.
+    template<typename T>
+    T* getScratchpadChecked() {
+        static_assert(alignof(T) <= SCRATCHPAD_ALIGN,
+                      "Effect state needs stronger alignment than the scratchpad guarantees");
+        if (!scratchpad || sizeof(T) > scratchpadCapacity) return nullptr;
+        return reinterpret_cast<T*>(scratchpad);
+    }
+
+    template<typename T>
+    const T* getScratchpadChecked() const {
+        static_assert(alignof(T) <= SCRATCHPAD_ALIGN,
+                      "Effect state needs stronger alignment than the scratchpad guarantees");
+        if (!scratchpad || sizeof(T) > scratchpadCapacity) return nullptr;
         return reinterpret_cast<const T*>(scratchpad);
     }
 };

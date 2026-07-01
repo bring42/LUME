@@ -21,6 +21,7 @@ LumeController::LumeController()
     : ledCount(0)
     , segmentCount(0)
     , nextSegmentId(0)
+    , workbufferOwner_(-1)
     , power(true)
     , globalBrightness(255)
     , nightlightActive(false)
@@ -347,7 +348,29 @@ Segment* LumeController::getSegmentByIndex(uint8_t index) {
     return &segments[index];
 }
 
+bool LumeController::borrowWorkbuffer(uint8_t segmentIndex, uint16_t bytesNeeded) {
+    if (kWorkbufferSize == 0) return false;                 // feature disabled
+    if (segmentIndex >= segmentCount) return false;
+    if (bytesNeeded > kWorkbufferSize) return false;        // won't fit
+    if (workbufferOwner_ >= 0 && workbufferOwner_ != (int8_t)segmentIndex) {
+        return false;                                       // already lent out
+    }
+    segments[segmentIndex].attachScratchpad(workbuffer_, kWorkbufferSize);
+    workbufferOwner_ = (int8_t)segmentIndex;
+    return true;
+}
+
+void LumeController::releaseWorkbuffer() {
+    if (workbufferOwner_ >= 0 && workbufferOwner_ < (int8_t)segmentCount) {
+        segments[workbufferOwner_].detachScratchpad();
+    }
+    workbufferOwner_ = -1;
+}
+
 bool LumeController::removeSegment(uint8_t id) {
+    // Drop any borrow before the slots shift — indices (and the inline-pad
+    // aliasing of the copy-by-value move, TECH_DEBT P2) would otherwise dangle.
+    releaseWorkbuffer();
     for (uint8_t i = 0; i < segmentCount; i++) {
         if (segments[i].getId() == id) {
             // Shift remaining segments down
@@ -366,6 +389,7 @@ bool LumeController::removeSegment(uint8_t id) {
 }
 
 void LumeController::clearSegments() {
+    releaseWorkbuffer();  // owner is about to be reset; drop the borrow first
     for (uint8_t i = 0; i < MAX_SEGMENTS; i++) {
         segments[i] = Segment();
     }
