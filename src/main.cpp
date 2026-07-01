@@ -183,7 +183,11 @@ void setup() {
         mqttConfig.topicPrefix = config.mqttTopicPrefix;
         lume::mqtt.begin(mqttConfig, &lume::controller);
     }
-    
+
+    // Let the ReconfigureProtocols command re-apply sACN/MQTT config on the loop
+    // task (config POST enqueues it instead of reconfiguring from the web task).
+    lume::controller.reconfigureProtocolsFn = applyProtocolConfig;
+
     // Restore the saved segment layout, or fall back to a single full-strip
     // segment with the last-used effect.
     {
