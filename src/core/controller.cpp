@@ -407,8 +407,9 @@ void LumeController::serializeSegments(JsonDocument& doc) const {
         if (!seg.isActive()) continue;
 
         JsonObject o = segs.add<JsonObject>();
-        o["start"]      = seg.getStart();
-        o["length"]     = seg.getLength();
+        const Region& r = seg.getRegion();
+        o["start"]      = r.start;
+        o["length"]     = r.size();
         o["reverse"]    = seg.isReversed();
         o["brightness"] = seg.getBrightness();
         o["effect"]     = seg.getEffectId();
@@ -469,8 +470,7 @@ void LumeController::clearUncoveredLeds() {
         for (uint8_t s = 0; s < segmentCount; s++) {
             const Segment& seg = segments[s];
             if (!seg.isActive()) continue;
-            uint16_t start = seg.getStart();
-            if (i >= start && i < start + seg.getLength()) {
+            if (seg.getRegion().contains(i)) {
                 covered = true;
                 break;
             }
