@@ -166,9 +166,12 @@ public:
     bool add(const EffectInfo& info) {
         if (count >= MAX_EFFECTS) return false;
         
-        // Validate stateSize doesn't exceed scratchpad
-        if (info.stateSize > SCRATCHPAD_SIZE) {
-            return false;  // Effect requires too much state
+        // Validate stateSize against the largest pad a segment could hold — the
+        // fixed inline pad, or the shared workbuffer if this build enables one
+        // (P1.5). A big-state 2D effect registers here; per-segment setEffect()
+        // still refuses to assign it until the segment actually has room.
+        if (info.stateSize > MAX_EFFECT_STATE) {
+            return false;  // Effect requires more state than any pad can offer
         }
         
         effects[count] = info;

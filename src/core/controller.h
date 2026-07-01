@@ -13,6 +13,12 @@
 // Forward declare IProtocol interface
 namespace lume { class IProtocol; }
 
+// LUME_WORKBUFFER_SIZE (the shared-workbuffer size for large / 2D effect state,
+// TECH_DEBT P1.5) is defined in segment_view.h — the low-level header the effect
+// registry and this controller both include — so they agree on the ceiling.
+// Default 0 = feature off; a matrix build sets e.g. -DLUME_WORKBUFFER_SIZE=2048.
+// See docs/rfcs/0002-scratchpad-strategy.md.
+
 namespace lume {
 
 // Maximum segments (can be adjusted)
@@ -73,7 +79,19 @@ public:
     
     // Remove all segments
     void clearSegments();
-    
+
+    // --- Shared workbuffer for large / 2D effect state (P1.5) ---
+    // Lend the single controller-owned workbuffer to one canvas-spanning segment
+    // so it can hold state larger than the fixed per-segment pad. At most one
+    // borrower at a time. Returns false if the feature is off
+    // (LUME_WORKBUFFER_SIZE == 0), the index is out of range, the buffer is
+    // already lent to a different segment, or bytesNeeded exceeds its capacity.
+    // The borrow is dropped on any layout change (remove/clear); the 2D setup
+    // re-borrows afterwards. See docs/rfcs/0002-scratchpad-strategy.md.
+    bool borrowWorkbuffer(uint8_t segmentIndex, uint16_t bytesNeeded);
+    void releaseWorkbuffer();
+    uint16_t workbufferCapacity() const { return kWorkbufferSize; }
+
     // Get active segment count
     uint8_t getSegmentCount() const;
     
@@ -171,6 +189,14 @@ private:
     Segment segments[MAX_SEGMENTS];
     uint8_t segmentCount;
     uint8_t nextSegmentId;
+
+    // Shared workbuffer for large / 2D effect state (P1.5). One borrower at a
+    // time; workbufferOwner_ is the borrowing slot index, or -1 when free. When
+    // the feature is off (size 0) the array is a 1-byte placeholder and borrow
+    // requests are refused, so a 1D build carries no real cost.
+    static constexpr uint16_t kWorkbufferSize = LUME_WORKBUFFER_SIZE;
+    alignas(SCRATCHPAD_ALIGN) uint8_t workbuffer_[kWorkbufferSize > 0 ? kWorkbufferSize : 1];
+    int8_t workbufferOwner_;
     
     // Command queue
     CommandQueue commandQueue;
