@@ -212,6 +212,46 @@ void test_enumeration_survives_middle_delete() {
     TEST_ASSERT_NULL(c.getSegmentByIndex(2));     // out of range
 }
 
+// P0.8: the ReconfigureProtocols command runs the registered hook on the loop.
+static int g_reconfigCalls = 0;
+static void fakeReconfig() { g_reconfigCalls++; }
+
+void test_reconfigure_protocols_runs_hook_on_loop() {
+    LumeController c;
+    c.begin(60);
+    c.reconfigureProtocolsFn = fakeReconfig;
+    g_reconfigCalls = 0;
+
+    c.enqueueCommand(Command::reconfigureProtocols());
+    TEST_ASSERT_EQUAL_INT(0, g_reconfigCalls);   // deferred to the loop
+    c.update();
+    TEST_ASSERT_EQUAL_INT(1, g_reconfigCalls);   // applied once, on the loop task
+}
+
+// P0.1 (pixels): staged pixels are applied only on update(), never at stage time.
+void test_direct_pixels_are_deferred_then_applied() {
+    LumeController c;
+    c.begin(60);
+    CRGB* leds = c.getLeds();
+    for (uint16_t i = 0; i < 60; i++) leds[i] = CRGB(0, 0, 0);   // known baseline
+
+    CRGB frame[60];
+    memset(frame, 0, sizeof(frame));
+    frame[0] = CRGB(0x11, 0x22, 0x33);
+    frame[5] = CRGB(0x44, 0x55, 0x66);
+    c.stageDirectPixels(frame, 60);
+
+    // Single-writer: staging (web task) did not touch leds[].
+    TEST_ASSERT_EQUAL_UINT8(0, leds[0].r);
+    TEST_ASSERT_EQUAL_UINT8(0, leds[5].r);
+
+    c.update();  // render loop drains the staged frame into leds[]
+    TEST_ASSERT_EQUAL_UINT8(0x11, leds[0].r);
+    TEST_ASSERT_EQUAL_UINT8(0x22, leds[0].g);
+    TEST_ASSERT_EQUAL_UINT8(0x44, leds[5].r);
+    TEST_ASSERT_EQUAL_UINT8(0x55, leds[5].g);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_create_is_deferred_then_applied);
@@ -222,5 +262,7 @@ int main(int, char**) {
     RUN_TEST(test_ai_semantic_params_via_bus);
     RUN_TEST(test_setcolor_maps_index_to_ordered_color_slot);
     RUN_TEST(test_enumeration_survives_middle_delete);
+    RUN_TEST(test_reconfigure_protocols_runs_hook_on_loop);
+    RUN_TEST(test_direct_pixels_are_deferred_then_applied);
     return UNITY_END();
 }

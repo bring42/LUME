@@ -19,14 +19,44 @@ extern unsigned long lastWifiAttempt;
 // Run each time WiFi comes up (initial connect or reconnect): start OTA/mDNS
 // and (re)configure protocols that need the network. setupOTA() is idempotent,
 // so calling this again on reconnect won't re-register mDNS services.
+// Apply sACN + MQTT live config from the persisted global `config`. MUST run on
+// the loop task — called at boot (onWifiConnected) and from the
+// ReconfigureProtocols command handler. Never call from the web task: it opens/
+// closes sockets and swaps the MQTT config struct that processProtocols()/
+// mqtt.update() read every frame (P0.8).
+void applyProtocolConfig() {
+    // sACN
+    if (config.sacnEnabled && wifiConnected) {
+        lume::sacnProtocol.stop();
+        lume::sacnProtocol.configure(config.sacnUniverse, config.sacnUniverseCount,
+                                     config.sacnUnicast, config.sacnStartChannel);
+        lume::sacnProtocol.begin();
+    } else {
+        lume::sacnProtocol.stop();
+    }
+
+    // MQTT — setConfig only swaps the struct; (re)connect happens in mqtt.update().
+    // The controller pointer was retained by the boot-time mqtt.begin().
+    if (config.mqttEnabled && config.mqttBroker.length() > 0 && wifiConnected) {
+        lume::MqttConfig mqttConfig;
+        mqttConfig.enabled = true;
+        mqttConfig.broker = config.mqttBroker;
+        mqttConfig.port = config.mqttPort;
+        mqttConfig.username = config.mqttUsername;
+        mqttConfig.password = config.mqttPassword;
+        mqttConfig.topicPrefix = config.mqttTopicPrefix;
+        lume::mqtt.setConfig(mqttConfig);
+    } else {
+        lume::MqttConfig disabledConfig;
+        disabledConfig.enabled = false;
+        lume::mqtt.setConfig(disabledConfig);
+    }
+}
+
 static void onWifiConnected() {
     LOG_INFO(LogTag::WIFI, "Connected! IP: %s", WiFi.localIP().toString().c_str());
     setupOTA();
-    if (config.sacnEnabled) {
-        lume::sacnProtocol.configure(config.sacnUniverse, config.sacnUniverseCount,
-                                      config.sacnUnicast, config.sacnStartChannel);
-        lume::sacnProtocol.begin();
-    }
+    applyProtocolConfig();
 }
 
 void setupWiFi() {

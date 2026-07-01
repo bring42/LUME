@@ -4,8 +4,6 @@
 #include "../logging.h"
 #include "../storage.h"
 #include "../lume.h"
-#include "../protocols/sacn.h"
-#include "../protocols/mqtt.h"
 
 // External globals
 extern Config config;
@@ -64,32 +62,13 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
             // render loop and never re-ran addLeds anyway (P0.8). It now takes
             // effect on the next reboot, from the value just persisted above.
 
-            // Handle sACN enable/disable (using new protocol system)
-            if (config.sacnEnabled && wifiConnected) {
-                lume::sacnProtocol.stop();
-                lume::sacnProtocol.configure(config.sacnUniverse, config.sacnUniverseCount,
-                                              config.sacnUnicast, config.sacnStartChannel);
-                lume::sacnProtocol.begin();
-            } else {
-                lume::sacnProtocol.stop();
-            }
-            
-            // Handle MQTT enable/disable
-            if (config.mqttEnabled && config.mqttBroker.length() > 0 && wifiConnected) {
-                lume::MqttConfig mqttConfig;
-                mqttConfig.enabled = config.mqttEnabled;
-                mqttConfig.broker = config.mqttBroker;
-                mqttConfig.port = config.mqttPort;
-                mqttConfig.username = config.mqttUsername;
-                mqttConfig.password = config.mqttPassword;
-                mqttConfig.topicPrefix = config.mqttTopicPrefix;
-                lume::mqtt.setConfig(mqttConfig);
-            } else {
-                lume::MqttConfig disabledConfig;
-                disabledConfig.enabled = false;
-                lume::mqtt.setConfig(disabledConfig);
-            }
-            
+            // sACN/MQTT are NOT reconfigured from this (AsyncTCP) task either —
+            // stop()/setConfig() tore down sockets / swapped Strings that
+            // processProtocols()/mqtt.update() read every frame (P0.8). Enqueue a
+            // command; the loop re-applies the config (re-read from the global
+            // `config` persisted above) on its own task — single writer.
+            lume::controller.enqueueCommand(lume::Command::reconfigureProtocols());
+
             request->send(200, "application/json", "{\"success\":true}");
         } else {
             request->send(500, "application/json", "{\"error\":\"Failed to save\"}");

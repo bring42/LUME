@@ -124,7 +124,20 @@ void LumeController::update() {
         frameCounter++;
         return;
     }
-    
+
+    // Drain a staged direct-pixel frame (debug /api/pixels). Single-writer: the
+    // web task only wrote directPixels_ (atomic ready flag); leds[] is touched
+    // here, on the loop, then shown once. One-frame overlay — segments resume
+    // next frame (P0.1).
+    if (directPixels_.isReady()) {
+        uint16_t count = min(directPixels_.getLedCount(), ledCount);
+        memcpy(leds, directPixels_.getBuffer(), count * sizeof(CRGB));
+        directPixels_.clearReady();
+        FastLED.show();
+        frameCounter++;
+        return;
+    }
+
     // Clear only the LEDs not owned by an active segment. Effects own their
     // canvas (fill or fade) and many build fade-trails by reading the previous
     // frame (confetti, sinelon, wave, comet...). A blanket FastLED.clear() here
@@ -257,6 +270,12 @@ void LumeController::executeCommand(const Command& cmd) {
 
         case CommandType::StopNightlight:
             stopNightlight();
+            break;
+
+        case CommandType::ReconfigureProtocols:
+            // Applied on the loop (single writer) so protocol socket/config
+            // teardown no longer races processProtocols()/mqtt.update() (P0.8).
+            if (reconfigureProtocolsFn) reconfigureProtocolsFn();
             break;
 
         case CommandType::SaveScene:

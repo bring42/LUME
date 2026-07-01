@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include "segment.h"
 #include "command_queue.h"
+#include "../protocols/protocol.h"   // ProtocolBuffer (direct-pixel staging)
 #include "../constants.h"
 
 // Forward declare IProtocol interface
@@ -94,16 +95,29 @@ public:
     float getNightlightProgress() const;
     
     // --- Protocol management ---
-    
+
     // Register a protocol (called at startup)
     void registerProtocol(IProtocol* protocol);
-    
+
+    // Hook that re-applies sACN/MQTT config from the persisted global config.
+    // Set by main during setup so the ReconfigureProtocols command can run
+    // protocol reconfig on the loop task without the controller depending on
+    // mqtt.h/sacn.h (which would break the native test build). See P0.8.
+    void (*reconfigureProtocolsFn)() = nullptr;
+
     // --- Direct LED access (for protocols like sACN) ---
-    
+
     CRGB* getLeds() { return leds; }
     const CRGB* getLeds() const { return leds; }
     uint16_t getLedCount() const { return ledCount; }
-    
+
+    // Stage a full frame of pixels for the /api/pixels debug endpoint. Callable
+    // from the web task (double-buffer + atomic ready flag); the render loop
+    // drains it in update() so leds[] is only ever written on the loop (P0.1).
+    void stageDirectPixels(const CRGB* data, uint16_t count) {
+        directPixels_.write(data, count);
+    }
+
     // --- Command queue access (for handlers) ---
     
     // Enqueue a command (thread-safe)
@@ -140,7 +154,10 @@ private:
     // LED array
     CRGB leds[MAX_LED_COUNT];
     uint16_t ledCount;
-    
+
+    // Direct-pixel overlay staged by /api/pixels, drained on the loop (P0.1).
+    ProtocolBuffer<MAX_LED_COUNT> directPixels_;
+
     // Segments
     Segment segments[MAX_SEGMENTS];
     uint8_t segmentCount;

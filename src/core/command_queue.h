@@ -46,7 +46,10 @@ enum class CommandType : uint8_t {
     // Advanced
     ApplyEffectSpec,    // Apply AI-generated effect spec
     SaveScene,          // Persist current state
-    LoadScene           // Load saved state
+    LoadScene,          // Load saved state
+
+    // Protocols
+    ReconfigureProtocols // Re-apply sACN/MQTT config from the persisted global config
 };
 
 /**
@@ -259,6 +262,13 @@ struct Command {
     static Command stopNightlight() {
         Command cmd;
         cmd.type = CommandType::StopNightlight;
+        cmd.segmentId = 255;
+        return cmd;
+    }
+
+    static Command reconfigureProtocols() {
+        Command cmd;
+        cmd.type = CommandType::ReconfigureProtocols;
         cmd.segmentId = 255;
         return cmd;
     }

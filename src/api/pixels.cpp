@@ -3,6 +3,7 @@
 #include "../constants.h"
 #include "../logging.h"
 #include "../lume.h"
+#include <memory>
 
 // Static body buffer for async request handling
 static String pixelsBodyBuffer;
@@ -40,30 +41,43 @@ void handleApiPixels(AsyncWebServerRequest* request, uint8_t* data, size_t len, 
             return;
         }
         
-        CRGB* leds = lume::controller.getLeds();
         uint16_t ledCount = lume::controller.getLedCount();
-        
-        // Handle brightness if provided
+
+        // Brightness routes through the bus (single writer), not a direct call.
         if (doc["brightness"].is<int>()) {
-            lume::controller.setBrightness(constrain(doc["brightness"].as<int>(), 0, 255));
+            lume::controller.enqueueCommand(
+                lume::Command::setGlobalBrightness(constrain(doc["brightness"].as<int>(), 0, 255)));
         }
-        
+
+        if (ledCount == 0) {
+            request->send(200, "application/json", "{\"success\":true}");
+            return;
+        }
+
+        // Build the frame locally, then hand it to the render loop to display —
+        // this (AsyncTCP) task never touches leds[]/FastLED directly, so it no
+        // longer races the loop's writes/show() (P0.1). Heap-allocated: a full
+        // MAX_LED_COUNT frame is too large for the async task stack. The staged
+        // frame is a one-frame overlay; unset pixels are black, and segments
+        // resume the next frame (a behavior change vs the old sticky writes,
+        // acceptable for this debug endpoint).
+        std::unique_ptr<CRGB[]> frame(new CRGB[ledCount]);
+        memset(frame.get(), 0, ledCount * sizeof(CRGB));
+
         // Method 1: Array of [r,g,b] arrays
         if (doc["pixels"].is<JsonArray>()) {
             JsonArray pixels = doc["pixels"].as<JsonArray>();
             uint16_t count = min((uint16_t)pixels.size(), ledCount);
-            
             for (uint16_t i = 0; i < count; i++) {
                 JsonArray pixel = pixels[i].as<JsonArray>();
                 if (pixel.size() >= 3) {
-                    leds[i].r = pixel[0].as<uint8_t>();
-                    leds[i].g = pixel[1].as<uint8_t>();
-                    leds[i].b = pixel[2].as<uint8_t>();
+                    frame[i].r = pixel[0].as<uint8_t>();
+                    frame[i].g = pixel[1].as<uint8_t>();
+                    frame[i].b = pixel[2].as<uint8_t>();
                 }
             }
-            
-            FastLED.show();
-            
+            lume::controller.stageDirectPixels(frame.get(), ledCount);
+
             JsonDocument response;
             response["success"] = true;
             response["pixelsSet"] = count;
@@ -72,20 +86,18 @@ void handleApiPixels(AsyncWebServerRequest* request, uint8_t* data, size_t len, 
             request->send(200, "application/json", responseStr);
             return;
         }
-        
+
         // Method 2: Flat array [r,g,b,r,g,b,...]
         if (doc["rgb"].is<JsonArray>()) {
             JsonArray rgb = doc["rgb"].as<JsonArray>();
             uint16_t count = min((uint16_t)(rgb.size() / 3), ledCount);
-            
             for (uint16_t i = 0; i < count; i++) {
-                leds[i].r = rgb[i * 3].as<uint8_t>();
-                leds[i].g = rgb[i * 3 + 1].as<uint8_t>();
-                leds[i].b = rgb[i * 3 + 2].as<uint8_t>();
+                frame[i].r = rgb[i * 3].as<uint8_t>();
+                frame[i].g = rgb[i * 3 + 1].as<uint8_t>();
+                frame[i].b = rgb[i * 3 + 2].as<uint8_t>();
             }
-            
-            FastLED.show();
-            
+            lume::controller.stageDirectPixels(frame.get(), ledCount);
+
             JsonDocument response;
             response["success"] = true;
             response["pixelsSet"] = count;
@@ -94,7 +106,7 @@ void handleApiPixels(AsyncWebServerRequest* request, uint8_t* data, size_t len, 
             request->send(200, "application/json", responseStr);
             return;
         }
-        
+
         // Method 3: Fill all with single color
         if (doc["fill"].is<JsonArray>()) {
             JsonArray fill = doc["fill"].as<JsonArray>();
@@ -103,38 +115,34 @@ void handleApiPixels(AsyncWebServerRequest* request, uint8_t* data, size_t len, 
                 return;
             }
             CRGB color(fill[0].as<uint8_t>(), fill[1].as<uint8_t>(), fill[2].as<uint8_t>());
-            fill_solid(leds, ledCount, color);
-            FastLED.show();
-            
+            fill_solid(frame.get(), ledCount, color);
+            lume::controller.stageDirectPixels(frame.get(), ledCount);
+
             request->send(200, "application/json", "{\"success\":true,\"filled\":true}");
             return;
         }
-        
+
         // Method 4: Gradient between two colors
         if (doc["gradient"].is<JsonObject>()) {
             JsonObject grad = doc["gradient"].as<JsonObject>();
             JsonArray from = grad["from"].as<JsonArray>();
             JsonArray to = grad["to"].as<JsonArray>();
-            
+
             if (!validateRgbArray(from) || !validateRgbArray(to)) {
                 request->send(400, "application/json", "{\"error\":\"Gradient requires 'from' and 'to' with [r,g,b] arrays\"}");
                 return;
             }
-            
+
             CRGB startColor(from[0].as<uint8_t>(), from[1].as<uint8_t>(), from[2].as<uint8_t>());
             CRGB endColor(to[0].as<uint8_t>(), to[1].as<uint8_t>(), to[2].as<uint8_t>());
-            
-            // Guard ledCount==0: ledCount-1 underflows (uint16_t) to 65535 and
-            // fill_gradient_RGB writes 64k entries off the end of leds[] (P0.2).
-            if (ledCount > 0) {
-                fill_gradient_RGB(leds, 0, startColor, ledCount - 1, endColor);
-                FastLED.show();
-            }
+            // ledCount > 0 guaranteed above (P0.2 guard preserved).
+            fill_gradient_RGB(frame.get(), 0, startColor, ledCount - 1, endColor);
+            lume::controller.stageDirectPixels(frame.get(), ledCount);
 
             request->send(200, "application/json", "{\"success\":true,\"gradient\":true}");
             return;
         }
-        
+
         request->send(400, "application/json", "{\"error\":\"No valid pixel data. Use 'pixels', 'rgb', 'fill', or 'gradient'\"}");
     }
 }
