@@ -211,7 +211,11 @@ void setup() {
 
     // Setup web server
     setupServer();
-    
+
+    // Start the background AI worker (keeps the blocking prompt call off the
+    // AsyncTCP task — P0.4).
+    initAiPromptWorker();
+
     LOG_INFO(LogTag::MAIN, "Setup complete!");
     logMemoryStats(LogTag::MAIN, "at startup");
     
