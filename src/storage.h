@@ -4,6 +4,24 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
+// RAII guard for Storage's NVS access. The single Preferences object is shared
+// across tasks (saveLastEffect from the web/AI task vs saveLedState from the
+// render loop) — concurrent begin()/end() corrupts the handle. Recursive because
+// getSceneCount()/listScenes() call loadScene() while already holding it.
+class StorageLock {
+public:
+    explicit StorageLock(SemaphoreHandle_t m) : m_(m) {
+        if (m_) xSemaphoreTakeRecursive(m_, portMAX_DELAY);
+    }
+    ~StorageLock() { if (m_) xSemaphoreGiveRecursive(m_); }
+    StorageLock(const StorageLock&) = delete;
+    StorageLock& operator=(const StorageLock&) = delete;
+private:
+    SemaphoreHandle_t m_;
+};
 
 // Configuration structure
 struct Config {
@@ -96,6 +114,7 @@ public:
     
 private:
     Preferences prefs;
+    SemaphoreHandle_t mutex_;   // guards all prefs access (see StorageLock)
     static const char* NAMESPACE_CONFIG;
     static const char* NAMESPACE_LED;
     static const char* NAMESPACE_SCENES;

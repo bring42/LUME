@@ -7,13 +7,17 @@ const char* Storage::NAMESPACE_SCENES = "scenes";
 
 Storage storage;
 
-Storage::Storage() {}
+Storage::Storage() {
+    mutex_ = xSemaphoreCreateRecursiveMutex();
+}
 
 bool Storage::begin() {
+    StorageLock lock(mutex_);
     return true; // Preferences doesn't need explicit init
 }
 
 bool Storage::loadConfig(Config& config) {
+    StorageLock lock(mutex_);
     if (!prefs.begin(NAMESPACE_CONFIG, true)) { // read-only
         return false;
     }
@@ -45,6 +49,7 @@ bool Storage::loadConfig(Config& config) {
 }
 
 bool Storage::saveConfig(const Config& config) {
+    StorageLock lock(mutex_);
     if (!prefs.begin(NAMESPACE_CONFIG, false)) { // read-write
         return false;
     }
@@ -75,6 +80,7 @@ bool Storage::saveConfig(const Config& config) {
 }
 
 bool Storage::clearConfig() {
+    StorageLock lock(mutex_);
     if (!prefs.begin(NAMESPACE_CONFIG, false)) {
         return false;
     }
@@ -84,6 +90,7 @@ bool Storage::clearConfig() {
 }
 
 bool Storage::saveLedState(const JsonDocument& state) {
+    StorageLock lock(mutex_);
     if (!prefs.begin(NAMESPACE_LED, false)) {
         return false;
     }
@@ -103,6 +110,7 @@ bool Storage::saveLedState(const JsonDocument& state) {
 }
 
 bool Storage::loadLedState(JsonDocument& state) {
+    StorageLock lock(mutex_);
     if (!prefs.begin(NAMESPACE_LED, true)) {
         return false;
     }
@@ -115,6 +123,7 @@ bool Storage::loadLedState(JsonDocument& state) {
 }
 
 bool Storage::saveLastEffect(const char* effectId) {
+    StorageLock lock(mutex_);
     if (!prefs.begin(NAMESPACE_LED, false)) {
         return false;
     }
@@ -125,6 +134,7 @@ bool Storage::saveLastEffect(const char* effectId) {
 }
 
 bool Storage::loadLastEffect(String& effectId) {
+    StorageLock lock(mutex_);
     if (!prefs.begin(NAMESPACE_LED, true)) {
         return false;
     }
@@ -242,6 +252,7 @@ bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
 
 // Scene storage methods
 bool Storage::saveScene(uint8_t slot, const Scene& scene) {
+    StorageLock lock(mutex_);
     if (slot >= MAX_SCENES) return false;
     
     if (!prefs.begin(NAMESPACE_SCENES, false)) {
@@ -259,6 +270,7 @@ bool Storage::saveScene(uint8_t slot, const Scene& scene) {
 }
 
 bool Storage::loadScene(uint8_t slot, Scene& scene) {
+    StorageLock lock(mutex_);
     if (slot >= MAX_SCENES) return false;
     
     if (!prefs.begin(NAMESPACE_SCENES, true)) {
@@ -276,6 +288,7 @@ bool Storage::loadScene(uint8_t slot, Scene& scene) {
 }
 
 bool Storage::deleteScene(uint8_t slot) {
+    StorageLock lock(mutex_);
     if (slot >= MAX_SCENES) return false;
     
     if (!prefs.begin(NAMESPACE_SCENES, false)) {
@@ -293,6 +306,7 @@ bool Storage::deleteScene(uint8_t slot) {
 }
 
 int Storage::getSceneCount() {
+    StorageLock lock(mutex_);
     int count = 0;
     Scene scene;
     for (int i = 0; i < MAX_SCENES; i++) {
@@ -304,6 +318,7 @@ int Storage::getSceneCount() {
 }
 
 bool Storage::listScenes(JsonDocument& doc) {
+    StorageLock lock(mutex_);
     JsonArray arr = doc.to<JsonArray>();
     
     for (int i = 0; i < MAX_SCENES; i++) {
