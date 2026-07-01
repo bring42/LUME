@@ -19,19 +19,25 @@ void handleApiPixels(AsyncWebServerRequest* request, uint8_t* data, size_t len, 
     }
     
     if (index == 0) {
+        if (!beginBody(request)) {  // P0.3: one body at a time
+            request->send(409, "application/json", "{\"error\":\"Busy, retry\"}");
+            return;
+        }
         pixelsBodyBuffer = "";
         if (total > MAX_REQUEST_BODY_SIZE) {
+            endBody(request);
             request->send(413, "application/json", "{\"error\":\"Request body too large\"}");
             return;
         }
     }
-    
+
     // Append data safely
     for (size_t i = 0; i < len; i++) {
         pixelsBodyBuffer += (char)data[i];
     }
-    
+
     if (index + len >= total) {
+        endBody(request);   // P0.3: body fully assembled; release the slot
         JsonDocument doc;
         DeserializationError err = deserializeJson(doc, pixelsBodyBuffer);
         

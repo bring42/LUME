@@ -30,6 +30,7 @@
 
 // v2 architecture
 #include "core/controller.h"
+#include "core/body_guard.h"
 #include "visuallib/effects.h"
 #include "protocols/sacn.h"
 #include "protocols/mqtt.h"
@@ -72,6 +73,18 @@ unsigned long lastWifiAttempt = 0;
 bool webUiAvailable = false;
 
 // Auth helper - returns true if request is authorized
+// P0.3: one body may be assembled at a time (see core/body_guard.h). AsyncTCP
+// runs all body callbacks on one task, so no locking is needed against itself.
+static lume::BodyGuard g_bodyGuard;
+
+bool beginBody(AsyncWebServerRequest* request) {
+    return g_bodyGuard.begin(request, millis());
+}
+
+void endBody(AsyncWebServerRequest* request) {
+    g_bodyGuard.end(request);
+}
+
 bool checkAuth(AsyncWebServerRequest* request) {
     // If no auth token configured, allow all requests
     if (config.authToken.length() == 0) {
