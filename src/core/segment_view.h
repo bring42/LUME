@@ -2,6 +2,7 @@
 #define LUME_SEGMENT_VIEW_H
 
 #include <FastLED.h>
+#include "region.h"
 
 namespace lume {
 
@@ -37,31 +38,29 @@ constexpr size_t SCRATCHPAD_ALIGN = 8;
  */
 struct SegmentView {
     CRGB* base;           // Pointer to controller's LED array base
-    uint16_t start;       // First LED index in segment
-    uint16_t length;      // Number of LEDs in this segment
+    Region region;        // Which pixels this segment covers (P1.3)
     bool reversed;        // Run effect in reverse direction?
     uint8_t* scratchpad;  // Pointer to segment's scratchpad for stateful effects
-    
+
     // Default constructor (empty view)
-    SegmentView() : base(nullptr), start(0), length(0), reversed(false), scratchpad(nullptr) {}
-    
+    SegmentView() : base(nullptr), region(), reversed(false), scratchpad(nullptr) {}
+
     // Construct view from LED array base
     SegmentView(CRGB* ledArray, uint16_t startIdx, uint16_t len, bool rev = false, uint8_t* scratch = nullptr)
         : base(ledArray)
-        , start(startIdx)
-        , length(len)
+        , region(startIdx, len)
         , reversed(rev)
         , scratchpad(scratch) {}
-    
+
     // Indexed access - handles reversal transparently
     CRGB& operator[](uint16_t i) {
-        uint16_t idx = reversed ? (length - 1 - i) : i;
-        return base[start + idx];
+        uint16_t idx = reversed ? (region.length - 1 - i) : i;
+        return base[region.start + idx];
     }
-    
+
     const CRGB& operator[](uint16_t i) const {
-        uint16_t idx = reversed ? (length - 1 - i) : i;
-        return base[start + idx];
+        uint16_t idx = reversed ? (region.length - 1 - i) : i;
+        return base[region.start + idx];
     }
     
     // --- FastLED primitive wrappers ---
@@ -69,56 +68,59 @@ struct SegmentView {
     // (most FastLED operations don't care about direction)
     
     void fill(CRGB color) {
-        fill_solid(raw(), length, color);
+        fill_solid(raw(), region.length, color);
     }
-    
+
     void fill(CRGB color, uint16_t offset, uint16_t count) {
-        if (offset < length) {
-            uint16_t actualCount = min(count, (uint16_t)(length - offset));
+        if (offset < region.length) {
+            uint16_t actualCount = min(count, (uint16_t)(region.length - offset));
             fill_solid(raw() + offset, actualCount, color);
         }
     }
-    
+
     void clear() {
-        fill_solid(raw(), length, CRGB::Black);
+        fill_solid(raw(), region.length, CRGB::Black);
     }
-    
+
     void fade(uint8_t amount) {
-        fadeToBlackBy(raw(), length, amount);
+        fadeToBlackBy(raw(), region.length, amount);
     }
 
     // Fill with gradient (respects reversal)
     void gradient(CRGB startColor, CRGB endColor) {
         if (reversed) {
-            fill_gradient_RGB(raw(), length, endColor, startColor);
+            fill_gradient_RGB(raw(), region.length, endColor, startColor);
         } else {
-            fill_gradient_RGB(raw(), length, startColor, endColor);
+            fill_gradient_RGB(raw(), region.length, startColor, endColor);
         }
     }
-    
+
     // Fill with rainbow
     void rainbow(uint8_t startHue, uint8_t deltaHue = 5) {
         if (reversed) {
-            fill_rainbow(raw(), length, startHue + (deltaHue * length), -deltaHue);
+            fill_rainbow(raw(), region.length, startHue + (deltaHue * region.length), -deltaHue);
         } else {
-            fill_rainbow(raw(), length, startHue, deltaHue);
+            fill_rainbow(raw(), region.length, startHue, deltaHue);
         }
     }
-    
+
     // --- Direct access for advanced operations ---
-    
+
     // Get raw pointer to first LED in segment (for direct FastLED calls)
-    CRGB* raw() { return base + start; }
-    const CRGB* raw() const { return base + start; }
-    
+    CRGB* raw() { return base + region.start; }
+    const CRGB* raw() const { return base + region.start; }
+
+    // Get the pixel region this view covers (P1.3)
+    const Region& getRegion() const { return region; }
+
     // Get segment start index (for position tracking)
-    uint16_t getStart() const { return start; }
-    
+    uint16_t getStart() const { return region.start; }
+
     // Get length
-    uint16_t size() const { return length; }
-    
+    uint16_t size() const { return region.length; }
+
     // Check if valid
-    bool valid() const { return base != nullptr && length > 0; }
+    bool valid() const { return base != nullptr && !region.empty(); }
 
     // --- Scratchpad access for stateful effects ---
     

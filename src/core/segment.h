@@ -151,6 +151,10 @@ public:
     uint16_t getStart() const { return view.getStart(); }
     uint16_t getLength() const { return view.size(); }
     bool isReversed() const { return view.reversed; }
+
+    // The pixel region this segment covers (P1.3). Shared value type spoken by
+    // coverage and persistence; a Range today, a Rect when 2D lands.
+    const Region& getRegion() const { return view.getRegion(); }
     
     // Direct access to view (for advanced effects)
     SegmentView& getView() { return view; }

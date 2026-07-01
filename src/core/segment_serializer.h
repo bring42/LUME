@@ -18,10 +18,11 @@
 namespace lume {
 
 inline void serializeSegment(JsonObject obj, const Segment* seg) {
+    const Region& r = seg->getRegion();
     obj["id"]         = seg->getId();
-    obj["start"]      = seg->getStart();
-    obj["stop"]       = seg->getStart() + seg->getLength() - 1;  // inclusive last index
-    obj["length"]     = seg->getLength();
+    obj["start"]      = r.start;
+    obj["stop"]       = r.stop();       // inclusive last index (P1.3)
+    obj["length"]     = r.size();
     obj["reverse"]    = seg->isReversed();
     obj["brightness"] = seg->getBrightness();
     obj["effect"]     = seg->getEffectId();
