@@ -380,6 +380,7 @@ void handleApiV2EffectsList(AsyncWebServerRequest* request) {
         effect["id"] = info->id;
         effect["name"] = info->displayName;
         effect["category"] = info->categoryName();
+        effect["dims"] = info->dimsName();  // "1d" | "2d" | "any" (P1.2)
         
         // All effects now have schemas - serialize params from schema
         JsonArray params = effect["params"].to<JsonArray>();
