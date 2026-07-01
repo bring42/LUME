@@ -4,10 +4,15 @@
 
 #include "controller.h"
 #include "param_codec.h"
+#include "fastled_output.h"
 #include "../protocols/protocol.h"
 #include "../logging.h"
 
 namespace lume {
+
+// Default LED-output driver (RFC 0001 §6). Stateless; the controller points its
+// output_ at this unless setLedOutput() injects another.
+static FastLedOutput g_fastLedOutput;
 
 // Global instance
 LumeController controller;
@@ -34,7 +39,8 @@ LumeController::LumeController()
     , fpsFrameCount(0)
     , segmentsDirty_(false)
     , suppressDirty_(false)
-    , lastSegmentChange_(0) {
+    , lastSegmentChange_(0)
+    , output_(&g_fastLedOutput) {
 
     memset(leds, 0, sizeof(leds));
     memset(protocols_, 0, sizeof(protocols_));
@@ -48,15 +54,11 @@ void LumeController::begin(uint16_t count) {
         LOG_ERROR(LogTag::LED, "Failed to initialize command queue");
     }
     
-    // Initialize FastLED
-    // Note: LED_DATA_PIN, LED_STRIP_TYPE, and LED_COLOR_MODE are defined in constants.h
-    FastLED.addLeds<LED_STRIP_TYPE, LED_DATA_PIN, LED_COLOR_MODE>(leds, ledCount);
-    FastLED.setBrightness(globalBrightness);
-    FastLED.setCorrection(TypicalLEDStrip);
-    FastLED.setMaxPowerInVoltsAndMilliamps(LED_VOLTAGE, LED_MAX_MILLIAMPS);
-    
-    FastLED.clear();
-    FastLED.show();
+    // Initialize the LED output driver (FastLED by default; see RFC 0001 §6).
+    output_->begin(leds, ledCount);
+    output_->setBrightness(globalBrightness);
+    output_->clear();
+    output_->show();
     
     lastFrameTime = millis();
     fpsUpdateTime = millis();
@@ -110,8 +112,8 @@ void LumeController::update() {
     
     // Clear or handle power off
     if (!power) {
-        FastLED.clear();
-        FastLED.show();
+        output_->clear();
+        output_->show();
         return;
     }
     
@@ -120,7 +122,7 @@ void LumeController::update() {
     
     // If a protocol is active, it has already written to LEDs - just show
     if (protocolActive_) {
-        FastLED.show();
+        output_->show();
         frameCounter++;
         return;
     }
@@ -133,7 +135,7 @@ void LumeController::update() {
         uint16_t count = min(directPixels_.getLedCount(), ledCount);
         memcpy(leds, directPixels_.getBuffer(), count * sizeof(CRGB));
         directPixels_.clearReady();
-        FastLED.show();
+        output_->show();
         frameCounter++;
         return;
     }
@@ -153,7 +155,7 @@ void LumeController::update() {
     }
     
     // Show the result
-    FastLED.show();
+    output_->show();
     frameCounter++;
 }
 
