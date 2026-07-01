@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include "segment.h"
 #include "command_queue.h"
+#include "led_output.h"              // ILedOutput HAL seam (RFC 0001 §6)
 #include "../protocols/protocol.h"   // ProtocolBuffer (direct-pixel staging)
 #include "../constants.h"
 
@@ -40,9 +41,14 @@ public:
     LumeController();
     
     // --- Initialization ---
-    
+
     // Initialize with LED count (uses LED_DATA_PIN from constants.h)
     void begin(uint16_t count);
+
+    // Swap the LED-output driver (RFC 0001 §6). Defaults to FastLED; call before
+    // begin() to inject a different ILedOutput (ESP-IDF led_strip, emulator, a
+    // test mock, ...).
+    void setLedOutput(ILedOutput* output) { output_ = output; }
 
     // --- Frame update ---
     
@@ -81,9 +87,9 @@ public:
     void setPower(bool on) { power = on; }
     bool getPower() const { return power; }
     
-    void setBrightness(uint8_t bri) { 
-        globalBrightness = bri; 
-        FastLED.setBrightness(bri);
+    void setBrightness(uint8_t bri) {
+        globalBrightness = bri;
+        output_->setBrightness(bri);
     }
     uint8_t getBrightness() const { return globalBrightness; }
     
@@ -157,6 +163,9 @@ private:
 
     // Direct-pixel overlay staged by /api/pixels, drained on the loop (P0.1).
     ProtocolBuffer<MAX_LED_COUNT> directPixels_;
+
+    // LED output driver (RFC 0001 §6). Defaults to a FastLED impl in the ctor.
+    ILedOutput* output_;
 
     // Segments
     Segment segments[MAX_SEGMENTS];

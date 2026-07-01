@@ -279,8 +279,37 @@ void test_serialize_segment_canonical_shape() {
     TEST_ASSERT_EQUAL_STRING("#112233", obj["params"]["color"].as<const char*>());
 }
 
+// RFC 0001 §6: the LED output driver is pluggable via ILedOutput. A mock proves
+// the controller drives the injected output, not FastLED directly.
+struct MockOutput : ILedOutput {
+    int begins = 0, shows = 0, clears = 0;
+    uint8_t lastBrightness = 0;
+    void begin(CRGB*, uint16_t) override { begins++; }
+    void show() override { shows++; }
+    void setBrightness(uint8_t b) override { lastBrightness = b; }
+    void clear() override { clears++; }
+};
+
+void test_led_output_is_pluggable() {
+    LumeController c;
+    MockOutput mock;
+    c.setLedOutput(&mock);
+    c.begin(60);
+    TEST_ASSERT_EQUAL_INT(1, mock.begins);        // begin() bound the injected driver
+    TEST_ASSERT_TRUE(mock.shows >= 1);            // ...and pushed a frame
+
+    int showsBefore = mock.shows;
+    c.update();                                    // a render frame -> show() on the driver
+    TEST_ASSERT_TRUE(mock.shows > showsBefore);
+
+    c.enqueueCommand(Command::setGlobalBrightness(42));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(42, mock.lastBrightness);  // brightness routed to the driver
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
+    RUN_TEST(test_led_output_is_pluggable);
     RUN_TEST(test_serialize_segment_canonical_shape);
     RUN_TEST(test_create_is_deferred_then_applied);
     RUN_TEST(test_update_changes_params);
