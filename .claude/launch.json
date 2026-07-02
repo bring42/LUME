@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "lume-mock",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scripts/mock_server.py", "8092"],
+      "port": 8092
+    }
+  ]
+}

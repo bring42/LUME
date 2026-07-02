@@ -1,1402 +1,728 @@
-        // Modal management
-        function openConfigModal() {
-            document.getElementById('configModal').classList.add('show');
-            loadSegmentsConfig(); // Load segments when modal opens
-        }
-        
-        function closeConfigModal() {
-            document.getElementById('configModal').classList.remove('show');
-        }
-        
-        // Close modal when clicking outside
-        document.addEventListener('click', function(e) {
-            const modal = document.getElementById('configModal');
-            if (e.target === modal) {
-                closeConfigModal();
-            }
-        });
-        
-        // Theme management
-        function toggleTheme() {
-            const html = document.documentElement;
-            const currentTheme = html.getAttribute('data-theme') || 'dark';
-            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-            
-            html.setAttribute('data-theme', newTheme);
-            localStorage.setItem('theme', newTheme);
-            
-            // Update icon
-            const icon = document.getElementById('themeIcon');
-            icon.textContent = newTheme === 'dark' ? '🌙' : '☀️';
-        }
-        
-        // Load theme from localStorage on page load
-        function loadTheme() {
-            const savedTheme = localStorage.getItem('theme') || 'dark';
-            document.documentElement.setAttribute('data-theme', savedTheme);
-            const icon = document.getElementById('themeIcon');
-            icon.textContent = savedTheme === 'dark' ? '🌙' : '☀️';
-        }
-        
-        // Load theme immediately
-        loadTheme();
+/* ============================================================
+   LUME — web UI ("Gallery")
+   Vanilla, offline, no build step. Talks to the v2 API; mutations
+   return 202 and are reconciled via the /ws state push + GET refetch.
+   ============================================================ */
 
-        // Load palette preset (v2 cannot read preset back reliably)
-        (function loadPalettePreset(){
-            const saved = localStorage.getItem('palettePreset');
-            if (saved) {
-                const pal = document.getElementById('palette');
-                if (pal) pal.value = saved;
-                selectTileByValue('paletteTiles', saved);
-            }
-        })();
-        
-        // State
-        let sliderBindings = {};
-        let effectMetadata = {}; // Map of effect ID -> metadata (usesPalette, usesSpeed, etc.)
-        let activeSegmentId = 0; // Currently selected segment
-        
-        // Segment name helpers (stored in localStorage)
-        function getSegmentName(segmentId) {
-            const names = JSON.parse(localStorage.getItem('segmentNames') || '{}');
-            return names[segmentId] || null;
-        }
-        
-        function setSegmentName(segmentId, name) {
-            const names = JSON.parse(localStorage.getItem('segmentNames') || '{}');
-            if (name && name.trim()) {
-                names[segmentId] = name.trim();
-            } else {
-                delete names[segmentId];
-            }
-            localStorage.setItem('segmentNames', JSON.stringify(names));
-        }
-        
-        // Toast notification
-        function showToast(message, type = 'info') {
-            const toast = document.getElementById('toast');
-            toast.textContent = message;
-            toast.className = 'toast show ' + type;
-            setTimeout(() => toast.classList.remove('show'), 3000);
-        }
-        
-        // API helpers
-        async function api(endpoint, method = 'GET', body = null) {
-            const options = {
-                method,
-                headers: { 'Content-Type': 'application/json' }
-            };
-            if (body) options.body = JSON.stringify(body);
-            
-            const response = await fetch('/api' + endpoint, options);
-            if (!response.ok) {
-                // Try to extract error message from response body
-                try {
-                    const errorData = await response.json();
-                    const errorMsg = errorData.error || `HTTP ${response.status}`;
-                    throw new Error(errorMsg);
-                } catch (e) {
-                    // If parsing fails, throw generic error
-                    if (e.message && !e.message.startsWith('HTTP')) {
-                        throw e; // Re-throw if we successfully parsed the error
-                    }
-                    throw new Error(`HTTP ${response.status}`);
-                }
-            }
-            return response.json();
-        }
+// ---- state ----
+let ws = null;
+let effectMetadata = {};   // id -> {name, params, hasSchema, ...}
+let effectsList = [];      // ordered [{id, name}] for the rail
+let activeSegmentId = 0;
+let powerOn = true;
 
+const PALETTE_PRESETS = { rainbow:0, lava:1, ocean:2, party:3, forest:4, cloud:5, heat:6 };
 
-        // v2 API helpers (segments/controller)
-        const PALETTE_PRESETS = {
-  "rainbow": 0,
-  "lava": 1,
-  "ocean": 2,
-  "party": 3,
-  "forest": 4,
-  "cloud": 5,
-  "heat": 6
+// ---- tiny helpers ----
+function $(id) { return document.getElementById(id); }
+
+function showToast(message, type = 'info') {
+  const t = $('toast');
+  t.textContent = message;
+  t.className = 'toast show ' + type;
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+function hexToRgb(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return m ? [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)] : [0,0,255];
+}
+function rgbToHex(r,g,b) { return '#' + [r,g,b].map(x => x.toString(16).padStart(2,'0')).join(''); }
+
+async function api(endpoint, method = 'GET', body = null) {
+  const opt = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch('/api' + endpoint, opt);
+  if (!r.ok) {
+    try { const e = await r.json(); throw new Error(e.error || `HTTP ${r.status}`); }
+    catch (e) { if (e.message && !e.message.startsWith('HTTP')) throw e; throw new Error(`HTTP ${r.status}`); }
+  }
+  return r.json();
+}
+async function apiV2(path, method = 'GET', body = null) {
+  const opt = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch('/api/v2' + path, opt);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+// segment display names (client-side only; API has no name field)
+function getSegmentName(id) { return (JSON.parse(localStorage.getItem('segmentNames') || '{}'))[id] || null; }
+function setSegmentName(id, name) {
+  const names = JSON.parse(localStorage.getItem('segmentNames') || '{}');
+  if (name && name.trim()) names[id] = name.trim(); else delete names[id];
+  localStorage.setItem('segmentNames', JSON.stringify(names));
+}
+
+// ============================================================
+//  WebSocket — reconcile from the ~1s state push (optional)
+// ============================================================
+function connectWebSocket() {
+  try {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onclose = () => setTimeout(connectWebSocket, 2000);
+    ws.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
+        if (msg.type !== 'state') return;
+        if (msg.controller) applyControllerToUI(msg.controller);
+        if (msg.segments) {
+          const seg = msg.segments.find(s => s.id === activeSegmentId);
+          if (seg) applySegmentToUI(seg);
+        }
+      } catch (e) { /* ignore malformed frames */ }
+    };
+  } catch (e) { /* WS optional */ }
+}
+
+function applyControllerToUI(c) {
+  if (!c) return;
+  setPower(c.power !== false, false);
+  // brightness stays user-controlled; only reflect on explicit loads
+}
+
+function applySegmentToUI(seg) {
+  if (!seg) return;
+  $('effect').value = seg.effect || '';
+  selectEffectTile(seg.effect);
+  updateReadout();
+  if (seg.params) writeParamValues(seg.params);
+}
+
+// write server param values into existing schema controls (no rebuild)
+function writeParamValues(params) {
+  Object.keys(params).forEach(pid => {
+    const input = document.querySelector(`#param_${pid}`);
+    if (!input) return;
+    const v = params[pid];
+    if (input.type === 'checkbox') input.checked = v;
+    else if (input.type === 'color') input.value = typeof v === 'string' ? v : rgbToHex(v[0], v[1], v[2]);
+    else if (input.type === 'hidden' && pid === 'palette') selectPaletteTile(pid, v);
+    else {
+      input.value = v;
+      const disp = $(input.id + '_value');
+      if (disp) disp.textContent = v;
+      if (input.type === 'range') input.style.setProperty('--pct', pctOf(input) + '%');
+    }
+  });
+}
+
+// ============================================================
+//  Effects — rail built from the API, schema-driven params
+// ============================================================
+async function loadEffectMetadata() {
+  try {
+    const data = await apiV2('/effects');
+    (data.effects || []).forEach(e => {
+      effectMetadata[e.id] = { name: e.name, params: e.params || [], hasSchema: !!(e.params && e.params.length) };
+    });
+    effectsList = (data.effects || []).map(e => ({ id: e.id, name: e.name }));
+    buildEffectRail();
+  } catch (e) { console.error('effects load failed', e); }
+}
+
+function buildEffectRail() {
+  const rail = $('effectTiles');
+  rail.innerHTML = '';
+  effectsList.forEach(e => {
+    const tile = document.createElement('button');
+    tile.className = 'chip';
+    tile.dataset.value = e.id;
+    tile.type = 'button';
+    tile.innerHTML = `<div class="swatch" style="background-image:${effectGradientCss(e.id)}"></div><div class="nm">${e.name}</div>`;
+    tile.onclick = () => selectEffect(e.id);
+    rail.appendChild(tile);
+  });
+}
+
+function selectEffect(id) {
+  $('effect').value = id;
+  selectEffectTile(id);
+  updateEffectControls(id);
+  updateReadout();
+  applySegmentState();
+}
+
+function selectEffectTile(id) {
+  document.querySelectorAll('#effectTiles .chip').forEach(t => t.classList.toggle('sel', t.dataset.value === id));
+}
+
+// every effect exposes a schema -> render its controls
+function updateEffectControls(id) {
+  const meta = effectMetadata[id];
+  const c = $('schemaControls');
+  c.innerHTML = '';
+  if (!meta || !meta.hasSchema) return;
+  meta.params.forEach(p => { const el = createSchemaControl(p); if (el) c.appendChild(el); });
+}
+
+function pctOf(input) {
+  const min = +input.min || 0, max = +input.max || 255;
+  return Math.round(((+input.value - min) / (max - min)) * 100);
+}
+
+function createSchemaControl(param) {
+  const wrap = document.createElement('div');
+  wrap.className = 'ctl reveal';
+  wrap.dataset.paramId = param.id;
+  const pid = 'param_' + param.id;
+
+  if (param.type === 'int') {
+    const dflt = param.default ?? 128;
+    wrap.innerHTML =
+      `<div class="row"><label class="lbl" for="${pid}">${param.name}</label><span class="val" id="${pid}_value">${dflt}</span></div>`;
+    const input = document.createElement('input');
+    input.type = 'range'; input.id = pid; input.dataset.paramId = param.id;
+    input.min = param.min ?? 0; input.max = param.max ?? 255; input.value = dflt;
+    input.style.marginTop = '10px';
+    input.style.setProperty('--pct', pctOf(input) + '%');
+    input.addEventListener('input', () => {
+      $(pid + '_value').textContent = input.value;
+      input.style.setProperty('--pct', pctOf(input) + '%');
+    });
+    ['pointerup','touchend'].forEach(ev => input.addEventListener(ev, applySegmentState));
+    input.addEventListener('keyup', applySegmentState);
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  if (param.type === 'float') {
+    wrap.innerHTML = `<label class="ctl-label lbl" for="${pid}">${param.name}</label>`;
+    const input = document.createElement('input');
+    input.type = 'number'; input.id = pid; input.dataset.paramId = param.id;
+    input.step = '0.01'; input.min = param.min ?? 0; input.max = param.max ?? 1; input.value = param.default ?? 0.5;
+    input.addEventListener('change', applySegmentState);
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  if (param.type === 'color') {
+    wrap.innerHTML =
+      `<label class="ctl-label lbl">${param.name}</label>
+       <div class="color-field"><span class="color-cap">${param.name}</span></div>`;
+    const input = document.createElement('input');
+    input.type = 'color'; input.id = pid; input.dataset.paramId = param.id;
+    input.value = param.default || '#ff0000';
+    input.addEventListener('input', updateReadout);
+    input.addEventListener('change', applySegmentState);
+    wrap.querySelector('.color-field').appendChild(input);
+    return wrap;
+  }
+
+  if (param.type === 'bool') {
+    wrap.classList.add('ctl-toggle');
+    wrap.innerHTML = `<label class="lbl">${param.name}</label>`;
+    const lab = document.createElement('label'); lab.className = 'toggle';
+    const input = document.createElement('input');
+    input.type = 'checkbox'; input.id = pid; input.dataset.paramId = param.id; input.checked = !!param.default;
+    input.addEventListener('change', applySegmentState);
+    const sl = document.createElement('span'); sl.className = 'toggle-slider';
+    lab.appendChild(input); lab.appendChild(sl); wrap.appendChild(lab);
+    return wrap;
+  }
+
+  if (param.type === 'enum') {
+    wrap.innerHTML = `<label class="ctl-label lbl" for="${pid}">${param.name}</label>`;
+    const sel = document.createElement('select');
+    sel.id = pid; sel.dataset.paramId = param.id;
+    (param.options || '').split('|').forEach((opt, i) => {
+      const o = document.createElement('option'); o.value = i; o.textContent = opt; sel.appendChild(o);
+    });
+    sel.value = param.default ?? 0;
+    sel.addEventListener('change', applySegmentState);
+    wrap.appendChild(sel);
+    return wrap;
+  }
+
+  if (param.type === 'palette') {
+    wrap.innerHTML = `<label class="ctl-label lbl">${param.name}</label>`;
+    const row = document.createElement('div'); row.className = 'pal-row'; row.id = 'paletteTiles_' + param.id;
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden'; hidden.id = pid; hidden.dataset.paramId = param.id;
+    hidden.value = param.default || 'rainbow';
+    Object.keys(PALETTE_PRESETS).forEach(name => {
+      const tile = document.createElement('div');
+      tile.className = 'pal-tile' + (name === hidden.value ? ' sel' : '');
+      tile.dataset.value = name;
+      tile.innerHTML = `<div class="pal-swatch" style="background:${paletteGradientCss(name)}"></div><div class="pal-nm">${name[0].toUpperCase()+name.slice(1)}</div>`;
+      tile.onclick = () => {
+        hidden.value = name;
+        row.querySelectorAll('.pal-tile').forEach(t => t.classList.toggle('sel', t === tile));
+        applySegmentState();
+      };
+      row.appendChild(tile);
+    });
+    wrap.appendChild(row); wrap.appendChild(hidden);
+    return wrap;
+  }
+
+  return null;
+}
+
+function selectPaletteTile(pid, value) {
+  const hidden = $('param_' + pid); if (hidden) hidden.value = value;
+  const row = $('paletteTiles_' + pid);
+  if (row) row.querySelectorAll('.pal-tile').forEach(t => t.classList.toggle('sel', t.dataset.value === value));
+}
+
+// ============================================================
+//  Apply state (fire-and-forget; reconcile via WS/GET)
+// ============================================================
+async function applyControllerState() {
+  try {
+    await apiV2('/controller', 'PUT', { power: powerOn, brightness: parseInt($('brightness').value) });
+  } catch (e) { console.error('controller apply failed', e); }
+}
+
+async function applySegmentState() {
+  const effectId = $('effect').value;
+  if (!effectId) return;
+  const segment = { effect: effectId };
+  const meta = effectMetadata[effectId];
+  if (meta && meta.hasSchema) {
+    const params = {};
+    let palette = null;
+    document.querySelectorAll('#schemaControls > .ctl').forEach(group => {
+      const pid = group.dataset.paramId;
+      let input = group.querySelector('input') || group.querySelector('select');
+      if (!input) return;
+      let value;
+      if (input.type === 'checkbox') value = input.checked;
+      else if (input.type === 'number') value = parseFloat(input.value);
+      else if (input.type === 'range') value = parseInt(input.value);
+      else if (input.type === 'color') value = input.value;
+      else if (input.tagName === 'SELECT') value = parseInt(input.value);
+      else value = input.value;
+      if (pid === 'palette') palette = PALETTE_PRESETS[input.value] ?? 0;
+      else params[pid] = value;
+    });
+    if (Object.keys(params).length) segment.params = params;
+    if (palette !== null) segment.palette = palette;
+  }
+  try {
+    if (activeSegmentId >= 0) { await apiV2(`/segments/${activeSegmentId}`, 'PUT', segment); showToast('Applied', 'success'); }
+    else showToast('No segment selected', 'error');
+  } catch (e) { showToast('Could not apply', 'error'); }
+  updateReadout();
+}
+
+// ============================================================
+//  Segments
+// ============================================================
+async function loadSegments() {
+  try {
+    const data = await apiV2('/segments');
+    const sel = $('segmentSelector');
+    if (data.segments && data.segments.length) {
+      sel.innerHTML = data.segments.map(s => {
+        const nm = getSegmentName(s.id);
+        const label = nm ? `${nm} · LEDs ${s.start}–${s.stop}` : `Segment ${s.id} · LEDs ${s.start}–${s.stop}`;
+        return `<option value="${s.id}">${label}</option>`;
+      }).join('');
+      activeSegmentId = data.segments[0].id;
+      sel.value = activeSegmentId;
+      await loadSegmentState(activeSegmentId);
+    } else {
+      sel.innerHTML = '<option value="-1">No segments — add one in Settings</option>';
+      activeSegmentId = -1;
+    }
+  } catch (e) { console.error('segments load failed', e); }
+}
+
+async function switchSegment(id) { activeSegmentId = id; await loadSegmentState(id); }
+
+async function loadSegmentState(id) {
+  try {
+    const seg = await apiV2(`/segments/${id}`);
+    $('effect').value = seg.effect || '';
+    selectEffectTile(seg.effect);
+    updateEffectControls(seg.effect);
+    if (seg.params) writeParamValues(seg.params);
+    updateReadout();
+  } catch (e) { console.error('segment state load failed', e); }
+}
+
+async function loadLedState() {
+  try {
+    const state = await apiV2('/segments');
+    setPower(state.power !== false, false);
+    $('brightness').value = state.brightness ?? 128;
+    $('brightnessValue').textContent = state.brightness ?? 128;
+    $('brightness').style.setProperty('--pct', pctOf($('brightness')) + '%');
+    await loadSegments();
+  } catch (e) { console.error('led state load failed', e); }
+}
+
+// ============================================================
+//  Power + brightness
+// ============================================================
+function setPower(on, push) {
+  powerOn = on;
+  const sw = $('powerSwitch');
+  sw.classList.toggle('on', on);
+  sw.setAttribute('aria-checked', on ? 'true' : 'false');
+  $('device').classList.toggle('off', !on);
+  updateReadout();
+  if (push) applyControllerState();
+}
+
+function togglePower() { setPower(!powerOn, true); }
+
+$('powerSwitch').addEventListener('click', togglePower);
+$('powerSwitch').addEventListener('keydown', e => {
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); togglePower(); }
+});
+
+// brightness slider — reflect while dragging, apply on release
+(function bindBrightness() {
+  const input = $('brightness'), disp = $('brightnessValue');
+  input.style.setProperty('--pct', pctOf(input) + '%');
+  input.addEventListener('input', () => {
+    disp.textContent = input.value;
+    input.style.setProperty('--pct', pctOf(input) + '%');
+    updateReadout();
+  });
+  ['pointerup','touchend'].forEach(ev => input.addEventListener(ev, applyControllerState));
+  input.addEventListener('keyup', applyControllerState);
+})();
+
+function updateReadout() {
+  const id = $('effect').value;
+  const name = effectMetadata[id]?.name || (id ? id : '—');
+  const pct = Math.round((parseInt($('brightness').value) / 255) * 100);
+  $('readoutName').textContent = powerOn ? `${name} · ${pct}%` : 'Standby';
+}
+
+// ============================================================
+//  Status
+// ============================================================
+async function loadStatus() {
+  try {
+    const s = await api('/status');
+    $('wifiDot').className = 'dot';
+    $('wifiStatus').textContent = s.wifi || 'Connected';
+    $('ipAddress').textContent = s.ip || '—';
+    const up = s.uptime || 0;
+    $('uptime').textContent = `${Math.floor(up/3600)}h ${Math.floor((up%3600)/60)}m`;
+
+    const sacn = s.sacn || {}, sd = $('sacnDot'), st = $('sacnStatusText');
+    if (!sacn.enabled) { sd.className = 'dot offline'; st.textContent = 'Not enabled'; }
+    else if (sacn.receiving) { sd.className = 'dot'; st.textContent = `Receiving · universe ${sacn.universe}`; }
+    else { sd.className = 'dot loading'; st.textContent = `Waiting for data · universe ${sacn.universe}`; }
+
+    const mqtt = s.mqtt || {}, md = $('mqttDot'), mt = $('mqttStatusText');
+    if (!mqtt.enabled) { md.className = 'dot offline'; mt.textContent = 'Not enabled'; }
+    else if (mqtt.connected) { md.className = 'dot'; mt.textContent = `Connected · ${mqtt.broker}`; }
+    else { md.className = 'dot loading'; mt.textContent = 'Connecting…'; }
+  } catch (e) {
+    $('wifiDot').className = 'dot offline';
+    $('wifiStatus').textContent = 'Offline';
+  }
+}
+
+// ============================================================
+//  Nightlight
+// ============================================================
+let nightlightPoll = null;
+let updatingNightlightUI = false;
+
+function toggleNightlightSection() {
+  const c = $('nightlightControls');
+  const open = !c.classList.contains('open');
+  c.classList.toggle('open', open);
+  if (open) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function loadNightlightStatus() {
+  try { updateNightlightUI(await api('/nightlight')); } catch (e) { /* ignore */ }
+}
+
+function updateNightlightUI(status) {
+  const active = status.active;
+  updatingNightlightUI = true; $('nightlightToggle').checked = active; updatingNightlightUI = false;
+  $('startNightlightBtn').style.display = active ? 'none' : '';
+  $('stopNightlightBtn').style.display = active ? '' : 'none';
+  $('nightlightProgress').style.display = active ? '' : 'none';
+  $('nightlightControls').classList.toggle('open', active);
+  if (active) {
+    const p = Math.round((status.progress || 0) * 100);
+    $('nightlightProgressBar').style.width = p + '%';
+    $('nightlightProgressText').textContent = p + '%';
+    if (!nightlightPoll) nightlightPoll = setInterval(loadNightlightStatus, 2000);
+  } else if (nightlightPoll) { clearInterval(nightlightPoll); nightlightPoll = null; }
+}
+
+async function startNightlight() {
+  try {
+    await api('/nightlight', 'POST', {
+      duration: parseInt($('nightlightDuration').value) * 60,
+      targetBrightness: parseInt($('nightlightTarget').value)
+    });
+    showToast('Nightlight started', 'success');
+    setTimeout(loadNightlightStatus, 200);
+  } catch (e) {
+    showToast('Could not start nightlight', 'error');
+    updatingNightlightUI = true; $('nightlightToggle').checked = false; updatingNightlightUI = false;
+  }
+}
+
+async function stopNightlight() {
+  try {
+    await api('/nightlight/stop', 'POST', {});
+    showToast('Nightlight stopped', 'success');
+    if (nightlightPoll) { clearInterval(nightlightPoll); nightlightPoll = null; }
+    updatingNightlightUI = true; $('nightlightToggle').checked = false; updatingNightlightUI = false;
+    $('startNightlightBtn').style.display = '';
+    $('stopNightlightBtn').style.display = 'none';
+    $('nightlightProgress').style.display = 'none';
+  } catch (e) { showToast('Could not stop nightlight', 'error'); }
+}
+
+$('nightlightToggle').addEventListener('change', async function () {
+  if (updatingNightlightUI) return;
+  if (this.checked) $('nightlightControls').classList.add('open');
+  else await stopNightlight();
+});
+$('nightlightDuration').addEventListener('input', function () { $('nightlightDurationValue').textContent = this.value + ' min'; this.style.setProperty('--pct', pctOf(this) + '%'); });
+$('nightlightTarget').addEventListener('input', function () { const v = +this.value; $('nightlightTargetValue').textContent = v === 0 ? 'Off' : v; this.style.setProperty('--pct', pctOf(this) + '%'); });
+
+// ============================================================
+//  Settings modal
+// ============================================================
+function openConfigModal() { $('configModal').classList.add('show'); loadSegmentsConfig(); }
+function closeConfigModal() { $('configModal').classList.remove('show'); }
+document.addEventListener('click', e => { if (e.target === $('configModal')) closeConfigModal(); });
+
+function toggleSettings(id, show) { $(id).classList.toggle('open', show); }
+
+async function loadConfig() {
+  try {
+    const c = await api('/config');
+    $('wifiSSID').value = c.wifiSSID || '';
+    $('ledCount').value = c.ledCount || 160;
+    $('aiApiKey').value = '';
+    $('aiModel').value = c.aiModel || 'claude-3-5-haiku-20241022';
+    const sacn = c.sacnEnabled || false;
+    $('sacnEnabled').checked = sacn;
+    $('sacnUniverse').value = c.sacnUniverse || 1;
+    $('sacnStartChannel').value = c.sacnStartChannel || 1;
+    toggleSettings('sacnSettings', sacn);
+    const mqtt = c.mqttEnabled || false;
+    $('mqttEnabled').checked = mqtt;
+    $('mqttBroker').value = c.mqttBroker || '';
+    $('mqttPort').value = c.mqttPort || 1883;
+    $('mqttUsername').value = (c.mqttUsername && c.mqttUsername !== '****') ? c.mqttUsername : '';
+    $('mqttPassword').value = '';
+    $('mqttTopicPrefix').value = c.mqttTopicPrefix || 'lume';
+    toggleSettings('mqttSettings', mqtt);
+  } catch (e) { console.error('config load failed', e); }
+}
+
+async function saveConfig() {
+  const config = {
+    wifiSSID: $('wifiSSID').value, wifiPassword: $('wifiPassword').value,
+    ledCount: parseInt($('ledCount').value),
+    aiApiKey: $('aiApiKey').value, aiModel: $('aiModel').value,
+    sacnEnabled: $('sacnEnabled').checked, sacnUniverse: parseInt($('sacnUniverse').value), sacnStartChannel: parseInt($('sacnStartChannel').value),
+    mqttEnabled: $('mqttEnabled').checked, mqttBroker: $('mqttBroker').value, mqttPort: parseInt($('mqttPort').value),
+    mqttUsername: $('mqttUsername').value, mqttPassword: $('mqttPassword').value, mqttTopicPrefix: $('mqttTopicPrefix').value
+  };
+  if (config.wifiPassword === '') delete config.wifiPassword;
+  if (config.mqttPassword === '') delete config.mqttPassword;
+  if (config.aiApiKey === '') delete config.aiApiKey;
+  try { await api('/config', 'POST', config); showToast('Settings saved', 'success'); loadConfig(); }
+  catch (e) { showToast('Could not save settings', 'error'); }
+}
+
+async function loadSegmentsConfig() {
+  try {
+    const data = await apiV2('/segments');
+    const box = $('segmentsList');
+    if (!data.segments || !data.segments.length) { box.innerHTML = '<p style="color:var(--ink-3);font-size:13px">No segments configured</p>'; return; }
+    box.innerHTML = data.segments.map(s => {
+      const nm = getSegmentName(s.id) || `Segment ${s.id}`;
+      return `<div class="seg-item">
+        <div class="seg-info">
+          <div class="seg-name">${nm}</div>
+          <div class="seg-meta">LEDs ${s.start}–${s.stop} · ${s.length} LEDs${s.effect ? ' · ' + s.effect : ''}</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="editSegmentName(${s.id})">Rename</button>
+        ${s.length > 1 ? `<button class="btn btn-outline btn-sm" onclick="splitSegment(${s.id}, ${s.start}, ${s.length})">Split</button>` : ''}
+        <button class="btn btn-outline btn-sm" onclick="deleteSegmentConfig(${s.id})">Delete</button>
+      </div>`;
+    }).join('');
+  } catch (e) { console.error('segments config load failed', e); }
+}
+
+async function editSegmentName(id) {
+  const cur = getSegmentName(id) || '';
+  const nm = prompt(`Name for segment ${id}:`, cur);
+  if (nm !== null) { setSegmentName(id, nm); await loadSegmentsConfig(); await loadSegments(); }
+}
+
+async function splitSegment(id, start, length) {
+  const at = prompt(`Split segment ${id} at LED position? (${start + 1}–${start + length - 1})`);
+  if (!at) return;
+  const pos = parseInt(at);
+  if (isNaN(pos) || pos <= start || pos >= start + length) { showToast('Invalid split position', 'error'); return; }
+  try {
+    await fetch('/api/v2/segments/' + id, { method: 'DELETE' });
+    await apiV2('/segments', 'POST', { start, length: pos - start });
+    await apiV2('/segments', 'POST', { start: pos, length: length - (pos - start) });
+    showToast('Segment split', 'success'); loadSegmentsConfig();
+  } catch (e) { showToast('Could not split segment', 'error'); }
+}
+
+async function addSegment() {
+  const start = parseInt($('newSegmentStart').value), length = parseInt($('newSegmentLength').value);
+  if (isNaN(start) || isNaN(length) || start < 0 || length < 1) { showToast('Invalid segment range', 'error'); return; }
+  try {
+    await apiV2('/segments', 'POST', { start, length });
+    showToast('Segment created', 'success'); loadSegmentsConfig();
+    $('newSegmentStart').value = start + length;
+  } catch (e) { showToast('Could not create segment', 'error'); }
+}
+
+async function deleteSegmentConfig(id) {
+  if (!confirm(`Delete segment ${id}?`)) return;
+  try { await fetch('/api/v2/segments/' + id, { method: 'DELETE' }); showToast('Segment deleted', 'success'); loadSegmentsConfig(); }
+  catch (e) { showToast('Could not delete segment', 'error'); }
+}
+
+$('sacnEnabled').addEventListener('change', function () { toggleSettings('sacnSettings', this.checked); });
+$('mqttEnabled').addEventListener('change', function () { toggleSettings('mqttSettings', this.checked); });
+
+// ============================================================
+//  AI prompt
+// ============================================================
+async function sendAIPrompt() {
+  const prompt = $('aiPrompt').value.trim();
+  if (!prompt) { showToast('Enter a prompt first', 'error'); return; }
+  const box = $('aiStatus'), txt = $('aiStatusText');
+  box.classList.add('show'); txt.textContent = 'Working…';
+  try {
+    const r = await api('/prompt', 'POST', { prompt });
+    if (r.success) {
+      showToast('Lights updated', 'success');
+      txt.textContent = r.message || 'Applied.';
+      setTimeout(() => box.classList.remove('show'), 3000);
+      await loadLedState();
+    } else { showToast(r.error || 'Could not process prompt', 'error'); box.classList.remove('show'); }
+  } catch (e) {
+    showToast('Error: ' + (e.message || 'network'), 'error');
+    txt.textContent = 'Error: ' + (e.message || 'network');
+    setTimeout(() => box.classList.remove('show'), 5000);
+  }
+}
+$('aiPrompt').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAIPrompt(); } });
+
+// ============================================================
+//  Live strip render — an approximation of the lit surface.
+//  (Exact per-pixel render is the future WASM emulator.)
+// ============================================================
+const GRADS = {
+  amber:   [[0,[58,21,0]],[.5,[231,165,82]],[1,[255,201,126]]],
+  ember:   [[0,[40,10,0]],[.5,[255,120,30]],[1,[255,190,90]]],
+  fire:    [[0,[8,2,0]],[.35,[190,40,0]],[.7,[255,140,10]],[1,[255,230,140]]],
+  spectrum:[[0,[230,20,60]],[.25,[255,180,0]],[.5,[40,200,90]],[.75,[0,140,230]],[1,[120,60,220]]],
+  ocean:   [[0,[3,10,40]],[.5,[0,120,180]],[.8,[0,190,200]],[1,[150,240,230]]],
+  forest:  [[0,[11,60,20]],[.5,[34,139,34]],[1,[144,238,144]]],
+  ice:     [[0,[30,58,95]],[.5,[70,130,180]],[1,[240,248,255]]],
+  magenta: [[0,[60,0,40]],[.5,[220,20,120]],[1,[255,120,200]]],
+  white:   [[0,[70,70,70]],[.5,[220,220,220]],[1,[255,255,255]]],
+  red:     [[0,[40,0,0]],[.5,[200,20,20]],[1,[255,120,90]]],
+  blueRed: [[0,[0,0,180]],[1,[200,0,0]]],
 };
+// effect id -> [gradient, motion]
+const EFF = {
+  solid:['amber','static'], gradient:['blueRed','static'], rainbow:['spectrum','hue'],
+  fire:['fire','flicker'], fireup:['fire','flicker'], colorwaves:['spectrum','scroll'],
+  wave:['ocean','scroll'], theater:['white','scroll'], sparkle:['white','sparkle'],
+  pulse:['magenta','breathe'], breathe:['ocean','breathe'], noise:['forest','scroll'],
+  meteor:['white','comet'], comet:['amber','comet'], rain:['ocean','sparkle'],
+  twinkle:['ice','sparkle'], strobe:['white','blink'], sinelon:['spectrum','scroll'],
+  scanner:['red','comet'], candle:['ember','flicker'], pride:['spectrum','hue'],
+  pacifica:['ocean','scroll'], confetti:['spectrum','sparkle'],
+};
+function sampleGrad(stops, x) {
+  x = Math.max(0, Math.min(1, x));
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (x >= stops[i][0] && x <= stops[i+1][0]) {
+      const t = (x - stops[i][0]) / (stops[i+1][0] - stops[i][0]);
+      const a = stops[i][1], b = stops[i+1][1];
+      return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+    }
+  }
+  return stops[stops.length-1][1];
+}
+function hsv(h,s,v){let i=Math.floor(h*6),f=h*6-i,p=v*(1-s),q=v*(1-f*s),t=v*(1-(1-f)*s),r,g,b;
+  switch(i%6){case 0:r=v;g=t;b=p;break;case 1:r=q;g=v;b=p;break;case 2:r=p;g=v;b=t;break;case 3:r=p;g=q;b=v;break;case 4:r=t;g=p;b=v;break;default:r=v;g=p;b=q;}
+  return [r*255,g*255,b*255];}
+function effectGradientCss(id) {
+  const g = GRADS[(EFF[id] || ['amber'])[0]];
+  return 'linear-gradient(90deg,' + g.map(s => `rgb(${s[1].map(Math.round).join(',')}) ${Math.round(s[0]*100)}%`).join(',') + ')';
+}
+function paletteGradientCss(name) {
+  const map = { rainbow:'spectrum', lava:'fire', ocean:'ocean', party:'magenta', forest:'forest', cloud:'ice', heat:'ember' };
+  const g = GRADS[map[name] || 'spectrum'];
+  return 'linear-gradient(90deg,' + g.map(s => `rgb(${s[1].map(Math.round).join(',')}) ${Math.round(s[0]*100)}%`).join(',') + ')';
+}
 
-        async function apiV2(path, method = 'GET', body = null) {
-            const options = {
-                method,
-                headers: { 'Content-Type': 'application/json' }
-            };
-            if (body) options.body = JSON.stringify(body);
+(function stripLoop() {
+  const cv = $('glow'), ctx = cv.getContext('2d');
+  const N = 100, W = cv.width, H = cv.height;
+  let level = 1, t0 = null;
+  function noise(i, t) { return (Math.sin(i*0.35+t*4)+Math.sin(i*0.13-t*2.7))*0.25+0.5; }
+  function frame(ts) {
+    if (t0 === null) t0 = ts;
+    const t = (ts - t0) / 1000;
+    level += ((powerOn ? 1 : 0) - level) * 0.08;
+    cv.style.opacity = level.toFixed(3);
+    const id = $('effect').value;
+    const [gradName, motion] = EFF[id] || ['amber', 'static'];
+    const stops = GRADS[gradName];
+    const bright = parseInt($('brightness').value || 255) / 255;
+    const head = ((t * 0.45) % 1) * N;
+    const grad = ctx.createLinearGradient(0, 0, W, 0);
+    for (let i = 0; i <= N; i++) {
+      const x = i / N; let c, m = 1;
+      switch (motion) {
+        case 'hue':     c = hsv((x + t*0.05) % 1, 0.85, 1); break;
+        case 'scroll':  c = sampleGrad(stops, (x + t*0.09) % 1); break;
+        case 'flicker': c = sampleGrad(stops, noise(i, t)); break;
+        case 'breathe': c = sampleGrad(stops, x); m = (Math.sin(t*1.3)+1)/2*0.8+0.2; break;
+        case 'blink':   c = sampleGrad(stops, x); m = (Math.sin(t*11) > 0 ? 1 : 0.05); break;
+        case 'comet':   { c = sampleGrad(stops, 0.9); let d = i - head; if (d > 0) d -= N; m = Math.max(0, 1 + d/20); m *= m; break; }
+        case 'sparkle': { c = sampleGrad(stops, x); const s = (Math.sin(i*97.13 + Math.floor(t*6)*13.7) * 43758.5) % 1; m = (Math.abs(s) > 0.86 ? 1 : 0.12); break; }
+        default:        c = sampleGrad(stops, x);
+      }
+      m *= bright;
+      grad.addColorStop(x, `rgb(${Math.round(c[0]*m)},${Math.round(c[1]*m)},${Math.round(c[2]*m)})`);
+    }
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
 
-            const response = await fetch('/api/v2' + path, options);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            return response.json();
-        }
-
-        // WebSocket (optional): server should expose /ws and send {type:'state', controller:{...}, segments:[...]}
-        let ws = null;
-        function connectWebSocket() {
-            try {
-                const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-                ws = new WebSocket(`${proto}://${location.host}/ws`);
-                ws.onopen = () => console.log('WS connected');
-                ws.onclose = () => {
-                    console.log('WS disconnected, retrying...');
-                    setTimeout(connectWebSocket, 2000);
-                };
-                ws.onmessage = (evt) => {
-                    try {
-                        const msg = JSON.parse(evt.data);
-                        if (msg.type === 'state') {
-                            if (msg.controller) applyControllerToUI(msg.controller);
-                            if (msg.segments) {
-                                // Update the currently active segment, not always segment 0
-                                const activeSeg = msg.segments.find(s => s.id === activeSegmentId);
-                                if (activeSeg) applySegmentToUI(activeSeg);
-                            }
-                        }
-                    } catch (e) {
-                        console.warn('WS message parse error', e);
-                    }
-                };
-            } catch (e) {
-                console.warn('WS init failed', e);
-            }
-        }
-
-        function selectActiveSegment(segments) {
-            // Current UI is single-segment oriented; default to segment 0 if present, else first segment.
-            if (!Array.isArray(segments) || segments.length === 0) return null;
-            const s0 = segments.find(s => s.id === 0);
-            return s0 || segments[0];
-        }
-
-        function applyControllerToUI(controller) {
-            if (!controller) return;
-            document.getElementById('powerToggle').checked = controller.power !== false;
-            // Brightness input is user-controlled only, never updated from server
-        }
-
-        function applySegmentToUI(seg) {
-            if (!seg) return;
-            
-            // Update effect selection
-            document.getElementById('effect').value = seg.effect || 'rainbow';
-            selectTileByValue('effectTiles', seg.effect || 'rainbow');
-            
-            // DON'T call updateEffectControls() here - it rebuilds controls and interrupts user input
-            // Controls are already rendered when effect changes via loadSegmentState()
-            
-            // Populate schema control values from seg.params
-            if (seg.params) {
-                Object.keys(seg.params).forEach(paramId => {
-                    const input = document.querySelector(`#param_${paramId}`);
-                    if (input) {
-                        const value = seg.params[paramId];
-                        if (input.type === 'checkbox') {
-                            input.checked = value;
-                        } else if (input.type === 'color') {
-                            // Value might be hex string or RGB array
-                            if (typeof value === 'string') {
-                                input.value = value;
-                            } else if (Array.isArray(value)) {
-                                const [r, g, b] = value;
-                                input.value = rgbToHex(r, g, b);
-                            }
-                        } else if (input.type === 'hidden' && paramId === 'palette') {
-                            // Palette tiles use hidden input - update tiles selection
-                            input.value = value;
-                            const tilesContainer = document.getElementById('paletteTiles_' + paramId);
-                            if (tilesContainer) {
-                                tilesContainer.querySelectorAll('.tile').forEach(t => {
-                                    t.classList.toggle('selected', t.dataset.value === value);
-                                });
-                            }
-                        } else {
-                            input.value = value;
-                            // Update value display for range inputs
-                            const valueDisplay = document.getElementById(input.id + '_value');
-                            if (valueDisplay) {
-                                valueDisplay.textContent = value;
-                            }
-                        }
-                    }
-                });
-            }
-        }
-
-        // Load segments into dropdown selector
-        async function loadSegments() {
-            try {
-                const data = await apiV2('/segments');
-                const selector = document.getElementById('segmentSelector');
-                
-                if (data.segments && data.segments.length > 0) {
-                    selector.innerHTML = data.segments.map(seg => {
-                        const customName = getSegmentName(seg.id);
-                        const label = customName 
-                            ? `${customName} (LEDs ${seg.start}-${seg.stop})`
-                            : `Segment ${seg.id} (LEDs ${seg.start}-${seg.stop})`;
-                        return `<option value="${seg.id}">${label}</option>`;
-                    }).join('');
-                    
-                    // Load the first segment's state
-                    activeSegmentId = data.segments[0].id;
-                    selector.value = activeSegmentId;
-                    await loadSegmentState(activeSegmentId);
-                } else {
-                    selector.innerHTML = '<option value="-1">No segments - create one in settings</option>';
-                }
-            } catch (e) {
-                console.error('Failed to load segments:', e);
-            }
-        }
-        
-        // Switch to a different segment
-        async function switchSegment(segmentId) {
-            activeSegmentId = segmentId;
-            await loadSegmentState(segmentId);
-        }
-        
-        // Load a specific segment's state into UI controls
-        async function loadSegmentState(segmentId) {
-            try {
-                const seg = await apiV2(`/segments/${segmentId}`);
-                
-                // Set effect selection
-                document.getElementById('effect').value = seg.effect || 'rainbow';
-                selectTileByValue('effectTiles', seg.effect || 'rainbow');
-                
-                // Update control visibility and render schema controls for this effect
-                updateEffectControls(seg.effect);
-                
-                // Populate schema control values from seg.params
-                if (seg.params) {
-                    Object.keys(seg.params).forEach(paramId => {
-                        const input = document.querySelector(`input[data-param-id="${paramId}"]`);
-                        if (input) {
-                            const value = seg.params[paramId];
-                            if (input.type === 'checkbox') {
-                                input.checked = value;
-                            } else if (input.type === 'color') {
-                                // Value might be hex string or RGB array
-                                if (typeof value === 'string') {
-                                    input.value = value;
-                                } else if (Array.isArray(value)) {
-                                    const [r, g, b] = value;
-                                    input.value = rgbToHex(r, g, b);
-                                }
-                            } else if (input.type === 'hidden' && paramId === 'palette') {
-                                // Palette tiles use hidden input - update tiles selection
-                                input.value = value;
-                                const tilesContainer = document.getElementById('paletteTiles_' + paramId);
-                                if (tilesContainer) {
-                                    tilesContainer.querySelectorAll('.tile').forEach(t => {
-                                        t.classList.toggle('selected', t.dataset.value === value);
-                                    });
-                                }
-                            } else {
-                                input.value = value;
-                                // Update value display for range inputs
-                                const valueDisplay = document.getElementById(input.id + '_value');
-                                if (valueDisplay) {
-                                    valueDisplay.textContent = value;
-                                }
-                            }
-                        }
-                    });
-                }
-            } catch (e) {
-                console.error(`Failed to load segment ${segmentId} state:`, e);
-            }
-        }
-        
-        // v2: Load LED state (controller + segments)
-        async function loadLedState() {
-            try {
-                const state = await apiV2('/segments');
-                // Update controller state
-                document.getElementById('powerToggle').checked = state.power !== false;
-                document.getElementById('brightness').value = state.brightness ?? 128;
-                document.getElementById('brightnessValue').textContent = state.brightness ?? 128;
-                
-                // Load segments into dropdown
-                await loadSegments();
-            } catch (e) {
-                console.error('Failed to load LED state (v2):', e);
-            }
-        }
-        
-        // Load effect metadata from API
-        async function loadEffectMetadata() {
-            try {
-                const data = await apiV2('/effects');
-                if (data.effects) {
-                    data.effects.forEach(effect => {
-                        effectMetadata[effect.id] = {
-                            usesPalette: effect.usesPalette,
-                            usesPrimaryColor: effect.usesPrimaryColor,
-                            usesSecondaryColor: effect.usesSecondaryColor,
-                            usesSpeed: effect.usesSpeed,
-                            usesIntensity: effect.usesIntensity,
-                            params: effect.params || [],  // Schema parameters
-                            hasSchema: effect.params && effect.params.length > 0
-                        };
-                    });
-                }
-            } catch (e) {
-                console.error('Failed to load effect metadata:', e);
-            }
-        }
-        
-        // Update control visibility based on selected effect
-        function updateEffectControls(effectId) {
-            const metadata = effectMetadata[effectId];
-            if (!metadata) return; // Metadata not loaded yet or effect not found
-            
-            // Check if effect has schema-based params
-            if (metadata.hasSchema && metadata.params.length > 0) {
-                // Render dynamic controls from schema
-                renderSchemaControls(metadata.params);
-                
-                // Hide legacy controls
-                hideControl('.palette-section');
-                hideControl('.speed-control');
-                hideControl('.intensity-control');
-                hideControl('.color-controls');
-            } else {
-                // Legacy control visibility (backward compatibility)
-                // Clear schema controls
-                const schemaContainer = document.getElementById('schemaControls');
-                if (schemaContainer) schemaContainer.innerHTML = '';
-                
-                // Palette controls
-                showHideControl('.palette-section', metadata.usesPalette);
-                
-                // Speed controls
-                showHideControl('.speed-control', metadata.usesSpeed);
-                
-                // Intensity controls
-                showHideControl('.intensity-control', metadata.usesIntensity);
-                
-                // Primary color
-                showHideControl('.primary-color', metadata.usesPrimaryColor);
-                
-                // Secondary color
-                showHideControl('.secondary-color', metadata.usesSecondaryColor);
-                
-                // Hide entire color section if neither color is used
-                // EXCEPT when custom palette is selected (needs color input)
-                const colorControls = document.querySelector('.color-controls');
-                if (colorControls) {
-                    const selectedPalette = document.getElementById('palette')?.value;
-                    const isCustomPalette = selectedPalette === 'custom';
-                    const usesAnyColor = metadata.usesPrimaryColor || metadata.usesSecondaryColor || (metadata.usesPalette && isCustomPalette);
-                    colorControls.style.display = usesAnyColor ? '' : 'none';
-                    
-                    // Show both colors for custom palette
-                    const primaryColorControl = document.querySelector('.primary-color');
-                    const secondaryColorControl = document.querySelector('.secondary-color');
-                    if (isCustomPalette && metadata.usesPalette) {
-                        if (primaryColorControl) primaryColorControl.style.display = '';
-                        if (secondaryColorControl) secondaryColorControl.style.display = '';
-                    }
-                }
-            }
-        }
-        
-        function hideControl(selector) {
-            const el = document.querySelector(selector);
-            if (el) el.style.display = 'none';
-        }
-        
-        function showHideControl(selector, show) {
-            const el = document.querySelector(selector);
-            if (el) el.style.display = show ? '' : 'none';
-        }
-        
-        function renderSchemaControls(params) {
-            let schemaContainer = document.getElementById('schemaControls');
-            if (!schemaContainer) {
-                // Create container if it doesn't exist
-                // Insert after the color-controls section
-                const colorControls = document.querySelector('.color-controls');
-                if (!colorControls) {
-                    console.error('Cannot find color-controls element to insert schema controls');
-                    return;
-                }
-                
-                schemaContainer = document.createElement('div');
-                schemaContainer.id = 'schemaControls';
-                schemaContainer.className = 'form-group';
-                schemaContainer.style.marginTop = '16px';
-                
-                // Insert after color-controls
-                colorControls.parentNode.insertBefore(schemaContainer, colorControls.nextSibling);
-            }
-            
-            schemaContainer.innerHTML = ''; // Clear existing
-            
-            params.forEach(param => {
-                const control = createSchemaControl(param);
-                if (control) {
-                    schemaContainer.appendChild(control);
-                }
-            });
-        }
-        
-        function createSchemaControl(param) {
-            let input;
-            
-            switch (param.type) {
-                case 'int':
-                    const formGroup = document.createElement('div');
-                    formGroup.className = 'form-group';
-                    formGroup.dataset.paramId = param.id;
-                    
-                    const labelRow = document.createElement('div');
-                    labelRow.className = 'label-row';
-                    
-                    const label = document.createElement('label');
-                    label.textContent = param.name;
-                    label.setAttribute('for', 'param_' + param.id);
-                    
-                    const valueDisplay = document.createElement('span');
-                    valueDisplay.className = 'label-value';
-                    valueDisplay.id = 'param_' + param.id + '_value';
-                    valueDisplay.textContent = param.default || 128;
-                    
-                    labelRow.appendChild(label);
-                    labelRow.appendChild(valueDisplay);
-                    
-                    input = document.createElement('input');
-                    input.type = 'range';
-                    input.id = 'param_' + param.id;
-                    input.min = param.min || 0;
-                    input.max = param.max || 255;
-                    input.value = param.default || 128;
-                    input.dataset.paramId = param.id;
-                    
-                    input.addEventListener('input', () => {
-                        valueDisplay.textContent = input.value;
-                    });
-                    
-                    // Apply on release
-                    ['pointerup', 'mouseup', 'touchend'].forEach(evt => {
-                        input.addEventListener(evt, () => {
-                            applySegmentState();
-                        });
-                    });
-                    
-                    formGroup.appendChild(labelRow);
-                    formGroup.appendChild(input);
-                    return formGroup;
-                    
-                case 'float':
-                    const floatGroup = document.createElement('div');
-                    floatGroup.className = 'form-group';
-                    floatGroup.dataset.paramId = param.id;
-                    
-                    const floatLabel = document.createElement('label');
-                    floatLabel.textContent = param.name;
-                    floatLabel.setAttribute('for', 'param_' + param.id);
-                    
-                    input = document.createElement('input');
-                    input.type = 'number';
-                    input.id = 'param_' + param.id;
-                    input.step = '0.01';
-                    input.min = param.min || 0;
-                    input.max = param.max || 1;
-                    input.value = param.default || 0.5;
-                    input.dataset.paramId = param.id;
-                    input.style.width = '100%';
-                    input.style.padding = '8px';
-                    input.style.borderRadius = '8px';
-                    input.style.border = '1px solid var(--border)';
-                    input.style.background = 'var(--surface)';
-                    input.style.color = 'var(--text)';
-                    
-                    input.addEventListener('change', () => {
-                        applySegmentState();
-                    });
-                    
-                    floatGroup.appendChild(floatLabel);
-                    floatGroup.appendChild(input);
-                    return floatGroup;
-                    
-                case 'color':
-                    const colorGroup = document.createElement('div');
-                    colorGroup.className = 'form-group';
-                    colorGroup.dataset.paramId = param.id;
-                    
-                    const colorLabel = document.createElement('label');
-                    colorLabel.textContent = param.name;
-                    
-                    const colorPicker = document.createElement('div');
-                    colorPicker.className = 'color-picker';
-                    
-                    input = document.createElement('input');
-                    input.type = 'color';
-                    input.id = 'param_' + param.id;
-                    input.value = param.default || '#ff0000';
-                    input.dataset.paramId = param.id;
-                    
-                    input.addEventListener('change', () => {
-                        applySegmentState();
-                    });
-                    
-                    colorPicker.appendChild(input);
-                    colorGroup.appendChild(colorLabel);
-                    colorGroup.appendChild(colorPicker);
-                    return colorGroup;
-                    
-                case 'bool':
-                    const boolGroup = document.createElement('div');
-                    boolGroup.className = 'form-group';
-                    boolGroup.dataset.paramId = param.id;
-                    boolGroup.style.display = 'flex';
-                    boolGroup.style.alignItems = 'center';
-                    boolGroup.style.justifyContent = 'space-between';
-                    
-                    const boolLabel = document.createElement('label');
-                    boolLabel.textContent = param.name;
-                    
-                    const toggleLabel = document.createElement('label');
-                    toggleLabel.className = 'toggle';
-                    
-                    input = document.createElement('input');
-                    input.type = 'checkbox';
-                    input.id = 'param_' + param.id;
-                    input.checked = param.default || false;
-                    input.dataset.paramId = param.id;
-                    
-                    input.addEventListener('change', () => {
-                        applySegmentState();
-                    });
-                    
-                    const slider = document.createElement('span');
-                    slider.className = 'toggle-slider';
-                    
-                    toggleLabel.appendChild(input);
-                    toggleLabel.appendChild(slider);
-                    
-                    boolGroup.appendChild(boolLabel);
-                    boolGroup.appendChild(toggleLabel);
-                    return boolGroup;
-                    
-                case 'enum':
-                    const enumGroup = document.createElement('div');
-                    enumGroup.className = 'form-group';
-                    enumGroup.dataset.paramId = param.id;
-                    
-                    const enumLabel = document.createElement('label');
-                    enumLabel.textContent = param.name;
-                    
-                    input = document.createElement('select');
-                    input.id = 'param_' + param.id;
-                    input.style.width = '100%';
-                    input.style.padding = '8px';
-                    input.style.borderRadius = '8px';
-                    input.style.border = '1px solid var(--border)';
-                    input.style.background = 'var(--surface)';
-                    input.style.color = 'var(--text)';
-                    input.style.fontSize = '14px';
-                    
-                    const options = param.options.split('|');
-                    options.forEach((opt, idx) => {
-                        const option = document.createElement('option');
-                        option.value = idx;
-                        option.textContent = opt;
-                        input.appendChild(option);
-                    });
-                    input.value = param.default || 0;
-                    input.dataset.paramId = param.id;
-                    
-                    input.addEventListener('change', () => {
-                        applySegmentState();
-                    });
-                    
-                    enumGroup.appendChild(enumLabel);
-                    enumGroup.appendChild(input);
-                    return enumGroup;
-                    
-                case 'palette':
-                    const palGroup = document.createElement('div');
-                    palGroup.className = 'form-group';
-                    palGroup.dataset.paramId = param.id;
-                    
-                    const palLabel = document.createElement('label');
-                    palLabel.textContent = param.name;
-                    
-                    // Create tiles container with horizontal scroll (like effects)
-                    const palTilesContainer = document.createElement('div');
-                    palTilesContainer.className = 'tile-row';
-                    palTilesContainer.id = 'paletteTiles_' + param.id;
-                    
-                    // Hidden input to store value
-                    input = document.createElement('input');
-                    input.type = 'hidden';
-                    input.id = 'param_' + param.id;
-                    input.dataset.paramId = param.id;
-                    input.value = param.default || 'rainbow';
-                    
-                    // Define palettes with gradient previews
-                    const palettes = [
-                        { name: 'rainbow', label: 'Rainbow', gradient: 'linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' },
-                        { name: 'forest', label: 'Forest', gradient: 'linear-gradient(90deg, #0b6623, #228b22, #90ee90, #006400)' },
-                        { name: 'ocean', label: 'Ocean', gradient: 'linear-gradient(90deg, #000080, #0077be, #00bfff, #7fffd4)' },
-                        { name: 'heat', label: 'Heat', gradient: 'linear-gradient(90deg, #000, #8b0000, #ff0000, #ffa500, #ffff00)' },
-                        { name: 'lava', label: 'Lava', gradient: 'linear-gradient(90deg, #000, #8b0000, #ff4500, #ffa500)' },
-                        { name: 'cloud', label: 'Cloud', gradient: 'linear-gradient(90deg, #000080, #4169e1, #87ceeb, #f0f8ff)' },
-                        { name: 'party', label: 'Party', gradient: 'linear-gradient(90deg, #ff00ff, #ff0080, #ff0000, #ff8000, #ffff00)' }
-                    ];
-                    
-                    palettes.forEach(pal => {
-                        const tile = document.createElement('div');
-                        tile.className = 'tile';
-                        tile.dataset.value = pal.name;
-                        
-                        const tileLabel = document.createElement('span');
-                        tileLabel.className = 'tile-label';
-                        tileLabel.textContent = pal.label;
-                        
-                        const preview = document.createElement('div');
-                        preview.className = 'palette-preview';
-                        preview.style.background = pal.gradient;
-                        
-                        tile.appendChild(tileLabel);
-                        tile.appendChild(preview);
-                        
-                        tile.onclick = () => {
-                            // Update hidden input
-                            input.value = pal.name;
-                            // Update selected tile
-                            palTilesContainer.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
-                            tile.classList.add('selected');
-                            // Apply changes
-                            applySegmentState();
-                        };
-                        
-                        // Select default
-                        if (pal.name === input.value) {
-                            tile.classList.add('selected');
-                        }
-                        
-                        palTilesContainer.appendChild(tile);
-                    });
-                    
-                    palGroup.appendChild(palLabel);
-                    palGroup.appendChild(palTilesContainer);
-                    palGroup.appendChild(input);
-                    return palGroup;
-                    
-                default:
-                    return null;
-            }
-        }
-
-        // v2: Apply LED state - updates controller + segment 0
-        async function applyLedState() {
-            await applyControllerState();
-            await applySegmentState();
-        }
-        
-        // v2: Apply only controller state (power + brightness)
-        async function applyControllerState() {
-            const controller = {
-                power: document.getElementById('powerToggle').checked,
-                brightness: parseInt(document.getElementById('brightness').value)
-            };
-
-            try {
-                await apiV2('/controller', 'PUT', controller);
-            } catch (e) {
-                console.error('Failed to apply controller settings:', e);
-            }
-        }
-        
-        // v2: Apply only segment state (effect + params)
-        async function applySegmentState() {
-            const effectId = document.getElementById('effect').value;
-            const segment = {
-                effect: effectId
-            };
-            
-            // Collect schema-based params from dynamic controls
-            const metadata = effectMetadata[effectId];
-            if (metadata && metadata.hasSchema) {
-                const params = {};
-                let paletteValue = null;
-                const schemaContainer = document.getElementById('schemaControls');
-                if (schemaContainer) {
-                    const formGroups = schemaContainer.querySelectorAll('[data-param-id]');
-                    formGroups.forEach(group => {
-                        const paramId = group.dataset.paramId;
-                        let input = group.querySelector('input');
-                        if (!input) input = group.querySelector('select'); // enum/palette uses select
-                        if (input) {
-                            let value;
-                            if (input.type === 'checkbox') {
-                                value = input.checked;
-                            } else if (input.type === 'number') {
-                                value = parseFloat(input.value);
-                            } else if (input.type === 'range') {
-                                value = parseInt(input.value);
-                            } else if (input.type === 'color') {
-                                value = input.value; // hex string
-                            } else if (input.tagName === 'SELECT') {
-                                value = parseInt(input.value); // enum is int
-                            } else {
-                                value = input.value;
-                            }
-                            
-                            // Special handling for palette - send as top-level field
-                            if (paramId === 'palette') {
-                                const paletteName = input.value; // string like 'rainbow'
-                                paletteValue = PALETTE_PRESETS[paletteName] ?? 0;
-                            } else {
-                                params[paramId] = value;
-                            }
-                        }
-                    });
-                    if (Object.keys(params).length > 0) {
-                        segment.params = params;
-                    }
-                    if (paletteValue !== null) {
-                        segment.palette = paletteValue;
-                    }
-                }
-            }
-
-            try {
-                if (activeSegmentId >= 0) {
-                    await apiV2(`/segments/${activeSegmentId}`, 'PUT', segment);
-                    showToast('Settings applied!', 'success');
-                } else {
-                    showToast('No segment selected', 'error');
-                }
-            } catch (e) {
-                showToast('Failed to apply settings', 'error');
-                console.error(e);
-            }
-        }
-
-        
-        // Load status
-        async function loadStatus() {
-            try {
-                const status = await api('/status');
-                
-                document.getElementById('wifiDot').className = 'status-dot';
-                document.getElementById('wifiStatus').textContent = status.wifi || 'Connected';
-                document.getElementById('ipAddress').textContent = status.ip || '--';
-                
-                const uptime = status.uptime || 0;
-                const hours = Math.floor(uptime / 3600);
-                const mins = Math.floor((uptime % 3600) / 60);
-                document.getElementById('uptime').textContent = `${hours}h ${mins}m`;
-                
-                // Update sACN status
-                const sacn = status.sacn || {};
-                const sacnDot = document.getElementById('sacnDot');
-                const sacnText = document.getElementById('sacnStatusText');
-                if (!sacn.enabled) {
-                    sacnDot.className = 'status-dot offline';
-                    sacnText.textContent = 'Not enabled';
-                } else if (sacn.receiving) {
-                    sacnDot.className = 'status-dot';
-                    sacnText.textContent = `Receiving (${sacn.packets} pkts, uni ${sacn.universe})`;
-                } else {
-                    sacnDot.className = 'status-dot loading';
-                    sacnText.textContent = `Waiting for data (uni ${sacn.universe})`;
-                }
-                
-                // Update MQTT status
-                const mqtt = status.mqtt || {};
-                const mqttDot = document.getElementById('mqttDot');
-                const mqttText = document.getElementById('mqttStatusText');
-                if (!mqtt.enabled) {
-                    mqttDot.className = 'status-dot offline';
-                    mqttText.textContent = 'Not enabled';
-                } else if (mqtt.connected) {
-                    mqttDot.className = 'status-dot';
-                    mqttText.textContent = `Connected to ${mqtt.broker}`;
-                } else {
-                    mqttDot.className = 'status-dot loading';
-                    mqttText.textContent = 'Connecting...';
-                }
-            } catch (e) {
-                document.getElementById('wifiDot').className = 'status-dot offline';
-                document.getElementById('wifiStatus').textContent = 'Offline';
-            }
-        }
-        
-        // Load LED state (v2) defined above
-        
-        // Simple slider handlers - update display on input, apply on release
-        function setupSlider(inputId, valueId) {
-            const input = document.getElementById(inputId);
-            const display = document.getElementById(valueId);
-            if (!input || !display) return;
-            
-            let isDragging = false;
-            
-            // Update display while dragging
-            input.addEventListener('input', () => {
-                display.textContent = input.value;
-            });
-            
-            // Mark as dragging
-            ['pointerdown', 'mousedown', 'touchstart'].forEach(evt => {
-                input.addEventListener(evt, () => {
-                    isDragging = true;
-                });
-            });
-            
-            // Send update when released
-            ['pointerup', 'mouseup', 'touchend'].forEach(evt => {
-                input.addEventListener(evt, () => {
-                    if (isDragging) {
-                        isDragging = false;
-                        // Brightness updates controller, other sliders update segment
-                        if (input.id === 'brightness') {
-                            applyControllerState();
-                        } else {
-                            applySegmentState();
-                        }
-                    }
-                });
-            });
-        }
-
-        setupSlider('brightness', 'brightnessValue');
-        setupSlider('speed', 'speedValue');
-        setupSlider('intensity', 'intensityValue');
-        
-        // Tile selector functions - auto-apply on selection
-        function selectEffect(tile) {
-            const container = document.getElementById('effectTiles');
-            container.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
-            tile.classList.add('selected');
-            const effectId = tile.dataset.value;
-            document.getElementById('effect').value = effectId;
-            updateEffectControls(effectId);
-            applySegmentState();
-        }
-        
-        function selectPalette(tile) {
-            localStorage.setItem('palettePreset', tile.dataset.value);
-            const container = document.getElementById('paletteTiles');
-            container.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
-            tile.classList.add('selected');
-            document.getElementById('palette').value = tile.dataset.value;
-            
-            // Update control visibility (custom palette needs color pickers)
-            const currentEffect = document.getElementById('effect').value;
-            updateEffectControls(currentEffect);
-            
-            applySegmentState();
-        }
-        
-        function selectTileByValue(containerId, value) {
-            const container = document.getElementById(containerId);
-            if (!container) return;
-            container.querySelectorAll('.tile').forEach(t => {
-                if (t.dataset.value === value) {
-                    t.classList.add('selected');
-                } else {
-                    t.classList.remove('selected');
-                }
-            });
-        }
-        
-        // Apply LED state (v2) defined above
-        
-        // Nightlight functions
-        let nightlightPollInterval = null;
-        
-        async function loadNightlightStatus() {
-            try {
-                const status = await api('/nightlight');
-                updateNightlightUI(status);
-            } catch (e) {
-                console.error('Failed to load nightlight status:', e);
-            }
-        }
-        
-        // Flag to prevent toggle change handler from firing during programmatic updates
-        let updatingNightlightUI = false;
-        
-        function updateNightlightUI(status) {
-            const isActive = status.active;
-            const controls = document.getElementById('nightlightControls');
-            const toggle = document.getElementById('nightlightToggle');
-            
-            // Prevent change handler from running when we set checked programmatically
-            updatingNightlightUI = true;
-            toggle.checked = isActive;
-            updatingNightlightUI = false;
-            
-            document.getElementById('startNightlightBtn').style.display = isActive ? 'none' : '';
-            document.getElementById('stopNightlightBtn').style.display = isActive ? '' : 'none';
-            document.getElementById('nightlightProgress').style.display = isActive ? '' : 'none';
-            
-            // Expand/collapse controls based on active state
-            if (isActive) {
-                controls.classList.add('expanded');
-            } else {
-                controls.classList.remove('expanded');
-            }
-            
-            if (isActive) {
-                const progress = Math.round((status.progress || 0) * 100);
-                document.getElementById('nightlightProgressBar').style.width = progress + '%';
-                document.getElementById('nightlightProgressText').textContent = progress + '% complete';
-                
-                // Start polling for progress updates
-                if (!nightlightPollInterval) {
-                    nightlightPollInterval = setInterval(loadNightlightStatus, 2000);
-                }
-            } else {
-                // Stop polling
-                if (nightlightPollInterval) {
-                    clearInterval(nightlightPollInterval);
-                    nightlightPollInterval = null;
-                }
-            }
-        }
-        
-        function toggleNightlightControls(show) {
-            const controls = document.getElementById('nightlightControls');
-            if (show) {
-                controls.classList.add('expanded');
-            } else {
-                controls.classList.remove('expanded');
-            }
-        }
-        
-        async function startNightlight() {
-            const durationMinutes = parseInt(document.getElementById('nightlightDuration').value);
-            const targetBrightness = parseInt(document.getElementById('nightlightTarget').value);
-            
-            try {
-                const result = await api('/nightlight', 'POST', {
-                    duration: durationMinutes * 60,  // Convert to seconds
-                    targetBrightness: targetBrightness
-                });
-                showToast('Nightlight started!', 'success');
-                // Wait a moment for server to process, then start polling
-                setTimeout(() => {
-                    loadNightlightStatus();
-                }, 200);
-            } catch (e) {
-                showToast('Failed to start nightlight', 'error');
-                // Reset toggle on error
-                const toggle = document.getElementById('nightlightToggle');
-                updatingNightlightUI = true;
-                toggle.checked = false;
-                updatingNightlightUI = false;
-            }
-        }
-        
-        async function stopNightlight() {
-            try {
-                await api('/nightlight/stop', 'POST', {});
-                showToast('Nightlight stopped', 'success');
-                // Stop polling immediately
-                if (nightlightPollInterval) {
-                    clearInterval(nightlightPollInterval);
-                    nightlightPollInterval = null;
-                }
-                // Update UI immediately without waiting for server
-                const toggle = document.getElementById('nightlightToggle');
-                const controls = document.getElementById('nightlightControls');
-                updatingNightlightUI = true;
-                toggle.checked = false;
-                updatingNightlightUI = false;
-                controls.classList.remove('expanded');
-                document.getElementById('startNightlightBtn').style.display = '';
-                document.getElementById('stopNightlightBtn').style.display = 'none';
-                document.getElementById('nightlightProgress').style.display = 'none';
-            } catch (e) {
-                showToast('Failed to stop nightlight', 'error');
-            }
-        }
-        
-        // Load config
-        async function loadConfig() {
-            try {
-                const config = await api('/config');
-                
-                document.getElementById('wifiSSID').value = config.wifiSSID || '';
-                document.getElementById('ledCount').value = config.ledCount || 160;
-
-                // AI settings
-                document.getElementById('aiApiKey').value = config.aiApiKey && config.aiApiKey !== '****' ? '' : '';
-                document.getElementById('aiModel').value = config.aiModel || 'claude-3-5-haiku-20241022';
-
-                // sACN settings
-                const sacnEnabled = config.sacnEnabled || false;
-                document.getElementById('sacnEnabled').checked = sacnEnabled;
-                document.getElementById('sacnUniverse').value = config.sacnUniverse || 1;
-                document.getElementById('sacnStartChannel').value = config.sacnStartChannel || 1;
-                toggleSettings('sacnSettings', sacnEnabled);
-
-                // MQTT settings
-                const mqttEnabled = config.mqttEnabled || false;
-                document.getElementById('mqttEnabled').checked = mqttEnabled;
-                document.getElementById('mqttBroker').value = config.mqttBroker || '';
-                document.getElementById('mqttPort').value = config.mqttPort || 1883;
-                document.getElementById('mqttUsername').value = config.mqttUsername && config.mqttUsername !== '****' ? config.mqttUsername : '';
-                document.getElementById('mqttPassword').value = config.mqttPassword && config.mqttPassword !== '****' ? '' : '';
-                document.getElementById('mqttTopicPrefix').value = config.mqttTopicPrefix || 'lume';
-                toggleSettings('mqttSettings', mqttEnabled);
-            } catch (e) {
-                console.error('Failed to load config:', e);
-            }
-        }
-        
-        // Load segments for config modal
-        async function loadSegmentsConfig() {
-            try {
-                const data = await apiV2('/segments');
-                const container = document.getElementById('segmentsList');
-                
-                if (!data.segments || data.segments.length === 0) {
-                    container.innerHTML = '<p style="color: var(--text-muted); font-size: 13px;">No segments configured</p>';
-                    return;
-                }
-                
-                container.innerHTML = data.segments.map(seg => {
-                    const customName = getSegmentName(seg.id);
-                    const displayName = customName || `Segment ${seg.id}`;
-                    return `
-                    <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--surface); border-radius: 8px; margin-bottom: 8px;">
-                        <div style="flex: 1;">
-                            <div style="font-weight: 500;">${displayName}</div>
-                            <div style="font-size: 12px; color: var(--text-muted);">
-                                LEDs ${seg.start}-${seg.stop} (${seg.length} LEDs)
-                                ${seg.effect ? `• ${seg.effect}` : ''}
-                            </div>
-                        </div>
-                        <button class="btn btn-outline" onclick="editSegmentName(${seg.id})" style="padding: 6px 12px;">Rename</button>
-                        ${seg.length > 1 ? `<button class="btn btn-outline" onclick="splitSegment(${seg.id}, ${seg.start}, ${seg.length})" style="padding: 6px 12px;">Split</button>` : ''}
-                        <button class="btn btn-outline" onclick="deleteSegmentConfig(${seg.id})" style="padding: 6px 12px;">Delete</button>
-                    </div>
-                `;
-                }).join('');
-            } catch (e) {
-                console.error('Failed to load segments:', e);
-            }
-        }
-        
-        async function editSegmentName(id) {
-            const currentName = getSegmentName(id) || '';
-            const newName = prompt(`Enter name for segment ${id}:`, currentName);
-            
-            if (newName !== null) {
-                setSegmentName(id, newName);
-                await loadSegmentsConfig(); // Refresh config list
-                await loadSegments(); // Refresh dropdown
-            }
-        }
-        
-        async function splitSegment(id, start, length) {
-            const splitAt = prompt(`Split segment ${id} at LED position? (${start + 1} to ${start + length - 1})`);
-            if (!splitAt) return;
-            
-            const splitPos = parseInt(splitAt);
-            if (isNaN(splitPos) || splitPos <= start || splitPos >= start + length) {
-                showToast('Invalid split position', 'error');
-                return;
-            }
-            
-            try {
-                // Calculate new segment lengths
-                const firstLength = splitPos - start;
-                const secondLength = length - firstLength;
-                
-                // Delete original segment
-                await fetch('/api/v2/segments/' + id, { method: 'DELETE' });
-                
-                // Create first segment
-                await apiV2('/segments', 'POST', {
-                    start: start,
-                    length: firstLength
-                });
-                
-                // Create second segment
-                await apiV2('/segments', 'POST', {
-                    start: splitPos,
-                    length: secondLength
-                });
-                
-                showToast('Segment split successfully!', 'success');
-                loadSegmentsConfig();
-            } catch (e) {
-                showToast('Failed to split segment', 'error');
-                console.error(e);
-            }
-        }
-        
-        async function addSegment() {
-            const start = parseInt(document.getElementById('newSegmentStart').value);
-            const length = parseInt(document.getElementById('newSegmentLength').value);
-            
-            if (isNaN(start) || isNaN(length) || start < 0 || length < 1) {
-                showToast('Invalid segment range', 'error');
-                return;
-            }
-            
-            try {
-                await apiV2('/segments', 'POST', {
-                    start: start,
-                    length: length
-                });
-                showToast('Segment created!', 'success');
-                loadSegmentsConfig();
-                
-                // Update start field for next segment
-                document.getElementById('newSegmentStart').value = start + length;
-            } catch (e) {
-                showToast('Failed to create segment', 'error');
-                console.error(e);
-            }
-        }
-        
-        async function deleteSegmentConfig(id) {
-            if (!confirm(`Delete segment ${id}?`)) {
-                return;
-            }
-            
-            try {
-                await fetch('/api/v2/segments/' + id, { method: 'DELETE' });
-                showToast('Segment deleted', 'success');
-                loadSegmentsConfig();
-            } catch (e) {
-                showToast('Failed to delete segment', 'error');
-                console.error(e);
-            }
-        }
-        
-        // Save config
-        async function saveConfig() {
-            const config = {
-                wifiSSID: document.getElementById('wifiSSID').value,
-                wifiPassword: document.getElementById('wifiPassword').value,
-                ledCount: parseInt(document.getElementById('ledCount').value),
-                aiApiKey: document.getElementById('aiApiKey').value,
-                aiModel: document.getElementById('aiModel').value,
-                sacnEnabled: document.getElementById('sacnEnabled').checked,
-                sacnUniverse: parseInt(document.getElementById('sacnUniverse').value),
-                sacnStartChannel: parseInt(document.getElementById('sacnStartChannel').value),
-                mqttEnabled: document.getElementById('mqttEnabled').checked,
-                mqttBroker: document.getElementById('mqttBroker').value,
-                mqttPort: parseInt(document.getElementById('mqttPort').value),
-                mqttUsername: document.getElementById('mqttUsername').value,
-                mqttPassword: document.getElementById('mqttPassword').value,
-                mqttTopicPrefix: document.getElementById('mqttTopicPrefix').value
-            };
-            
-            // Don't send masked password/key
-            if (config.wifiPassword === '') delete config.wifiPassword;
-            if (config.mqttPassword === '') delete config.mqttPassword;
-            if (config.aiApiKey === '') delete config.aiApiKey;
-            
-            try {
-                await api('/config', 'POST', config);
-                showToast('Configuration saved!', 'success');
-                loadConfig();
-            } catch (e) {
-                showToast('Failed to save configuration', 'error');
-            }
-        }
-        
-        // Scene management
-        async function loadScenes() {
-            try {
-                const scenes = await api('/scenes');
-                const container = document.getElementById('scenesList');
-                
-                if (!scenes || scenes.length === 0) {
-                    container.innerHTML = '<p style="color: var(--text-muted); font-size: 14px;">No saved scenes yet</p>';
-                    return;
-                }
-                
-                container.innerHTML = scenes.map(scene => `
-                    <div class="scene-item">
-                        <span class="scene-name">${escapeHtml(scene.name)}</span>
-                        <div class="scene-actions">
-                            <button class="btn btn-primary" onclick="applyScene(${scene.id})">Apply</button>
-                            <button class="btn btn-outline" onclick="deleteScene(${scene.id})">🗑️</button>
-                        </div>
-                    </div>
-                `).join('');
-            } catch (e) {
-                console.error('Failed to load scenes:', e);
-            }
-        }
-        
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-        
-        async function applyScene(id) {
-            try {
-                const response = await fetch('/api/scenes/' + id + '/apply', {
-                    method: 'POST'
-                });
-                
-                if (!response.ok) {
-                    const result = await response.json();
-                    showToast('Failed: ' + (result.error || response.status), 'error');
-                    return;
-                }
-                
-                showToast('Scene applied!', 'success');
-                loadLedState();
-            } catch (e) {
-                showToast('Failed to apply scene: ' + e.message, 'error');
-            }
-        }
-        
-        async function deleteScene(id) {
-            if (!confirm('Delete this scene?')) {
-                return;
-            }
-            
-            try {
-                await fetch('/api/scenes/' + id, { method: 'DELETE' });
-                showToast('Scene deleted', 'success');
-                loadScenes();
-            } catch (e) {
-                showToast('Failed to delete scene', 'error');
-            }
-        }
-        
-        // Color helpers
-        function hexToRgb(hex) {
-            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-            return result ? [
-                parseInt(result[1], 16),
-                parseInt(result[2], 16),
-                parseInt(result[3], 16)
-            ] : [0, 0, 255];
-        }
-        
-        function rgbToHex(r, g, b) {
-            return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
-        }
-        
-        // Toggle settings visibility
-        function toggleSettings(settingsId, show) {
-            const settings = document.getElementById(settingsId);
-            if (!settings) return;
-            settings.style.maxHeight = show ? '500px' : '0';
-        }
-        
-        // Event listeners - sliders handled by SliderBinding helpers
-        
-        // Color pickers auto-apply on change (when picker closes)
-        document.getElementById('primaryColor').addEventListener('change', function() {
-            applySegmentState();
-        });
-        
-        document.getElementById('secondaryColor').addEventListener('change', function() {
-            applySegmentState();
-        });
-        
-        document.getElementById('powerToggle').addEventListener('change', function() {
-            applyControllerState();
-        });
-        
-        // Nightlight slider listeners
-        document.getElementById('nightlightDuration').addEventListener('input', function() {
-            document.getElementById('nightlightDurationValue').textContent = this.value + ' min';
-        });
-        
-        document.getElementById('nightlightTarget').addEventListener('input', function() {
-            const val = parseInt(this.value);
-            document.getElementById('nightlightTargetValue').textContent = val === 0 ? '0 (off)' : val;
-        });
-        
-        document.getElementById('nightlightToggle').addEventListener('change', async function() {
-            // Ignore programmatic changes
-            if (updatingNightlightUI) return;
-            
-            if (this.checked) {
-                // Toggle ON - expand controls to show settings
-                toggleNightlightControls(true);
-            } else {
-                // Toggle OFF - stop if running, otherwise just hide
-                await stopNightlight();
-            }
-        });
-        
-        // AI Prompt functions
-        async function sendAIPrompt() {
-            const prompt = document.getElementById('aiPrompt').value.trim();
-            if (!prompt) {
-                showToast('Please enter a prompt', 'error');
-                return;
-            }
-            
-            const statusDiv = document.getElementById('aiStatus');
-            const statusText = document.getElementById('aiStatusText');
-            
-            statusDiv.style.display = 'block';
-            statusText.textContent = 'Processing your request...';
-            
-            try {
-                const result = await api('/prompt', 'POST', { prompt: prompt });
-                
-                if (result.success) {
-                    showToast('✨ Lights updated!', 'success');
-                    statusText.textContent = result.message || 'Applied successfully!';
-                    setTimeout(() => {
-                        statusDiv.style.display = 'none';
-                    }, 3000);
-                    
-                    // Reload LED state to show changes
-                    await loadLedState();
-                } else {
-                    showToast(result.error || 'Failed to process prompt', 'error');
-                    statusDiv.style.display = 'none';
-                }
-            } catch (e) {
-                const errorMsg = e.message || 'Network error';
-                showToast('Error: ' + errorMsg, 'error');
-                statusText.textContent = 'Error: ' + errorMsg;
-                setTimeout(() => {
-                    statusDiv.style.display = 'none';
-                }, 5000); // Show error for 5 seconds
-                console.error('AI prompt error:', e);
-            }
-        }
-        
-        // sACN and MQTT toggle handlers
-        document.getElementById('sacnEnabled').addEventListener('change', function() {
-            toggleSettings('sacnSettings', this.checked);
-        });
-        
-        document.getElementById('mqttEnabled').addEventListener('change', function() {
-            toggleSettings('mqttSettings', this.checked);
-        });
-        
-        // Initialize
-        async function initialize() {
-            loadStatus();
-            await loadEffectMetadata(); // Load effect metadata FIRST
-            await loadLedState();        // Then load LED state (which needs metadata)
-            loadConfig();
-            loadScenes();
-            loadNightlightStatus();
-            setInterval(loadStatus, 10000);
-        }
-        
-        initialize();
-    
-
-        // Start WebSocket (optional)
-        connectWebSocket();
+// ============================================================
+//  Init
+// ============================================================
+async function initialize() {
+  // paint slider fills that start from static markup values
+  ['brightness', 'nightlightDuration', 'nightlightTarget'].forEach(id => {
+    const el = $(id); el.style.setProperty('--pct', pctOf(el) + '%');
+  });
+  loadStatus();
+  await loadEffectMetadata();
+  await loadLedState();
+  loadConfig();
+  loadNightlightStatus();
+  setInterval(loadStatus, 10000);
+}
+initialize();
+connectWebSocket();
