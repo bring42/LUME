@@ -206,6 +206,27 @@ REGISTER_EFFECT_SCHEMA(effectFire, "fire", "Fire", Animated,
                        fireSchema, sizeof(FireState));
 ```
 
+`getScratchpad<T>()` targets the fixed per-segment pad — **640 bytes**
+(`SCRATCHPAD_SIZE` in `segment_view.h`), enforced at compile time. That comfortably
+holds `fire`'s `heat[600]`, today's largest 1D state.
+
+### Large / 2D state (workbuffer)
+
+Effects whose state is too big for the 640 B pad — e.g. a 2D matrix grid — do **not**
+inflate the per-segment pad (that cost is paid ×`MAX_SEGMENTS`). Instead one
+canvas-spanning segment borrows a single controller-owned **workbuffer** and reads it
+with the runtime-checked accessor, which returns `nullptr` (instead of scribbling past
+the buffer) if the state doesn't fit:
+
+```cpp
+BigGridState* state = view.getScratchpadChecked<BigGridState>();
+if (!state) return;   // no workbuffer attached, or state too large
+```
+
+The workbuffer is off by default (`LUME_WORKBUFFER_SIZE = 0`); a matrix build enables it
+with `-DLUME_WORKBUFFER_SIZE=<bytes>`. See
+[docs/rfcs/0002-scratchpad-strategy.md](rfcs/0002-scratchpad-strategy.md) (P1.5).
+
 ## Complete Examples
 
 ### Simple Color Effect
@@ -346,7 +367,10 @@ The web UI automatically generates controls based on your schema:
 - Use global variables or `static` state (breaks multi-segment)
 - Call `delay()` or blocking functions
 - Assume a specific LED count
-- Exceed 512 bytes in state structure
+- Exceed 640 bytes (`SCRATCHPAD_SIZE`) in a `getScratchpad<T>()` state struct — for larger
+  state use the workbuffer + `getScratchpadChecked<T>()` (see above)
+- Reach for a flat raw LED pointer — `SegmentView::raw()` was removed (P1.4); touch pixels
+  only through `view[i]` and the remap-safe primitives
 - Mix up parameter slot indices
 
 ## Debugging

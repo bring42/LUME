@@ -27,12 +27,17 @@ adding an effect, see [ADDING_EFFECTS.md](ADDING_EFFECTS.md).
         │  update(): commands → nightlight → protocols → render segments → show │
         └───────────────────────────────────┬──────────────────────────────────┘
                                              ▼
-                              Segment[] → SegmentView → effect fn → CRGB leds[]
+                    Segment[] → SegmentView → effect fn → CRGB leds[]
+                                             │
+                                             ▼
+                            ILedOutput (FastLED RMT by default)
 ```
 
 Everything that mutates LED state funnels onto the loop task. Web handlers and
 protocols never touch `leds[]` or segment state directly — they hand work to the
-loop, which is the single writer.
+loop, which is the single writer. The loop presents the finished frame through an
+`ILedOutput` HAL rather than calling FastLED directly (see
+[The output HAL](#the-output-hal)).
 
 ---
 
@@ -47,6 +52,14 @@ accessed through a [`SegmentView`](../src/core/segment_view.h). The view hides
 position and reversal so effects address pixels as `view[0 .. size()-1]` and never
 do raw pointer math — leaving room for non-contiguous mapping (matrix, serpentine)
 later without touching effect code.
+
+The geometry lives in a small [`Region`](../src/core/region.h) value type
+(`{start, length}` with `stop()`/`contains()`/`size()`; a range today, a rect
+tomorrow) that the view holds (P1.3). And there is **no flat escape hatch**:
+`SegmentView::raw()` was removed (P1.4). The `fill`/`fade`/`clear`/`gradient`/
+`rainbow` primitives are reimplemented over `operator[]`, so they apply the
+segment's mapping and reversal and stay correct under a future 2D remap. Effects must
+touch pixels only through `view[i]` and those primitives.
 
 Overlap is *allowed* but not blended: overlapping pixels resolve last-writer-wins
 (segments render in array order). True compositing waits on blend modes
@@ -82,7 +95,31 @@ shares state. Properties:
   buffer. The effect is told via the `firstFrame` flag, derived from a version
   mismatch (`lastSeenVersion != scratchpadVersion`) — no separate "did I reset?"
   bookkeeping to desync.
-- **Cost:** `SCRATCHPAD_SIZE × MAX_SEGMENTS` of static RAM, no heap.
+- **Cost:** `SCRATCHPAD_SIZE × MAX_SEGMENTS` of static RAM, no heap. `SCRATCHPAD_SIZE`
+  is **640 bytes** (holds fire's `heat[600]`, today's largest 1D state).
+
+**Tiered scratchpad (P1.5).** Large / 2D effect state (a 32×32 grid needs ≥1024 B)
+does *not* come from the fixed pad — paying that worst case ×`MAX_SEGMENTS` would be
+wasteful. Instead one canvas-spanning segment **borrows** a single controller-owned
+**workbuffer** (`borrowWorkbuffer`/release, single-owner, dropped on layout change)
+and reads it with the runtime-guarded `getScratchpadChecked<T>()`, which returns
+`nullptr` if the state doesn't fit. The workbuffer is off by default
+(`LUME_WORKBUFFER_SIZE = 0`, a 1D build pays a 1-byte placeholder); a matrix build sets
+`-DLUME_WORKBUFFER_SIZE=<bytes>`. The registry validates a registered effect against
+`MAX_EFFECT_STATE = max(pad, workbuffer)`. Decision record:
+[rfcs/0002-scratchpad-strategy.md](rfcs/0002-scratchpad-strategy.md).
+
+---
+
+## The output HAL
+
+The controller drives the LEDs through an [`ILedOutput`](../src/core/led_output.h)
+interface, not FastLED directly (RFC 0001 §6). The default backend is
+[`FastLedOutput`](../src/core/fastled_output.h) (the RMT driver); the controller holds
+an `ILedOutput*` (`output_`) swappable via `setLedOutput()`. FastLED *math*
+(`CRGB`, `CHSV`, palettes, `beatsin8`) stays — only the final output packaging is
+abstracted, which unblocks later backends (ESP-IDF `led_strip`, an emulator, a
+Matter RMT→I2S/SPI swap) without touching a single effect.
 
 ---
 
@@ -120,7 +157,8 @@ See [ADDING_EFFECTS.md](ADDING_EFFECTS.md) for a worked example.
 5. **Render segments** — clear only uncovered LEDs, then `segment.update(frame)`
    for each active segment in array order; per-segment brightness is applied after
    the effect runs.
-6. **`FastLED.show()`** and advance the frame counter.
+6. **Show** — present the frame through the `ILedOutput` HAL (`FastLedOutput` / RMT by
+   default) and advance the frame counter.
 
 ---
 
@@ -128,11 +166,13 @@ See [ADDING_EFFECTS.md](ADDING_EFFECTS.md) for a worked example.
 
 | Area | Files | Role |
 |------|-------|------|
-| Controller | `core/controller.*` | Owns `leds[]`, segments, timing, protocol registry |
-| Segment / view | `core/segment.h`, `core/segment_view.h` | A strip region + its scratchpad and effect binding |
-| Effects | `core/effect_registry.h`, `visuallib/effects/*` | Self-registering effect functions + schema metadata |
-| Params / schema | `core/param_schema.h`, `core/effect_params.h` | Typed, schema-driven effect parameters and palettes |
+| Controller | `core/controller.*` | Owns `leds[]`, segments, timing, protocol registry, the shared workbuffer |
+| Segment / view | `core/segment.h`, `core/segment_view.h`, `core/region.h` | A `Region` slice + its scratchpad and effect binding |
+| Effects | `core/effect_registry.h`, `visuallib/effects/*` | Self-registering effect functions + schema + `EffectDims` metadata |
+| Params / schema | `core/param_schema.h`, `core/param_codec.h`, `core/effect_params.h` | Typed, schema-driven effect parameters; one codec (de)serializes them |
+| Serialization | `core/segment_serializer.h` | The one canonical segment→JSON projection (v2 REST + WebSocket) |
 | Commands | `core/command_queue.h` | Thread-safe single-writer mutation channel |
+| Output HAL | `core/led_output.h`, `core/fastled_output.h` | `ILedOutput` seam; FastLED RMT is the default backend |
 | Protocols | `protocols/*` | sACN/E1.31 as temporary sole writers behind `IProtocol` |
 | Network/API | `network/*`, `api/*` | WiFi/OTA/mDNS, REST endpoints, web server |
 | Storage | `storage.*` | NVS-backed config and last-effect persistence |

@@ -1,144 +1,100 @@
 # Effects
 
-Self-registering LED effects using FastLED.
+Self-registering LED effects using FastLED. Each effect is a **pure function** with a
+**schema** that declares its parameters; the schema drives both the REST API
+(`GET /api/v2/effects`) and the web UI controls. There is one registration path — schema-based.
+For the full authoring guide see [../../docs/ADDING_EFFECTS.md](../../docs/ADDING_EFFECTS.md).
 
-## Adding a New Effect (Schema-based)
-
-**Recommended approach** - creates dynamic UI controls:
+## Adding an effect
 
 ```cpp
-#include "../core/effect_registry.h"
-#include "../core/param_schema.h"
+#include "../../core/effect_registry.h"
+#include "../../core/param_schema.h"
 
 namespace lume {
 
-// 1. Define parameter slots
+// 1. Parameter slot indices (order matches the schema below)
 namespace myeffect {
     constexpr uint8_t SPEED = 0;
-    constexpr uint8_t SIZE = 1;
-    constexpr uint8_t COLOR = 2;
+    constexpr uint8_t COLOR = 1;
 }
 
-// 2. Define schema (lives in flash)
+// 2. Schema (lives in flash)
 DEFINE_EFFECT_SCHEMA(myEffectSchema,
-    ParamDesc::Int("speed", "Speed", 128, 0, 255),
-    ParamDesc::Int("size", "Size", 50, 10, 100),
+    ParamDesc::Int("speed", "Speed", 128, 1, 255),
     ParamDesc::Color("color", "Color", CRGB::Blue)
 );
 
-// 3. Effect function reads from ParamValues
-void effectMyEffect(SegmentView& view, const EffectParams& params,
-                    const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
-    (void)params; // Legacy params unused for schema effects
-    
-    // Read typed params via slots
-    uint8_t speed = paramValues.getInt(myeffect::SPEED);
-    uint8_t size = paramValues.getInt(myeffect::SIZE);
-    CRGB color = paramValues.getColor(myeffect::COLOR);
-    
-    // Effect implementation using params...
-    for (uint16_t i = 0; i < view.size(); i++) {
-        view[i] = color;
-    }
+// 3. Effect function — current signature (no legacy EffectParams argument)
+void effectMyEffect(SegmentView& view, const ParamValues& params,
+                    uint32_t frame, bool firstFrame) {
+    uint8_t speed = params.getInt(myeffect::SPEED);
+    CRGB color   = params.getColor(myeffect::COLOR);
+
+    // Touch pixels only through view[i] and the remap-safe primitives.
+    for (uint16_t i = 0; i < view.size(); i++) view[i] = color;
 }
 
-// 4. Register with schema
-REGISTER_EFFECT_SCHEMA(effectMyEffect, "myeffect", "My Effect", 
-                       Animated, myEffectSchema, 0);
+// 4. Register: fn, id, name, category, schema, stateSize
+REGISTER_EFFECT_SCHEMA(effectMyEffect, "myeffect", "My Effect", Animated, myEffectSchema, 0);
 
 } // namespace lume
 ```
 
-UI will automatically render appropriate controls (sliders, color pickers, etc.)!
+The UI auto-renders controls from the schema (sliders, color pickers, toggles, dropdowns,
+palette pickers) — no frontend changes needed.
 
-## Adding a Legacy Effect
+### Dimensionality (P1.2)
 
-**Simple approach** - uses standard speed/intensity/color controls:
+`REGISTER_EFFECT_SCHEMA` registers a **1D (strip)** effect (the default). If an effect's logic
+is dimension-agnostic or matrix-native, declare it so a 2D build can offer or refuse it:
 
 ```cpp
-#include "../core/effect_registry.h"
+REGISTER_EFFECT_SCHEMA_DIMS(effectMyEffect, "myeffect", "My Effect", Animated, myEffectSchema, 0, Any);
+// ...or TwoD for a matrix-only effect.
+```
 
-namespace lume {
+## Parameter types
 
-void effectMyEffect(SegmentView& view, const EffectParams& params, 
-                    const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
-    (void)paramValues; // Unused for legacy effects
-    
-    // Use legacy params
-    uint8_t speed = params.speed;
-    CRGB color = params.primaryColor;
-    
-    for (uint16_t i = 0; i < view.size(); i++) {
-        uint8_t hue = (i * 10) + (frame * speed / 64);
-        view[i] = CHSV(hue, 255, 255);
-    }
+```cpp
+ParamDesc::Int("id", "Name", default, min, max)           // 0-255 slider
+ParamDesc::Float("id", "Name", default, min, max)         // float slider (0.0-1.0)
+ParamDesc::Color("id", "Name", CRGB::Red)                 // color picker (#rrggbb over the API)
+ParamDesc::Bool("id", "Name", false)                      // toggle
+ParamDesc::Enum("id", "Name", "opt1|opt2|opt3", default)  // dropdown
+ParamDesc::PaletteSelect("id", "Name")                    // palette picker
+```
+
+Read them in the effect via `params.getInt/getFloat/getColor/getBool/getEnum(slot)` and
+`params.getPalette()`.
+
+## Effect state (scratchpad)
+
+Stateful effects keep frame-to-frame state in the per-segment scratchpad — **640 bytes**
+(`SCRATCHPAD_SIZE`), never in `static`/global variables (which would break multi-segment use):
+
+```cpp
+struct MyState { uint8_t position; uint16_t counter; };
+
+void effectStateful(SegmentView& view, const ParamValues& params,
+                    uint32_t frame, bool firstFrame) {
+    MyState* s = view.getScratchpad<MyState>();   // compile-time size/alignment checked
+    if (firstFrame) { /* initialise s */ }
+    // ...use s...
 }
 
-// Choose registration macro based on parameters needed:
-REGISTER_EFFECT_ANIMATED(effectMyEffect, "myeffect", "My Effect");
-
-} // namespace lume
+REGISTER_EFFECT_SCHEMA(effectStateful, "stateful", "Stateful", Animated, statefulSchema, sizeof(MyState));
 ```
 
-## Registration Macros
+State larger than the 640 B pad (e.g. a 2D grid) uses the borrowed **workbuffer** via
+`view.getScratchpadChecked<T>()` — see [ADDING_EFFECTS.md](../../docs/ADDING_EFFECTS.md) and
+[rfcs/0002](../../docs/rfcs/0002-scratchpad-strategy.md).
 
-### Schema-based (Recommended)
-```cpp
-REGISTER_EFFECT_SCHEMA(fn, id, name, category, schema, stateSize)
-// - Automatically generates UI from schema
-// - Supports custom parameter types
-```
+## Best practices
 
-### Legacy Macros (Standard Controls)
-| Macro | Parameters | UI Controls |
-|-------|-----------|-------------|
-| `REGISTER_EFFECT_PALETTE` | palette, speed | Palette picker, speed slider |
-| `REGISTER_EFFECT_COLORS` | color1, color2, speed | Two color pickers, speed |
-| `REGISTER_EFFECT_ANIMATED` | speed, intensity | Speed & intensity sliders |
-| `REGISTER_EFFECT_SIMPLE` | speed | Speed slider only |
-
-## Parameter Types (Schema-based)
-
-```cpp
-ParamDesc::Int("id", "Name", default, min, max)           // Slider (0-255)
-ParamDesc::Float("id", "Name", default, min, max)         // Number input (0.0-1.0)
-ParamDesc::Color("id", "Name", CRGB::Red)                 // Color picker
-ParamDesc::Bool("id", "Name", false)                      // Toggle switch
-ParamDesc::Enum("id", "Name", "opt1|opt2|opt3", default)  // Dropdown
-ParamDesc::PaletteSelect("id", "Name")                    // Palette picker
-```
-
-## Effect State
-
-For stateful effects, use segment scratchpad (512 bytes per segment):
-
-```cpp
-struct MyState {
-    uint8_t position;
-    uint16_t counter;
-};
-
-void effectStateful(SegmentView& view, const EffectParams& params,
-                    const ParamValues& paramValues, uint32_t frame, bool firstFrame) {
-    // Get scratchpad from segment (not available in SegmentView)
-    // Access via segment->getScratchpad<MyState>() in controller
-    
-    if (firstFrame) {
-        // Initialize state when effect changes
-    }
-    
-    // Use state...
-}
-
-// Register with state size
-REGISTER_EFFECT_SCHEMA(effectStateful, "stateful", "Stateful", 
-                       Animated, statefulSchema, sizeof(MyState));
-```
-
-## Best Practices
-
-- Use `beatsin8()`, `sin8()`, etc. for smooth animation
-- Respect `params.speed` for timing
-- Use `ColorFromPalette()` with `params.palette`
-- Never use static variables (breaks with multiple segments)
-- Check `firstFrame` to initialize scratchpad state
+- Use `frame` (not `millis()`) for animation timing; keep output deterministic
+- Use `beatsin8()`, `sin8()`, `ColorFromPalette()` for smooth, cheap animation
+- **Own your canvas:** each frame either fully fill the view or `view.fade()` and draw on top —
+  the loop doesn't pre-clear covered pixels
+- Never use `static`/global state (breaks multiple segments); use the scratchpad
+- Never reach for a raw LED pointer — `SegmentView::raw()` was removed (P1.4)
