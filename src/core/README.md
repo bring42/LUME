@@ -19,38 +19,48 @@ controller.update();  // Call in loop() at ~60 FPS
 ```
 
 ### Segment ([segment.h](segment.h))
-LED range + effect binding + 512-byte scratchpad for effect state.
+A [`Region`](region.h) slice of the LED array + effect binding + a 640-byte scratchpad for
+effect state (P1.3/P1.5). Mutations happen on the render loop via the command bus, not by
+calling setters from other tasks.
 
-```cpp
-Segment* seg = controller.getSegment(0);
-seg->setEffect("fire");
-seg->setSpeed(150);
-seg->setPalette(HeatColors_p);
-```
+### Region ([region.h](region.h))
+`Region{start, length}` geometry value type (`stop()`/`contains()`/`size()`/`empty()`) — a
+range today, room for a rect tomorrow (P1.3). `SegmentView` holds one.
 
 ### EffectRegistry ([effect_registry.h](effect_registry.h))
-Self-registering effect system. Effects register themselves at compile time.
+Self-registering effect system. Effects register at startup with a **schema** and optional
+**`EffectDims`** metadata:
 
 ```cpp
-// In your effect file
-REGISTER_EFFECT_PALETTE(effectFire, "fire", "Fire");
+// In your effect file (see visuallib/README.md)
+REGISTER_EFFECT_SCHEMA(effectFire, "fire", "Fire", Animated, fireSchema, sizeof(FireState));
+// ...or REGISTER_EFFECT_SCHEMA_DIMS(..., Any) to mark it remap-safe (P1.2).
 ```
 
 ### SegmentView ([segment_view.h](segment_view.h))
-Safe, bounded view into LED array for effects to write to.
+Safe, bounded, remap-aware view into the LED array. Effects touch pixels only through
+`view[i]` and the primitives (`fill`/`fade`/`clear`/`gradient`/`rainbow`) — all remap-safe;
+there is no raw-pointer escape hatch (`raw()` removed, P1.4).
 
 ```cpp
-void effectSolid(SegmentView& view, const EffectParams& params, 
+void effectSolid(SegmentView& view, const ParamValues& params,
                  uint32_t frame, bool firstFrame) {
-    for (uint16_t i = 0; i < view.size(); i++) {
-        view[i] = params.color1;
-    }
+    view.fill(params.getColor(0));
 }
 ```
 
+### Params ([param_schema.h](param_schema.h), [param_codec.h](param_codec.h))
+`ParamDesc`/`ParamSchema` describe an effect's typed parameters; `ParamValues` holds the
+runtime values effects read by slot. `param_codec.h` is the single schema-aware
+(de)serializer shared by the API and persistence (P1.1).
+
+### Output HAL ([led_output.h](led_output.h), [fastled_output.h](fastled_output.h))
+The controller presents finished frames through the `ILedOutput` interface; `FastLedOutput`
+(RMT) is the default backend (RFC 0001 §6).
+
 ## Architecture
 
-**Single-Writer Model**: Only `controller.update()` writes to LEDs.
-- Effects write to their segment's view
-- Protocols write to atomic buffers
-- Controller copies when ready
+**Single-Writer Model**: only `controller.update()` (the render loop) writes segment/LED state.
+- Every input (HTTP, MQTT, AI, WebSocket) enqueues a command on the bus
+- sACN writes an atomic double-buffer; the loop copies it when ready
+- The loop shows the frame through the `ILedOutput` HAL

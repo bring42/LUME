@@ -13,6 +13,10 @@ The controller can receive DMX data over the network using the sACN (E1.31) prot
 5. Save Configuration
 6. Configure your lighting software to send to the device
 
+> 🔁 Saving config enqueues a `ReconfigureProtocols` command that is applied on the render loop
+> (single-writer), so the sACN receiver is torn down and restarted safely without racing the
+> render task — no reboot needed.
+
 ---
 
 ## Configuration Options

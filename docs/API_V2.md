@@ -2,7 +2,9 @@
 
 **Base URL:** `http://lume.local` (or device IP address)
 
-The v2 API provides multi-segment LED control with full access to the segment-based architecture.
+The v2 API provides multi-segment LED control with full access to the segment-based
+architecture. Effect parameters are **schema-driven and per-effect** — discovered at
+runtime from `GET /api/v2/effects` — not a fixed set of top-level scalars.
 
 ## Authentication
 
@@ -13,34 +15,92 @@ All endpoints support optional token-based authentication:
 
 ---
 
-## Update Semantics
+## Write model: asynchronous, single-writer
 
-All PUT endpoints use partial-update semantics. Any field you omit from the request body keeps its prior value on the device. This matches the current embedded UI behavior and avoids the need for a separate PATCH verb in constrained environments.
+LUME runs a **single-writer command bus** (see the [command-bus RFC](rfcs/0001-command-bus.md)).
+Every mutating request — segment `POST`/`PUT`/`DELETE`, controller `PUT`, `POST /api/pixels`,
+and `POST /api/prompt` — does **not** apply on the web task. It validates the body, enqueues a
+typed command, and returns immediately:
+
+```
+HTTP/1.1 202 Accepted
+Content-Type: application/json
+
+{"status":"accepted"}
+```
+
+The render loop drains the queue and applies the command on the **next frame** (single writer,
+no locks, no cross-task races). Consequences for clients:
+
+- **The 202 body carries no resulting state.** Do not parse the mutated resource out of the
+  response — there isn't one. Reconcile by reading the state the loop actually applied:
+  either the **WebSocket state push** (below) or a follow-up `GET`.
+- Reads (`GET`) are synchronous and return the live state directly with `200`.
+
+### WebSocket state push
+
+Connect to `ws://lume.local/ws`. On connect, and after every applied mutation, the loop
+broadcasts the full UI state:
+
+```json
+{
+  "type": "state",
+  "controller": { "power": true, "brightness": 128, "ledCount": 160 },
+  "segments": [ /* canonical segment objects — see below */ ]
+}
+```
+
+This is the authoritative post-apply state and uses the **same canonical segment shape** as
+the REST endpoints (one serializer backs both — TECH_DEBT P1.7).
+
+---
+
+## Update semantics (read this before sending `params`)
+
+A `PUT /api/v2/segments/{id}` is **not** a field-level merge for effect parameters.
+
+- **Top-level fields** you omit (`effect`, `palette`, `brightness`) keep their prior value.
+- **The `params` object is applied whole against the effect's schema.** When a request
+  includes a `params` object, the handler first loads that effect's **schema defaults**, then
+  overlays the keys you sent. **Any param you omit from `params` is reset to its schema
+  default — not left at its prior value.** (Confirmed on hardware.)
+- If you also change `effect` in the same request, `params` resolve against the **new**
+  effect's schema (and its defaults).
+- Omitting the `params` object entirely leaves the segment's existing param values untouched.
+
+**Rule of thumb:** to tweak one parameter, send the *complete* `params` object for that effect
+(all the keys you care about keeping), not just the one you're changing. Read the current values
+from `GET /api/v2/segments/{id}` first if you need to preserve them.
+
+Unknown param keys, wrong-typed values, and malformed colors are ignored defensively; integer
+params are clamped to their schema `[min, max]`.
 
 ---
 
 ## Error Handling
 
-All endpoints return JSON on failure so clients can safely introspect errors:
+Mutations that pass validation return `202 Accepted` (see above). Failures return JSON so
+clients can introspect:
 
 ```json
 {
   "error": "validation_error",
-  "field": "speed",
-  "message": "Must be between 1 and 255"
+  "field": "start",
+  "message": "Fields 'start' and 'length' are required"
 }
 ```
 
 | Status | Usage | Notes |
 | --- | --- | --- |
-| `200` | Successful reads and updates | Responses include the full resource payload. |
-| `201` | Successful creates | Returns the created segment object. |
-| `400` | Validation or JSON parsing errors | `field` points to the offending attribute when applicable. |
-| `404` | Unknown segment IDs | Returned when a referenced segment does not exist. |
-| `413` | Payload too large | Body exceeded `MAX_REQUEST_BODY_SIZE` (16KB). |
-| `500` | Internal creation failures | Rare; indicates controller could not allocate a segment. |
+| `200` | Successful reads (`GET`) | Returns the live resource payload. |
+| `202` | Accepted mutation | Body is `{"status":"accepted"}`; the loop applies it next frame. |
+| `400` | Validation / JSON parse errors | `field` points to the offending attribute when applicable. |
+| `404` | Unknown segment ID | Referenced segment does not exist. |
+| `409` | Busy / capacity | Another request body is mid-assembly (`beginBody` guard, P0.3), max segments reached, or an AI request is already in flight. |
+| `413` | Payload too large | Body exceeded `MAX_REQUEST_BODY_SIZE` (16 KB). |
+| `429` | Rate limited | `POST /api/prompt` only (min gap `PROMPT_RATE_LIMIT_MS`). |
 
-Authentication failures continue to return `401` via the shared `sendUnauthorized()` helper.
+Authentication failures return `401` via the shared `sendUnauthorized()` helper.
 
 ---
 
@@ -48,52 +108,67 @@ Authentication failures continue to return `401` via the shared `sendUnauthorize
 
 ### Controller Payload
 
-| Field | Type / Range | Required | Notes |
+| Field | Type / Range | Writable | Notes |
 | --- | --- | --- | --- |
-| `power` | `bool` | optional | `true` enables LED output. |
-| `brightness` | `uint8 (0-255)` | optional | Global brightness applied across all segments. |
-| `ledCount` | `uint16 (1-1024)` | read-only | Returned by GET responses; not writable via API. |
+| `power` | `bool` | ✅ (PUT) | `true` enables LED output. |
+| `brightness` | `uint8 (0-255)` | ✅ (PUT) | Global brightness applied across all segments. |
+| `ledCount` | `uint16` | read-only | Returned by GET; changed via `POST /api/config`, applied on reboot. |
 
-**Response shape (GET / PUT):**
+**Response shape (GET):**
 ```json
-{
-  "power": true,
-  "brightness": 128,
-  "ledCount": 160
-}
+{ "power": true, "brightness": 128, "ledCount": 160 }
 ```
 
-### Segment Payload
+### Segment Payload — the canonical shape
 
-| Field | Type / Range | Required (POST) | Notes |
-| --- | --- | --- | --- |
-| `id` | `uint8 (0-7)` | auto | Assigned sequentially, returned in responses. |
-| `start` | `uint16` | ✅ | Starting LED index. |
-| `length` | `uint16` | ✅ | Number of LEDs in the segment. |
-| `stop` | `uint16` | auto | Derived from `start + length - 1` in responses. |
-| `effect` | `string` | optional | Must match an ID from `/api/v2/effects`. |
-| `speed` | `uint8 (1-255)` | optional | Animation speed scalar. |
-| `intensity` | `uint8 (0-255)` | optional | Effect-specific secondary scalar. |
-| `primaryColor` | `[uint8,uint8,uint8]` | optional | RGB triplet. |
-| `secondaryColor` | `[uint8,uint8,uint8]` | optional | RGB triplet. |
-| `palette` | `uint8 (0-6)` | optional | Palette preset index; omitted in responses due to storage limitation. |
-| `reverse` | `bool` | optional | Only honored at creation time. |
+One serializer produces the segment shape everywhere (v2 REST **and** the WebSocket push).
 
-**Segment response shape (GET / POST / PUT):**
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | `uint8 (0-7)` | Assigned sequentially, stable across the segment's life. |
+| `start` | `uint16` | Starting LED index. |
+| `stop` | `uint16` | Inclusive last index (`start + length - 1`). Response-only (derived). |
+| `length` | `uint16` | Number of LEDs in the segment. |
+| `reverse` | `bool` | Run the effect reversed. **Creation-time only** (ignored on PUT). |
+| `brightness` | `uint8 (0-255)` | Per-segment brightness. |
+| `effect` | `string` | Effect ID; must match an `id` from `GET /api/v2/effects`. |
+| `params` | `object` | Per-effect parameters keyed by param `id` (see below). Colors are `#rrggbb` hex. |
+
+**Canonical segment object (GET / WebSocket):**
 ```json
 {
   "id": 0,
   "start": 0,
   "stop": 79,
   "length": 80,
+  "reverse": false,
+  "brightness": 255,
   "effect": "fire",
-  "speed": 180,
-  "intensity": 150,
-  "primaryColor": [255, 80, 0],
-  "secondaryColor": [255, 0, 0],
-  "reverse": false
+  "params": {
+    "cooling": 55,
+    "sparking": 120,
+    "reversed": false
+  }
 }
 ```
+
+The `params` keys, their types, defaults, and ranges are **defined by the effect**, not by
+this API. Fetch them from `GET /api/v2/effects` (each effect declares a `params` array). A few
+examples of what a given effect exposes:
+
+- `gradient` → `colorStart`, `colorEnd` (both `color`, `#rrggbb` hex)
+- `fire` → `cooling` (int), `sparking` (int), `reversed` (bool)
+- `wave` → a `direction` **enum** plus speed/color params
+- palette effects → a `palette` param (type `palette`)
+
+**Color params are hex strings** (`"#rrggbb`") on both input and output. (The WebSocket used to
+emit `[r,g,b]` arrays; the bundled web UI still accepts either form, but hex is what the device
+emits and expects.)
+
+> **Palette caveat:** a segment's palette is set via a top-level `palette` integer (a preset
+> index, see `GET /api/v2/palettes`), not inside `params`. The device stores the resolved
+> `CRGBPalette16`, so the active preset index is **not** echoed back in GET/state. Track it
+> client-side if you need it.
 
 ---
 
@@ -103,28 +178,20 @@ Authentication failures continue to return `401` via the shared `sendUnauthorize
 
 Get controller-level state (power, brightness, LED count).
 
-**Response:**
 ```json
-{
-  "power": true,
-  "brightness": 200,
-  "ledCount": 160
-}
+{ "power": true, "brightness": 200, "ledCount": 160 }
 ```
 
 ### PUT /api/v2/controller
 
-Update controller-level state.
+Update controller-level state. Only `power` and `brightness` are honored.
 
 **Request:**
 ```json
-{
-  "power": true,
-  "brightness": 200
-}
+{ "power": true, "brightness": 200 }
 ```
 
-**Response:** Same as GET - returns updated state.
+**Response:** `202 {"status":"accepted"}`. Read back via `GET` or the WebSocket push.
 
 ---
 
@@ -132,9 +199,9 @@ Update controller-level state.
 
 ### GET /api/v2/segments
 
-List all segments with controller state.
+List all segments with controller state. Segments are enumerated by index, so survivors of a
+middle delete are never dropped (P0.5).
 
-**Response:**
 ```json
 {
   "power": true,
@@ -146,20 +213,14 @@ List all segments with controller state.
       "start": 0,
       "stop": 159,
       "length": 160,
+      "reverse": false,
+      "brightness": 255,
       "effect": "rainbow",
-      "speed": 128,
-      "intensity": 128,
-      "primaryColor": [0, 0, 255],
-      "secondaryColor": [128, 0, 128],
-      "reverse": false
+      "params": { "speed": 128 }
     }
   ]
 }
 ```
-
-**Notes:**
-- `stop` is calculated as `start + length - 1` (inclusive end position)
-- `palette` field is omitted (see limitations below)
 
 ### POST /api/v2/segments
 
@@ -170,75 +231,46 @@ Create a new segment.
 {
   "start": 0,
   "length": 80,
+  "reverse": false,
   "effect": "fire",
-  "speed": 180,
-  "intensity": 150,
-  "primaryColor": [255, 80, 0],
-  "secondaryColor": [255, 0, 0],
   "palette": 1,
-  "reverse": false
+  "params": { "cooling": 55, "sparking": 120 }
 }
 ```
 
-**Required fields:**
-- `start` (uint16) - Starting LED index
-- `length` (uint16) - Number of LEDs in segment
+**Required:** `start` (uint16), `length` (uint16).
+**Optional:** `reverse` (bool, creation-only), `effect` (string), `palette` (int preset index),
+`params` (object; keys resolved against the effect's schema — omitted keys take the schema
+default).
 
-**Optional fields:**
-- `effect` (string) - Effect ID (default: none)
-- `speed` (uint8, 1-255) - Animation speed
-- `intensity` (uint8, 0-255) - Effect intensity
-- `primaryColor` (array [r,g,b]) - Primary color
-- `secondaryColor` (array [r,g,b]) - Secondary color
-- `palette` (int 0-6) - Palette preset (0=Rainbow, 1=Lava, 2=Ocean, 3=Party, 4=Forest, 5=Cloud, 6=Heat)
-- `reverse` (bool) - Reverse LED direction (set at creation only)
-
-**Response:** Returns created segment object with assigned `id`.
+**Response:** `202 {"status":"accepted"}`. The new segment (with its assigned `id`) appears in
+the next WebSocket push and in `GET /api/v2/segments`.
 
 ### GET /api/v2/segments/{id}
 
-Get a specific segment by ID.
-
-**Response:**
-```json
-{
-  "id": 0,
-  "start": 0,
-  "stop": 79,
-  "length": 80,
-  "effect": "fire",
-  "speed": 180,
-  "intensity": 150,
-  "primaryColor": [255, 80, 0],
-  "secondaryColor": [255, 0, 0],
-  "reverse": false
-}
-```
+Get a single segment by ID (canonical shape above). `404` if it doesn't exist; `400` if `id > 7`.
 
 ### PUT /api/v2/segments/{id}
 
 Update an existing segment.
 
-**Partial update example:**
 ```bash
 curl -X PUT http://lume.local/api/v2/segments/0 \
   -H "Content-Type: application/json" \
-  -d '{
-    "effect": "rainbow",
-    "speed": 120
-  }'
+  -d '{ "effect": "rainbow", "params": { "speed": 120 } }'
 ```
 
 **Behavior:**
-- `primaryColor`, `secondaryColor`, `palette`, and any omitted numeric fields remain unchanged.
-- `reverse` cannot be updated (creation-time only); supplying it on PUT is ignored.
-- Response returns the full segment object reflecting the new values.
+- `effect`, `palette`, and `brightness` you omit keep their prior value.
+- **`params` is applied whole against the effect schema — omitted params reset to their
+  defaults** (see [Update semantics](#update-semantics-read-this-before-sending-params)).
+- `reverse` is creation-time only; supplying it on PUT is ignored.
 
-**Response:** Returns updated segment object (see schema above).
+**Response:** `202 {"status":"accepted"}`. Reconcile via `GET` / WebSocket.
 
 ### DELETE /api/v2/segments/{id}
 
-Delete a segment by ID.
+Delete a segment by ID. **Response:** `202 {"status":"accepted"}`.
 
 ---
 
@@ -246,56 +278,65 @@ Delete a segment by ID.
 
 ### GET /api/v2/effects
 
-List all available effects with metadata.
+List all available effects with their parameter schemas. **This is the source of truth for
+what `params` a segment accepts.**
 
-**Response:**
 ```json
 {
   "effects": [
     {
       "id": "fire",
       "name": "Fire",
-      "category": 1,
-      "usesPalette": true,
-      "usesPrimaryColor": false,
-      "usesSecondaryColor": false,
-      "usesSpeed": true,
-      "usesIntensity": true
+      "category": "Animated",
+      "dims": "1d",
+      "params": [
+        { "id": "cooling",  "name": "Cooling",  "type": "int",  "default": 55,  "min": 20, "max": 100 },
+        { "id": "sparking", "name": "Sparking", "type": "int",  "default": 120, "min": 50, "max": 200 },
+        { "id": "reversed", "name": "Reversed", "type": "bool", "default": false }
+      ],
+      "usesPalette": false,
+      "colorCount": 0,
+      "usesSpeed": false,
+      "usesIntensity": false
     },
     {
       "id": "gradient",
       "name": "Gradient",
-      "category": 1,
+      "category": "Solid",
+      "dims": "1d",
+      "params": [
+        { "id": "colorStart", "name": "Start Color", "type": "color", "default": "#0000ff" },
+        { "id": "colorEnd",   "name": "End Color",   "type": "color", "default": "#ff0000" }
+      ],
       "usesPalette": false,
-      "usesPrimaryColor": true,
-      "usesSecondaryColor": true,
-      "usesSpeed": true,
+      "colorCount": 2,
+      "usesSpeed": false,
       "usesIntensity": false
     }
   ]
 }
 ```
 
-**Categories:**
-- `0` = Solid (static, no animation)
-- `1` = Animated (motion/animation)
-- `2` = Moving (positional movement)
-- `3` = Special (complex or unique)
-
-**Parameter Flags:**
-- `usesPalette` - Effect responds to palette changes
-- `usesPrimaryColor` - Effect uses primary color picker
-- `usesSecondaryColor` - Effect uses secondary color picker
-- `usesSpeed` - Effect responds to speed parameter
-- `usesIntensity` - Effect responds to intensity parameter
-
-These flags enable dynamic UI - only showing controls that are relevant for each effect.
+**Effect fields:**
+- `category` — string: `"Solid"`, `"Animated"`, `"Moving"`, or `"Special"`.
+- `dims` — dimensionality (TECH_DEBT P1.2): `"1d"` (strip-only, the default), `"2d"`
+  (matrix-only), or `"any"` (remap-safe on either). Inert on a 1D build.
+- `params` — array of parameter descriptors. Each has an `id` (the key you use in a segment's
+  `params` object), `name`, and a `type` ∈ `int` · `float` · `color` · `bool` · `enum` ·
+  `palette`, plus type-specific fields:
+  - `int` → `default`, `min`, `max` (0-255)
+  - `float` → `default`, `min`, `max`
+  - `color` → `default` as `#rrggbb`
+  - `bool` → `default` (boolean)
+  - `enum` → `default` (index) and `options` (a `"a|b|c"` pipe-delimited string)
+  - `palette` → selector; the palette list comes from `GET /api/v2/palettes`
+- `usesPalette`, `colorCount`, `usesSpeed`, `usesIntensity` — convenience flags derived from
+  the schema, so a UI can lay out controls without inspecting every param.
 
 ### GET /api/v2/palettes
 
-List all available color palettes.
+List the palette presets exposed by the API (indices `0-6`).
 
-**Response:**
 ```json
 {
   "palettes": [
@@ -312,64 +353,35 @@ List all available color palettes.
 
 ### GET /api/v2/info
 
-Lightweight metadata endpoint for UIs to discover firmware details and capability limits.
+Lightweight metadata for UIs to discover firmware details and capability limits.
 
-**Response:**
 ```json
 {
   "firmware": {
     "name": "LUME",
     "version": "1.0.0",
     "buildHash": "dev",
-    "buildTimestamp": "2025-12-30 18:42:10"
+    "buildTimestamp": "2026-01-15 18:42:10"
   },
   "limits": {
-    "maxLeds": 300,
+    "maxLeds": 1000,
     "maxSegments": 8,
     "maxRequestBody": 16384
   },
   "features": {
     "segmentsV2": true,
     "directPixels": true,
-    "sacn": true,
-    "mqtt": true,
+    "sacn": false,
+    "mqtt": false,
     "aiPrompts": true,
     "ota": true
   },
-  "controller": {
-    "ledCount": 160,
-    "power": true
-  }
+  "controller": { "ledCount": 160, "power": true }
 }
 ```
 
----
-
-## Known Limitations
-
-### 1. Palette Retrieval
-
-**Issue:** Segments store converted `CRGBPalette16` objects, not the `PalettePreset` enum value that was set.
-
-**Impact:**
-- ✅ Can SET palette via preset ID
-- ❌ Cannot GET which preset is currently active
-
-**Workaround:** Track palette preset client-side if needed.
-
-**Future Fix:** Add palette preset tracking field to Segment class.
-
-### 2. Reverse Flag Immutable
-
-**Issue:** The `reverse` flag can only be set during segment creation via `createSegment(start, length, reversed)`.
-
-**Impact:**
-- ✅ Can set reverse during creation
-- ❌ Cannot change reverse after creation
-
-**Workaround:** Delete and recreate segment with new reverse value.
-
-**Architectural:** By design - reverse is part of the SegmentView setup.
+`limits.maxLeds` is the compile-time `MAX_LED_COUNT` (default 1000). `features.sacn` and
+`features.mqtt` reflect the current config (whether each is enabled), not just build support.
 
 ---
 
@@ -377,42 +389,22 @@ Lightweight metadata endpoint for UIs to discover firmware details and capabilit
 
 ### GET /health
 
-Quick health check endpoint.
-
-**Response:**
 ```json
-{
-  "status": "ok",
-  "uptime": 12345,
-  "freeHeap": 234567,
-  "wifiRSSI": -45
-}
+{ "status": "ok", "uptime": 12345, "freeHeap": 234567, "wifiRSSI": -45 }
 ```
 
 ### GET /api/status
 
-Full system status.
-
-**Response:**
 ```json
 {
   "online": true,
   "ip": "192.168.1.100",
   "uptime": 12345,
-  "wifi": {
-    "ssid": "MyNetwork",
-    "rssi": -45,
-    "connected": true
-  },
-  "led": {
-    "count": 160,
-    "power": true,
-    "brightness": 200,
-    "fps": 60
-  },
+  "wifi": { "ssid": "MyNetwork", "rssi": -45, "connected": true },
+  "led": { "count": 160, "power": true, "brightness": 200, "fps": 60 },
   "protocols": {
     "sacn": {"enabled": false},
-    "mqtt": {"enabled": true, "connected": true}
+    "mqtt": {"enabled": false, "connected": false}
   }
 }
 ```
@@ -421,7 +413,6 @@ Full system status.
 
 Get device configuration (passwords/API keys masked).
 
-**Response:**
 ```json
 {
   "wifiSSID": "MyNetwork",
@@ -430,7 +421,7 @@ Get device configuration (passwords/API keys masked).
   "aiApiKeySet": true,
   "aiModel": "claude-3-5-sonnet-20241022",
   "sacnEnabled": false,
-  "mqttEnabled": true,
+  "mqttEnabled": false,
   "mqttBroker": "192.168.1.10",
   "mqttPort": 1883
 }
@@ -455,28 +446,37 @@ Update device configuration.
 ```
 
 **Notes:**
-- Omit password fields to leave unchanged
-- Device restarts after WiFi changes
+- Omit password fields to leave unchanged.
+- Protocol changes (sACN/MQTT) are re-applied through the bus via a `ReconfigureProtocols`
+  command on the render loop — not live from the web task.
+- `ledCount` changes are deferred and take effect on reboot (P0.8). WiFi changes restart the
+  device.
 
 ### POST /api/pixels
 
-Direct pixel control (bypasses effects).
+Direct pixel control (bypasses effects). Four input forms are accepted; an optional
+`brightness` field is honored alongside any of them.
 
-**Request:**
 ```json
-{
-  "pixels": [
-    [255, 0, 0],
-    [0, 255, 0],
-    [0, 0, 255]
-  ]
-}
+// 1. Array of [r,g,b] triplets (maps to LED positions 0..N)
+{ "pixels": [[255,0,0], [0,255,0], [0,0,255]] }
+
+// 2. Flat RGB array
+{ "rgb": [255,0,0, 0,255,0, 0,0,255] }
+
+// 3. Fill all LEDs with one color
+{ "fill": [255, 0, 0] }
+
+// 4. Gradient between two colors
+{ "gradient": { "from": [255,0,0], "to": [0,0,255] } }
 ```
 
 **Notes:**
-- Array of [r,g,b] triplets
-- Maps directly to LED positions
-- Overrides active effects until next effect update
+- This endpoint stages a **single overlay frame** for the render loop to show; it is **not
+  sticky**. Any active segments resume drawing on the next frame (a behavior change from the
+  old direct-write path — acceptable for this debug endpoint).
+- `pixels`/`rgb` return `{"success":true,"pixelsSet":N}`; `fill`/`gradient` return a success
+  flag. Malformed color arrays return `400`.
 
 ---
 
@@ -484,216 +484,127 @@ Direct pixel control (bypasses effects).
 
 ### POST /api/prompt
 
-Send natural language prompt to AI for LED control.
+Send a natural-language prompt for AI-driven LED control.
 
 **Request:**
 ```json
-{
-  "prompt": "cozy warm fireplace"
-}
+{ "prompt": "cozy warm fireplace" }
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Lights updated successfully!",
-  "spec": {
-    "effect": "fire",
-    "speed": 180,
-    "intensity": 200,
-    "primaryColor": [255, 80, 0],
-    "secondaryColor": [255, 40, 0]
-  }
-}
-```
+**Response:** `202 {"status":"accepted"}`.
+
+The blocking Anthropic call runs on a dedicated worker task (P0.4), so the request returns
+immediately rather than holding the web task for ~30 s. When the AI responds, its effect spec
+is applied to **segment 0** through the bus; observe the result via the WebSocket push or
+`GET /api/v2/segments/0`.
 
 **Notes:**
-- Requires AI API key configured in settings
-- Uses Anthropic Claude API
-- Automatically selects best effect and colors from natural language
-- Applied to segment 0
+- Requires an AI API key configured in settings; otherwise the worker can't run.
+- Rate limited: a second prompt within `PROMPT_RATE_LIMIT_MS` (3 s) returns `429`. One AI
+  request runs at a time — an overlapping request returns `409`.
 
 ### GET /api/nightlight
 
-Get nightlight status.
-
-**Response:**
 ```json
-{
-  "active": false,
-  "progress": 0.0
-}
-```
-
-**Response (active):**
-```json
-{
-  "active": true,
-  "progress": 45.5
-}
+{ "active": false, "progress": 0.0 }
 ```
 
 ### POST /api/nightlight
 
-Start nightlight fade timer.
+Start a nightlight fade timer.
 
 **Request:**
 ```json
-{
-  "duration": 900,
-  "targetBrightness": 0
-}
+{ "duration": 900, "targetBrightness": 0 }
 ```
 
-**Parameters:**
-- `duration` (uint16, 1-3600) - Fade duration in seconds
-- `targetBrightness` (uint8, 0-255) - Target brightness (0 = turn off)
-
-**Response:**
-```json
-{
-  "success": true,
-  "duration": 900,
-  "targetBrightness": 0,
-  "startBrightness": 200
-}
-```
+- `duration` (uint16, 1-3600) — fade duration in seconds
+- `targetBrightness` (uint8, 0-255) — target brightness (0 = off)
 
 ### POST /api/nightlight/stop
 
-Cancel active nightlight.
-
-**Response:**
-```json
-{
-  "success": true
-}
-```
+Cancel an active nightlight. Returns `{ "success": true }`.
 
 ---
 
 ## Examples
 
-### Create Two Segments with Different Effects
+### Create two segments with different effects
 
 ```bash
-# First half - fire effect
+# First half — fire
 curl -X POST http://lume.local/api/v2/segments \
   -H "Content-Type: application/json" \
-  -d '{
-    "start": 0,
-    "length": 80,
-    "effect": "fire",
-    "speed": 200,
-    "primaryColor": [255, 60, 0]
-  }'
+  -d '{ "start": 0, "length": 80, "effect": "fire",
+        "params": { "cooling": 55, "sparking": 120 } }'   # → 202 accepted
 
-# Second half - rainbow effect  
+# Second half — rainbow
 curl -X POST http://lume.local/api/v2/segments \
   -H "Content-Type: application/json" \
-  -d '{
-    "start": 80,
-    "length": 80,
-    "effect": "rainbow",
-    "speed": 150
-  }'
+  -d '{ "start": 80, "length": 80, "effect": "rainbow",
+        "params": { "speed": 150 } }'                     # → 202 accepted
 ```
 
-### Update Controller Brightness
+### Change one segment's effect
+
+```bash
+curl -X PUT http://lume.local/api/v2/segments/0 \
+  -H "Content-Type: application/json" \
+  -d '{ "effect": "gradient",
+        "params": { "colorStart": "#ff6000", "colorEnd": "#000040" } }'
+```
+
+### Discover an effect's parameters
+
+```bash
+curl http://lume.local/api/v2/effects | jq '.effects[] | select(.id=="fire") | .params'
+```
+
+### Update controller brightness
 
 ```bash
 curl -X PUT http://lume.local/api/v2/controller \
   -H "Content-Type: application/json" \
-  -d '{"brightness": 200}'
-```
-
-### List All Available Effects
-
-```bash
-curl http://lume.local/api/v2/effects | jq '.effects[] | .name'
+  -d '{"brightness": 200}'                                # → 202 accepted
 ```
 
 ---
 
 ## Implementation Notes
 
-- All JSON uses ArduinoJson library
-- Request bodies limited to 16KB (`MAX_REQUEST_BODY_SIZE`)
-- Async body handling with chunk accumulation
-- All endpoints return JSON (except 404s from routing issues)
-- Segment IDs are stable (0-7, assigned sequentially)
-- Non-overlapping segments enforced by controller
-- Color arrays are `[r, g, b]` format, values 0-255
+- All JSON uses ArduinoJson.
+- Request bodies are limited to 16 KB (`MAX_REQUEST_BODY_SIZE`) and assembled one at a time; a
+  concurrent body returns `409` (`beginBody`/`endBody` single-owner guard, P0.3).
+- All mutations enqueue a command; the render loop is the sole writer of segment/LED state.
+- Segment IDs are stable (0-7, assigned sequentially). Overlapping segments render last-writer-wins.
+- Color values are `#rrggbb` hex in effect `params`; the `/api/pixels` debug endpoint takes
+  `[r,g,b]` arrays.
 
-**Routing Implementation:**
-
-ESPAsyncWebServer has **very limited regex support**. Patterns like `^\\/api\\/v2\\/segments\\/([0-9]+)$` don't work as expected.
-
-**Solution:** Manual path inspection using lambda handlers:
-
-```cpp
-// GET - handles both /api/v2/segments and /api/v2/segments/{id}
-server.on("/api/v2/segments", HTTP_GET, [](AsyncWebServerRequest* request) {
-    String path = request->url();
-    if (path.startsWith("/api/v2/segments/") && path.length() > 17) {
-        handleApiV2SegmentGet(request);  // Has ID
-    } else {
-        handleApiV2SegmentsList(request);  // No ID
-    }
-});
-
-// PUT - validates path before delegating to body handler
-server.on("/api/v2/segments", HTTP_PUT,
-    [](AsyncWebServerRequest* request) {
-        String path = request->url();
-        if (!path.startsWith("/api/v2/segments/") || path.length() <= 17) {
-            request->send(400, "application/json", "{\"error\":\"Segment ID required\"}");
-        }
-    },
-    NULL,
-    [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-        String path = request->url();
-        if (path.startsWith("/api/v2/segments/") && path.length() > 17) {
-            handleApiV2SegmentUpdate(request, data, len, index, total);
-        }
-    }
-);
-```
-
-The handler functions then extract the ID using `lastIndexOf('/')` and `substring()`.
+**Routing:** ESPAsyncWebServer has very limited regex support, so `/api/v2/segments/{id}` is
+handled by manual path inspection in `src/network/server.cpp` (`startsWith` + `substring`)
+rather than a route pattern. Handlers extract the ID with `lastIndexOf('/')`.
 
 ---
 
-## Migration from v1 API
+## Migration from the v1 API
 
-The v1 API (`/api/led`) remains available for backward compatibility with the existing web UI:
+The v1 API remains for backward compatibility. `GET /api/segments` now serves the **same
+canonical segment shape** as v2 (one serializer, P1.7). The older `/api/led` compatibility
+routes translate to segment 0.
 
 | v1 Endpoint | v2 Equivalent |
 |-------------|---------------|
 | `GET /api/led` | `GET /api/v2/segments` (segment 0) |
-| `POST /api/led` | `PUT /api/v2/segments/0` (when fixed) |
 | `GET /api/segments` | `GET /api/v2/segments` |
 
-**Key Differences:**
-- v2 supports multiple segments natively
-- v2 exposes effect metadata and capabilities
-- v2 has controller-level endpoints separate from segments
-- v1 uses compatibility layer that translates to segment 0
+**Key differences:** v2 supports multiple segments natively, exposes per-effect parameter
+schemas (`GET /api/v2/effects`), and separates controller-level endpoints from segments.
 
 ---
 
-## Status: Stable
+## Known Limitations
 
-✅ **Working:**
-- Controller state management
-- Listing all segments
-- Creating new segments
-- Getting individual segments by ID
-- Updating segments by ID
-- Deleting segments by ID
-- Effects and palettes metadata
-
-⚠️ **Known Limitations:**
-- Palette preset retrieval (architectural - stores converted palettes)
-- Reverse flag immutable after creation (by design)
+- **Palette preset retrieval** — a segment stores the resolved `CRGBPalette16`, not the preset
+  index that was set, so GET/state can't report the active preset. Track it client-side.
+- **Reverse flag immutable** — `reverse` is fixed at creation (part of the `SegmentView` setup);
+  delete and recreate to change it.

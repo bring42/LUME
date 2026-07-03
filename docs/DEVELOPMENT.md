@@ -15,36 +15,38 @@ src/
 ├── secrets.h             # Your credentials (gitignored)
 ├── secrets.h.example     # Template for secrets
 ├── core/
-│   ├── controller.*      # LumeController - owns LED array, segments, protocols
+│   ├── controller.*      # LumeController - owns LED array, segments, protocols, workbuffer
 │   ├── segment.*         # Segment class with effect binding, scratchpad
-│   ├── segment_view.h    # SegmentView - virtual range over LED array
-│   ├── effect_registry.h # Effect function registry with metadata
-│   ├── effect_params.h   # Common effect parameters
-│   └── command_queue.h   # Thread-safe command queue
+│   ├── segment_view.h    # SegmentView - Region-based view over the LED array
+│   ├── region.h          # Region{start,length} geometry value type (P1.3)
+│   ├── effect_registry.h # Effect registry with schema + EffectDims metadata
+│   ├── param_schema.h    # ParamDesc / ParamSchema / ParamValues (typed params)
+│   ├── param_codec.h     # One schema-aware param (de)serializer (P1.1)
+│   ├── effect_params.h   # Palette presets + CRGBPalette16 lookup
+│   ├── segment_serializer.h # Canonical segment→JSON (v2 REST + WebSocket, P1.7)
+│   ├── led_output.h      # ILedOutput HAL seam (RFC 0001 §6)
+│   ├── fastled_output.h  # Default FastLED/RMT output backend
+│   ├── body_guard.h      # Single-owner request-body guard (P0.3)
+│   └── command_queue.h   # Thread-safe single-writer command bus
 ├── api/
-│   ├── segments.*        # v2 multi-segment API handlers
+│   ├── segments.*        # v2 multi-segment API + effects/palettes/info metadata
 │   ├── config.*          # Configuration endpoints
 │   ├── status.*          # Status and health endpoints
 │   ├── pixels.*          # Direct pixel control
-│   ├── prompt.*          # AI natural language control (Anthropic)
+│   ├── prompt.*          # AI natural language control (Anthropic, worker task)
 │   └── nightlight.*      # Nightlight mode endpoints
 ├── network/
-│   ├── server.*          # Web server setup and route registration
+│   ├── server.*          # Web server, routes, WebSocket state push
 │   ├── wifi.*            # WiFi connection management
 │   └── ota.*             # Over-the-air update handling
-├── effects/
+├── visuallib/
 │   ├── effects.h         # All effect declarations
-│   ├── solid.cpp         # Solid color effect
-│   ├── rainbow.cpp       # Rainbow chase effect
-│   ├── fire.cpp          # Fire simulation
-│   ├── confetti.cpp      # Random confetti sparkles
-│   ├── gradient.cpp      # Static color gradient
-│   ├── pulse.cpp         # Color pulsing
-│   ├── meteor.cpp        # Meteor shower
-│   ├── twinkle.cpp       # Twinkling stars
-│   ├── candle.cpp        # Candle flicker
-│   ├── breathe.cpp       # Breathing pulse
-│   └── ... (23 total)    # See effects.h for full list
+│   └── effects/
+│       ├── solid.cpp     # Solid color effect
+│       ├── rainbow.cpp   # Rainbow chase effect
+│       ├── fire.cpp      # Fire simulation
+│       ├── gradient.cpp  # Static color gradient
+│       └── ... (23 total, one .cpp per effect)
 └── protocols/
     ├── protocol.h        # Protocol interface + ProtocolBuffer
     ├── sacn.*            # Self-contained sACN/E1.31 implementation
@@ -81,18 +83,23 @@ data/                     # LittleFS web UI (uploaded separately)
 
 **Data Flow:**
 ```
-Web UI → JSON POST → api/* handlers → lume::controller → Segment → Effect
-AI Prompt → api/prompt → Anthropic API → JSON spec → controller → Segment
-sACN network → SacnProtocol (UDP, multicast, E1.31) → ProtocolBuffer → controller.update() → FastLED
-MQTT → MqttProtocol → controller commands → Segment → Effect
+Web UI → JSON POST → api/* handlers → enqueueCommand() → [bus] → controller.update() → Segment → Effect
+AI Prompt → api/prompt → 202 → worker task → Anthropic API → applySpec() → enqueueCommand() → [bus]
+sACN network → SacnProtocol (UDP, multicast, E1.31) → ProtocolBuffer → controller.update() → ILedOutput
+MQTT → MqttProtocol → enqueueCommand() → [bus] → Segment → Effect
 ```
+
+Every mutating input is a thin adapter that enqueues a typed command; the render loop is the
+sole writer of segment/LED state, and it presents the finished frame through the `ILedOutput`
+HAL (FastLED RMT by default). Mutating HTTP requests return **`202 Accepted`** and clients
+reconcile via the WebSocket state push or a follow-up `GET`.
 
 ### Concurrency & Single-Writer Model
 
 The LED buffer (`CRGB leds_[]`) is owned by `LumeController`. All mutations flow through a single writer:
 
-- **Main loop** calls `controller.update()` ~60 times/sec
-- **Web handlers** and **protocols** enqueue commands or use atomic buffers
+- **Main loop** calls `controller.update()` ~60 times/sec — the only writer of `leds[]`/segment state
+- **Web handlers** and **MQTT/AI** enqueue commands; **sACN** writes an atomic double-buffer
 - Effects are pure functions that write to their segment's view
 
 **Thread-safety patterns:**
@@ -197,7 +204,9 @@ Baud rate: 115200
 
 ### Continuous Integration
 
-Every push and PR to `main` triggers a GitHub Actions build. See [.github/workflows/build.yml](../.github/workflows/build.yml).
+Every push and PR to `main` triggers GitHub Actions, which runs the **native host tests
+(`pio test -e native`) first** and then the board builds — so a core-logic regression fails
+before any firmware is compiled. See [.github/workflows/build.yml](../.github/workflows/build.yml).
 
 The build badge in the README shows current status:
 
@@ -216,7 +225,7 @@ constexpr uint32_t SACN_DATA_TIMEOUT_MS = 5000;
 
 // Limits
 constexpr size_t MAX_REQUEST_BODY_SIZE = 16384;
-constexpr uint16_t MAX_LED_COUNT = 300;
+constexpr uint16_t MAX_LED_COUNT = 1000;
 
 // Hardware
 constexpr uint8_t LED_VOLTAGE = 5;
@@ -273,27 +282,45 @@ build_flags =
 
 ## Async Body Handling Pattern
 
-ESP async web server requires manual body buffering. Every POST handler MUST:
+ESPAsyncWebServer delivers request bodies in chunks across multiple callback invocations, and
+AsyncTCP can interleave two requests. Every POST/PUT body handler claims a **single-owner body
+guard** (`beginBody`/`endBody`, backed by the pure/host-tested `core/body_guard.h`, P0.3) so
+two bodies can't corrupt the shared static buffer:
 
 ```cpp
-// 1. Validate size at start
-if (index == 0) {
-    if (total > MAX_REQUEST_BODY_SIZE) {
-        request->send(413, "application/json", 
-            "{\"error\":\"Request body too large\"}");
-        return;
+static String bodyBuffer;
+
+void handleEndpointPost(AsyncWebServerRequest* req, uint8_t* data,
+                        size_t len, size_t index, size_t total) {
+    if (index == 0 && !checkAuth(req)) { sendUnauthorized(req); return; }
+
+    // 1. Claim the body slot + validate size at the first chunk
+    if (index == 0) {
+        if (!beginBody(req)) {              // another body is mid-assembly
+            req->send(409, "application/json", "{\"error\":\"Busy, retry\"}");
+            return;
+        }
+        bodyBuffer = "";
+        if (total > MAX_REQUEST_BODY_SIZE) {
+            endBody(req);
+            req->send(413, "application/json", "{\"error\":\"Request body too large\"}");
+            return;
+        }
     }
-    bodyBuffer = "";
-}
 
-// 2. Accumulate chunks
-bodyBuffer += String((char*)data).substring(0, len);
+    // 2. Accumulate chunks (append byte-wise; do NOT rely on NUL-terminated data)
+    for (size_t i = 0; i < len; i++) bodyBuffer += (char)data[i];
 
-// 3. Process only when complete
-if (index + len >= total) {
-    // Parse JSON and handle request
+    // 3. Release the slot and act only when the body is complete
+    if (index + len >= total) {
+        endBody(req);
+        // parse JSON, enqueue a command, and reply 202 {"status":"accepted"}
+    }
 }
 ```
+
+Mutations **enqueue a command and return `202`** — they never touch segment/LED state on the
+web task.
 
 ---
 
@@ -313,12 +340,15 @@ See [ADDING_EFFECTS.md](ADDING_EFFECTS.md) for the complete guide to creating cu
        handleMyEndpoint);
    ```
 
-2. Implement the handler:
+2. Implement the handler following the body-guard pattern above (claim `beginBody`, accumulate,
+   `endBody`, then enqueue a command and reply `202`):
    ```cpp
    void handleMyEndpoint(AsyncWebServerRequest* request, 
                          uint8_t* data, size_t len, 
                          size_t index, size_t total) {
-       // Follow the body buffering pattern above
+       // beginBody / accumulate / endBody, then:
+       lume::controller.enqueueCommand(/* a typed Command */);
+       request->send(202, "application/json", "{\"status\":\"accepted\"}");
    }
    ```
 
@@ -367,7 +397,7 @@ ArduinoOTA.onEnd([]() {
 
 ## Memory Notes
 
-- **SRAM:** ~180KB available, LED buffer uses ~4.8KB for 300 LEDs
+- **SRAM:** ~180KB available; the LED buffer is 3 bytes/LED (~3KB at the 1000-LED `MAX_LED_COUNT`)
 - **PSRAM:** Optional (8MB available on T-Display S3). Flag `-DBOARD_HAS_PSRAM` enables it if present. Default config uses only ~6KB of 512KB internal SRAM.
 - **Flash:** ~4MB, code uses ~180KB
 
@@ -381,18 +411,41 @@ logMemoryStats(LogTag::MAIN, "after wifi connect");
 
 ## AI Integration
 
-The AI prompt feature uses Anthropic's Claude API via synchronous HTTPS requests:
+The AI prompt feature uses Anthropic's Claude API. The blocking ~30 s HTTPS call runs on a
+dedicated FreeRTOS **worker task** (P0.4), never on the AsyncTCP web task:
 
 - Configure API key and model in web UI settings
-- Requests are handled directly in the web handler (no background tasks)
-- System prompt includes available effects and their parameters
-- Response is parsed as JSON and applied to the controller
+- `POST /api/prompt` validates + rate-limits, hands the prompt to the worker, and returns
+  **`202 Accepted`** immediately (a second prompt within `PROMPT_RATE_LIMIT_MS` gets `429`;
+  an overlapping in-flight request gets `409`)
+- The worker calls the API, parses the JSON spec, and applies it via `applySpec()` — which
+  **enqueues bus commands** (single-writer), so the worker never touches segment state directly
+- The result lands on segment 0; clients observe it via the WebSocket push or a `GET`
 
 See [api/prompt.cpp](../src/api/prompt.cpp) for implementation.
 
 ---
 
 ## Testing
+
+### Native Host Tests (run these first)
+
+The core logic has a **native unit-test suite** that runs on your host machine — no board, no
+flashing:
+
+```bash
+pio test -e native
+```
+
+**37 tests** across `param_codec`, `persistence`, `command_bus`, `body_guard`, `region`,
+`scratchpad`, and `effect_registry` (see [test/](../test/); stubs for Arduino/FastLED symbols
+live in `test/stubs/`). CI runs this suite **before** the board builds, so a logic regression
+fails fast without hardware. When you add or change a testable core seam, extend the matching
+suite (or add a `test_<area>` folder) and the stubs as new symbols are needed.
+
+### On-device / API smoke tests (curl)
+
+The checks below need a running device.
 
 ### Test Body Size Limits
 
@@ -406,14 +459,17 @@ curl -X POST http://lume.local/api/pixels \
 ### Test Rate Limiting
 
 ```bash
+# First request is accepted (202) and handed to the AI worker task
 curl -X POST http://lume.local/api/prompt \
   -H "Content-Type: application/json" \
   -d '{"prompt":"rainbow"}'
+# → 202 {"status":"accepted"}
 
-# Immediate second request should fail with 429
+# Immediate second request is throttled
 curl -X POST http://lume.local/api/prompt \
   -H "Content-Type: application/json" \
   -d '{"prompt":"fire"}'
+# → 429 (within PROMPT_RATE_LIMIT_MS), or 409 if the first is still in flight
 ```
 
 ### Test Input Validation
@@ -432,8 +488,8 @@ curl -X POST http://lume.local/api/pixels \
 
 1. **Constants:** Always use `constants.h`, never inline magic numbers
 2. **Logging:** Use structured logging macros, not `Serial.print()`
-3. **POST Handlers:** Always validate body size at `index == 0`
-4. **Effect State:** Use member variables, not static locals
+3. **POST Handlers:** Claim `beginBody()` and validate body size at `index == 0`; reply `202`
+4. **Effect State:** Use the segment scratchpad (`view.getScratchpad<T>()`), never `static`/global state
 5. **Memory:** Check heap after major operations with `logMemoryStats()`
 
 ---

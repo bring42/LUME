@@ -35,7 +35,7 @@ LUME brings **AI-powered control** to your LED strips without sacrificing flexib
 | 📱 **Modern Web UI** | Responsive, mobile-friendly, works offline |
 | 🔲 **Segments** | Split your strip into independent zones with different effects |
 | 🎨 **23 Built-in Effects** | Rainbow, Fire, Confetti, Meteor, Twinkle, Candle, Gradient, Pulse... |
-| 🎨 **Color Palettes** | 12 palettes: Ocean, Lava, Sunset, Forest, Party... |
+| 🎨 **Color Palettes** | 7 selectable palettes: Rainbow, Lava, Ocean, Party, Forest, Cloud, Heat |
 | 🔄 **OTA Updates** | Update firmware wirelessly — never unplug again! |
 | 💾 **Persistent Storage** | Settings survive reboots and updates |
 | 📡 **sACN/E1.31** | Professional DMX protocol for lighting software integration |
@@ -95,7 +95,7 @@ default_envs = lilygo-t-display-s3    # ← Change to your board
 #### [src/constants.h](src/constants.h) — Set your LED pin and strip type
 
 ```cpp
-#define LED_DATA_PIN 21          // ← Change to your wiring (common: 2, 5, 16, 21)
+#define LED_DATA_PIN 2           // ← Change to your wiring (common: 2, 5, 16, 21)
 #define LED_STRIP_TYPE WS2812B   // ← WS2811, WS2812B, etc.
 #define LED_COLOR_MODE GRB       // ← RGB byte order (GRB for WS2812B, RGB for WS2811)
 ```
@@ -291,7 +291,7 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [command-bus RFC](docs/rfcs/
 Key settings in `src/constants.h`:
 
 ```cpp
-#define LED_DATA_PIN 21                       // GPIO for LED data line
+#define LED_DATA_PIN 2                        // GPIO for LED data line
 #define LED_STRIP_TYPE WS2812B                // WS2811, WS2812B, SK6812, etc.
 #define LED_COLOR_MODE GRB                    // RGB byte order (GRB/RGB/BRG)
 constexpr uint16_t MAX_LED_COUNT = 1000;      // Compile-time buffer size

@@ -2,6 +2,10 @@
 
 LUME supports MQTT for integration with home automation systems like Home Assistant, Node-RED, and others.
 
+> ⚠️ **Status: available but not fully verified on this branch.** The transport is wired but
+> the Home-Assistant round-trip hasn't been validated in `main`. Treat the HA specifics below
+> as the intended design.
+
 ---
 
 ## Quick Start
@@ -13,8 +17,14 @@ LUME supports MQTT for integration with home automation systems like Home Assist
 5. Add **Username/Password** if required
 6. Set **Topic Prefix** (default: `lume`)
 7. Save Configuration
+8. **Reboot the device** (see note below)
 
-The device will automatically connect and publish state.
+> 🔁 **How config is applied.** Saving config enqueues a `ReconfigureProtocols` command that is
+> applied on the render loop (single-writer), not live from the web task. sACN and an
+> already-running MQTT client reconfigure in place. **Enabling MQTT for the first time,
+> however, requires a reboot** — the MQTT client is initialized at boot, and a runtime enable
+> only swaps its config struct without wiring it to the controller. If MQTT was enabled at boot,
+> it connects and publishes automatically.
 
 ---
 

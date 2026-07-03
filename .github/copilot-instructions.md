@@ -6,71 +6,94 @@ ESP32-S3 + FastLED firmware with REST API, sACN/E1.31, MQTT, and segment-based L
 
 ## Architecture Overview
 
-**Single-Writer Model:** `LumeController` owns the LED buffer (`CRGB leds[]`). All mutations flow through it:
-- Main loop calls `controller.update()` at ~60 FPS
-- Web handlers/protocols enqueue commands or use atomic buffers
+**Single-Writer Model:** `LumeController` owns the LED buffer (`CRGB leds[]`) and is the **only**
+writer of segment/LED state. Every input is a thin adapter that enqueues a typed command:
+- Main loop calls `controller.update()` at ~60 FPS — drains the command bus, renders, shows
+- Web/MQTT/AI handlers **enqueue commands** and return `202 Accepted` (no direct mutation); sACN writes an atomic double-buffer
 - Effects are pure functions writing to their segment's `SegmentView`
+- The finished frame is presented through the `ILedOutput` HAL (FastLED RMT by default)
 
 **Data Flow:**
 ```
-Web UI → JSON POST → API handlers → controller.enqueueCommand() → Segment → Effect
-sACN/MQTT → Protocol implementations → ProtocolBuffer (atomic) → controller.update()
+Web UI → JSON POST → API handler → enqueueCommand() → [bus] → controller.update() → Segment → Effect
+                                 → 202 accepted; client reconciles via WebSocket state push / GET
+sACN → ProtocolBuffer (atomic double-buffer) → controller.update() → ILedOutput
 ```
 
 **Key Components:**
-- [src/core/controller.h](src/core/controller.h) - Orchestrates segments, frame timing, protocols
-- [src/core/segment.h](src/core/segment.h) - LED range + effect binding + 512-byte scratchpad
-- [src/core/effect_registry.h](src/core/effect_registry.h) - Self-registering effects with metadata
+- [src/core/controller.h](src/core/controller.h) - Orchestrates segments, frame timing, protocols, the shared workbuffer
+- [src/core/segment.h](src/core/segment.h) - `Region` slice + effect binding + 640-byte scratchpad
+- [src/core/region.h](src/core/region.h) - `Region{start,length}` geometry value type (P1.3)
+- [src/core/effect_registry.h](src/core/effect_registry.h) - Self-registering effects with schema + `EffectDims` metadata
+- [src/core/param_schema.h](src/core/param_schema.h) / [param_codec.h](src/core/param_codec.h) - Typed params + the one shared (de)serializer
+- [src/core/led_output.h](src/core/led_output.h) - `ILedOutput` HAL; `fastled_output.h` is the default backend
 - [src/network/server.cpp](src/network/server.cpp) - Route registration and WebSocket state sync
 
 ## Adding New Effects
 
-Create `src/effects/youreffect.cpp`:
+Effects are **schema-based**: a pure function plus a `ParamSchema` that declares its typed
+parameters (the schema drives both `GET /api/v2/effects` and the web UI controls). Create
+`src/visuallib/effects/youreffect.cpp`:
 
 ```cpp
-#include "../core/effect_registry.h"
+#include "../../core/effect_registry.h"
+#include "../../core/param_schema.h"
 
 namespace lume {
 
-void effectYourEffect(SegmentView& view, const EffectParams& params, 
+namespace youreffect { constexpr uint8_t SPEED = 0; constexpr uint8_t COLOR = 1; }
+
+DEFINE_EFFECT_SCHEMA(youreffectSchema,
+    ParamDesc::Int("speed", "Speed", 128, 1, 255),
+    ParamDesc::Color("color", "Color", CRGB::Blue)
+);
+
+// Current signature — no legacy EffectParams argument:
+void effectYourEffect(SegmentView& view, const ParamValues& params,
                       uint32_t frame, bool firstFrame) {
-    // frame for timing (use with beatsin8, etc.)
-    // firstFrame = true when scratchpad was reset
-    for (uint16_t i = 0; i < view.size(); i++) {
-        view[i] = ColorFromPalette(params.palette, i + frame);
-    }
+    CRGB color = params.getColor(youreffect::COLOR);
+    // Touch pixels only via view[i] / the remap-safe primitives — raw() was removed (P1.4).
+    for (uint16_t i = 0; i < view.size(); i++) view[i] = color;
 }
 
-// Choose macro based on parameter usage:
-// REGISTER_EFFECT_PALETTE  - palette + speed
-// REGISTER_EFFECT_COLORS   - primary + secondary colors + speed  
-// REGISTER_EFFECT_ANIMATED - speed + intensity
-REGISTER_EFFECT_PALETTE(effectYourEffect, "youreffect", "Your Effect");
+// Register: fn, id, name, category, schema, stateSize. Defaults to a 1D (strip) effect;
+// use REGISTER_EFFECT_SCHEMA_DIMS(..., Any/TwoD) to mark it remap-safe / matrix-native (P1.2).
+REGISTER_EFFECT_SCHEMA(effectYourEffect, "youreffect", "Your Effect", Animated, youreffectSchema, 0);
 
 } // namespace lume
 ```
 
-Registration macros set `usesSpeed`, `usesPalette`, etc. flags that the Web UI reads to show/hide controls. See [docs/ADDING_EFFECTS.md](docs/ADDING_EFFECTS.md) for full macro table.
+Stateful effects use `view.getScratchpad<T>()` (640 B pad, `sizeof(State)` passed to the macro);
+large/2D state borrows the workbuffer via `view.getScratchpadChecked<T>()`. Full guide:
+[docs/ADDING_EFFECTS.md](docs/ADDING_EFFECTS.md).
 
 ## API Handler Pattern
 
-API handlers in `src/api/` follow this structure:
+Body handlers in `src/api/` claim the single-owner body guard (`beginBody`/`endBody`, P0.3),
+accumulate byte-wise, then **enqueue a command and reply `202`** — never mutating state on the
+web task:
 
 ```cpp
-// Static buffer for async body accumulation
 static String bodyBuffer;
 
-void handleEndpointPost(AsyncWebServerRequest* request, uint8_t* data, 
+void handleEndpointPost(AsyncWebServerRequest* request, uint8_t* data,
                         size_t len, size_t index, size_t total) {
-    if (index == 0 && !checkAuth(request)) {
-        sendUnauthorized(request);
-        return;
+    if (index == 0 && !checkAuth(request)) { sendUnauthorized(request); return; }
+    if (index == 0) {
+        if (!beginBody(request)) { request->send(409, ...); return; }  // one body at a time
+        bodyBuffer = "";
+        if (total > MAX_REQUEST_BODY_SIZE) { endBody(request); /* 413 */ return; }
     }
-    // Accumulate body, process when complete
+    for (size_t i = 0; i < len; i++) bodyBuffer += (char)data[i];
+    if (index + len >= total) {
+        endBody(request);
+        lume::controller.enqueueCommand(/* typed Command */);
+        request->send(202, "application/json", "{\"status\":\"accepted\"}");
+    }
 }
 ```
 
-Routes are registered in [src/network/server.cpp](src/network/server.cpp) with the `.onBody()` pattern for POST requests.
+Routes are registered in [src/network/server.cpp](src/network/server.cpp) with the `.onBody()` pattern for POST/PUT requests.
 
 ## Build & Deploy
 
@@ -117,14 +140,31 @@ Frontend assets live in `data/` and are served via LittleFS:
 # Quick connectivity check
 curl http://lume.local/health
 
-# Test effect change
+# Test effect change (params are per-effect and nested; → 202 accepted)
 curl -X PUT http://lume.local/api/v2/segments/0 \
   -H "Content-Type: application/json" \
-  -d '{"effect":"fire","speed":150}'
+  -d '{"effect":"fire","params":{"cooling":55,"sparking":120}}'
 ```
+
+> Mutations return `202 {"status":"accepted"}` and apply next frame — read back the result via
+> `GET /api/v2/segments/0` or the WebSocket state push, not the response body. A `params` object
+> is applied whole against the effect schema: **omitted params reset to their schema defaults.**
 
 See [test/](test/) for shell scripts covering API endpoints.
 
+## Native Tests
+
+Core logic has a host-side unit suite — run it before board builds (CI does too):
+
+```bash
+pio test -e native   # 37 tests: param_codec / persistence / command_bus / body_guard / region / scratchpad / effect_registry
+```
+
+Add or extend a `test_<area>` suite (and the stubs in `test/stubs/`) when you change a testable core seam.
+
 ## Known Residuals
 
-Some v1 artifacts remain (e.g., `src/api/scenes.cpp` uses old format, some constants reference removed `anthropic_client`). These are marked with TODOs and will be cleaned up as features are reimplemented. Check `docs/archive/` for historical reference.
+Scenes are not implemented (P1.6): the backend was removed and the UI route 404s — implement or
+remove, don't assume it works. Historical pre-refactor code (old `led.*`, `prompt.*`,
+`anthropic_client.*`, `scenes.*`) lives under [docs/archive/](docs/archive/) for reference only;
+none of it is compiled.
