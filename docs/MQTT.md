@@ -39,9 +39,12 @@ Published to `{prefix}/state` on change and every 30 seconds:
 
 ```json
 {
+  "state": "ON",
   "power": true,
   "brightness": 128,
-  "effect": "rainbow",
+  "effect": "fire",
+  "color_mode": "rgb",
+  "color": {"r": 255, "g": 80, "b": 0},
   "speed": 100,
   "intensity": 128,
   "uptime": 3600,
@@ -49,6 +52,8 @@ Published to `{prefix}/state` on change and every 30 seconds:
   "ip": "192.168.1.100"
 }
 ```
+
+`state` follows the Home Assistant JSON schema (`ON`/`OFF`); `power` is the same value as a bool for other consumers. `color`, `speed`, and `intensity` are only present when the current effect has those parameters (palette-driven effects like `rainbow` have no color).
 
 ---
 
@@ -63,6 +68,7 @@ Full control via JSON:
   "state": "ON",
   "brightness": 200,
   "effect": "fire",
+  "color": {"r": 255, "g": 80, "b": 0},
   "speed": 150,
   "intensity": 200
 }
@@ -87,7 +93,9 @@ All fields are optional. Only included fields are applied.
 LUME publishes Home Assistant MQTT discovery messages automatically. After connecting, the device should appear in Home Assistant under **Devices & Services → MQTT**.
 
 Entity created:
-- **Light** with brightness and effect support
+- **Light** with brightness, RGB color, and effect support
+
+Color applies to the current effect's primary color parameter; palette-driven effects (e.g. `rainbow`, `pride`) ignore it.
 
 ### Manual Configuration
 
@@ -105,6 +113,8 @@ mqtt:
       payload_not_available: "offline"
       brightness: true
       brightness_scale: 255
+      supported_color_modes:
+        - rgb
       effect: true
       effect_list:
         - solid

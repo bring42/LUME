@@ -74,6 +74,7 @@ private:
     void handlePowerSet(const String& payload);
     
     // State tracking for change detection
+    uint32_t computeStateHash() const;
     void updateStateHash();
     bool stateChanged() const;
     
@@ -97,7 +98,9 @@ private:
     // Constants
     static constexpr uint32_t RECONNECT_INTERVAL_MS = 5000;
     static constexpr uint32_t STATE_PUBLISH_INTERVAL_MS = 30000; // Periodic republish
-    static constexpr uint16_t MQTT_BUFFER_SIZE = 1024;
+    // Must fit the HA discovery payload (effect list + device block); the
+    // 23-effect list already pushes past 1024 with a long topic prefix.
+    static constexpr uint16_t MQTT_BUFFER_SIZE = 1536;
 };
 
 // Global instance

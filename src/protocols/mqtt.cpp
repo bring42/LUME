@@ -9,6 +9,16 @@ namespace lume {
 MqttProtocol* MqttProtocol::instance_ = nullptr;
 MqttProtocol mqtt;
 
+// Slot index of the first Color param in the effect's schema, or -1 if the
+// effect has none (e.g. palette-driven effects like rainbow).
+static int8_t firstColorParamIndex(const EffectInfo* info) {
+    if (!info || !info->hasSchema()) return -1;
+    for (uint8_t i = 0; i < info->schema->count && i < MAX_EFFECT_PARAMS; i++) {
+        if (info->schema->params[i].type == ParamType::Color) return i;
+    }
+    return -1;
+}
+
 MqttProtocol::MqttProtocol() : client_(wifiClient_) {
     instance_ = this;
     client_.setCallback(messageCallback);
@@ -79,9 +89,15 @@ void MqttProtocol::update() {
 
 void MqttProtocol::setConfig(const MqttConfig& config) {
     bool wasEnabled = config_.enabled && client_.connected();
-    
+
     config_ = config;
-    
+
+    // Same as begin(): runtime enables via the web UI land here without ever
+    // having had a client ID generated
+    if (config_.clientId.isEmpty()) {
+        config_.clientId = "lume-" + String((uint32_t)ESP.getEfuseMac(), HEX);
+    }
+
     if (wasEnabled && !config_.isValid()) {
         end();
     } else if (config_.isValid()) {
@@ -177,19 +193,39 @@ void MqttProtocol::publishState() {
     if (!client_.connected() || !controller_) return;
     
     JsonDocument doc;
-    
-    // Basic state
+
+    // Home Assistant JSON-schema light state ("state" key is required by HA);
+    // "power" is kept for pre-existing non-HA consumers.
+    doc["state"] = controller_->getPower() ? "ON" : "OFF";
     doc["power"] = controller_->getPower();
     doc["brightness"] = controller_->getBrightness();
-    
+
     // Current effect (from first segment)
     if (controller_->getSegmentCount() > 0) {
         const auto* seg = controller_->getSegment(0);
         if (seg) {
             doc["effect"] = seg->getEffectId();
+
+            const EffectInfo* info = seg->getEffect();
+            int8_t colorIdx = firstColorParamIndex(info);
+            if (colorIdx >= 0) {
+                CRGB c = seg->getParamValues().getColor(colorIdx);
+                doc["color_mode"] = "rgb";
+                JsonObject color = doc["color"].to<JsonObject>();
+                color["r"] = c.r;
+                color["g"] = c.g;
+                color["b"] = c.b;
+            }
+
+            if (info && info->hasSchema()) {
+                int8_t speedIdx = info->schema->indexOf("speed");
+                if (speedIdx >= 0) doc["speed"] = seg->getParamValues().getInt(speedIdx);
+                int8_t intensityIdx = info->schema->indexOf("intensity");
+                if (intensityIdx >= 0) doc["intensity"] = seg->getParamValues().getInt(intensityIdx);
+            }
         }
     }
-    
+
     // System info
     doc["uptime"] = millis() / 1000;
     doc["heap_free"] = ESP.getFreeHeap();
@@ -229,6 +265,7 @@ void MqttProtocol::publishDiscovery() {
     
     doc["brightness"] = true;
     doc["brightness_scale"] = 255;
+    doc["supported_color_modes"].to<JsonArray>().add("rgb");
     doc["effect"] = true;
     
     // List available effects
@@ -251,9 +288,13 @@ void MqttProtocol::publishDiscovery() {
     
     // Discovery topic: homeassistant/light/{device_id}/config
     String discoveryTopic = "homeassistant/light/" + deviceId + "/config";
-    client_.publish(discoveryTopic.c_str(), payload.c_str(), true);
-    
-    LOG_INFO(LogTag::MAIN, "MQTT HA discovery published");
+    if (client_.publish(discoveryTopic.c_str(), payload.c_str(), true)) {
+        LOG_INFO(LogTag::MAIN, "MQTT HA discovery published (%u bytes)", payload.length());
+    } else {
+        // PubSubClient drops payloads larger than its buffer without an error code
+        LOG_WARN(LogTag::MAIN, "MQTT HA discovery publish failed (%u bytes, buffer %u)",
+                 payload.length(), MQTT_BUFFER_SIZE);
+    }
 }
 
 void MqttProtocol::messageCallback(char* topic, byte* payload, unsigned int length) {
@@ -310,6 +351,18 @@ void MqttProtocol::handleSetCommand(const JsonDocument& doc) {
         controller_->setBrightness(doc["brightness"].as<uint8_t>());
     }
     
+    // RGB color (HA json schema: {"color":{"r":255,"g":0,"b":0}})
+    if (doc["color"].is<JsonObjectConst>()) {
+        JsonObjectConst color = doc["color"];
+        if (controller_->getSegmentCount() > 0) {
+            auto* seg = controller_->getSegment(0);
+            // No-op if the current effect has no color param (palette-driven)
+            if (seg) {
+                seg->setColor(0, CRGB(color["r"] | 0, color["g"] | 0, color["b"] | 0));
+            }
+        }
+    }
+
     // Effect
     if (doc["effect"].is<const char*>()) {
         String effect = doc["effect"].as<String>();
@@ -372,14 +425,14 @@ void MqttProtocol::handlePowerSet(const String& payload) {
     publishState();
 }
 
-void MqttProtocol::updateStateHash() {
-    if (!controller_) return;
-    
+uint32_t MqttProtocol::computeStateHash() const {
+    if (!controller_) return 0;
+
     // Simple hash of key state values
     uint32_t hash = 0;
     hash ^= controller_->getPower() ? 1 : 0;
     hash ^= controller_->getBrightness() << 8;
-    
+
     if (controller_->getSegmentCount() > 0) {
         const auto* seg = controller_->getSegment(0);
         if (seg) {
@@ -390,32 +443,26 @@ void MqttProtocol::updateStateHash() {
                     hash = hash * 31 + *effectId++;
                 }
             }
+
+            // Hash primary color so out-of-band changes (web UI) reach HA
+            int8_t colorIdx = firstColorParamIndex(seg->getEffect());
+            if (colorIdx >= 0) {
+                CRGB c = seg->getParamValues().getColor(colorIdx);
+                hash = hash * 31 + (((uint32_t)c.r << 16) | ((uint32_t)c.g << 8) | c.b);
+            }
         }
     }
-    
-    lastStateHash_ = hash;
+
+    return hash;
+}
+
+void MqttProtocol::updateStateHash() {
+    lastStateHash_ = computeStateHash();
 }
 
 bool MqttProtocol::stateChanged() const {
     if (!controller_) return false;
-    
-    uint32_t currentHash = 0;
-    currentHash ^= controller_->getPower() ? 1 : 0;
-    currentHash ^= controller_->getBrightness() << 8;
-    
-    if (controller_->getSegmentCount() > 0) {
-        const auto* seg = controller_->getSegment(0);
-        if (seg) {
-            const char* effectId = seg->getEffectId();
-            if (effectId) {
-                while (*effectId) {
-                    currentHash = currentHash * 31 + *effectId++;
-                }
-            }
-        }
-    }
-    
-    return currentHash != lastStateHash_;
+    return computeStateHash() != lastStateHash_;
 }
 
 }  // namespace lume

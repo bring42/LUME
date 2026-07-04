@@ -185,10 +185,12 @@ void setup() {
     // Register protocols with controller
     lume::controller.registerProtocol(&lume::sacnProtocol);
     
-    // Initialize MQTT if configured
-    if (config.mqttEnabled && config.mqttBroker.length() > 0) {
+    // Initialize MQTT. Always call begin() — even when disabled — so the
+    // controller pointer is set for a later runtime enable via the web UI
+    // (applyProtocolConfig()'s setConfig() only swaps the config struct).
+    {
         lume::MqttConfig mqttConfig;
-        mqttConfig.enabled = config.mqttEnabled;
+        mqttConfig.enabled = config.mqttEnabled && config.mqttBroker.length() > 0;
         mqttConfig.broker = config.mqttBroker;
         mqttConfig.port = config.mqttPort;
         mqttConfig.username = config.mqttUsername;
