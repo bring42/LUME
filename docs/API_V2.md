@@ -587,12 +587,12 @@ rather than a route pattern. Handlers extract the ID with `lastIndexOf('/')`.
 
 ## Migration from the v1 API
 
-The v1 API remains for backward compatibility. `GET /api/segments` now serves the **same
-canonical segment shape** as v2 (one serializer, P1.7). The older `/api/led` compatibility
-routes translate to segment 0.
+The v1 API has been **removed**. The legacy `GET /api/segments` (a richer effect-object
+envelope) and the older `/api/led` compatibility routes no longer exist — requests now return
+`404`. Use the v2 endpoints below.
 
-| v1 Endpoint | v2 Equivalent |
-|-------------|---------------|
+| Removed v1 endpoint | Use instead |
+|---------------------|-------------|
 | `GET /api/led` | `GET /api/v2/segments` (segment 0) |
 | `GET /api/segments` | `GET /api/v2/segments` |
 
