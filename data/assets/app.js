@@ -1211,70 +1211,6 @@
             }
         }
         
-        // Scene management
-        async function loadScenes() {
-            try {
-                const scenes = await api('/scenes');
-                const container = document.getElementById('scenesList');
-                
-                if (!scenes || scenes.length === 0) {
-                    container.innerHTML = '<p style="color: var(--text-muted); font-size: 14px;">No saved scenes yet</p>';
-                    return;
-                }
-                
-                container.innerHTML = scenes.map(scene => `
-                    <div class="scene-item">
-                        <span class="scene-name">${escapeHtml(scene.name)}</span>
-                        <div class="scene-actions">
-                            <button class="btn btn-primary" onclick="applyScene(${scene.id})">Apply</button>
-                            <button class="btn btn-outline" onclick="deleteScene(${scene.id})">🗑️</button>
-                        </div>
-                    </div>
-                `).join('');
-            } catch (e) {
-                console.error('Failed to load scenes:', e);
-            }
-        }
-        
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-        
-        async function applyScene(id) {
-            try {
-                const response = await fetch('/api/scenes/' + id + '/apply', {
-                    method: 'POST'
-                });
-                
-                if (!response.ok) {
-                    const result = await response.json();
-                    showToast('Failed: ' + (result.error || response.status), 'error');
-                    return;
-                }
-                
-                showToast('Scene applied!', 'success');
-                loadLedState();
-            } catch (e) {
-                showToast('Failed to apply scene: ' + e.message, 'error');
-            }
-        }
-        
-        async function deleteScene(id) {
-            if (!confirm('Delete this scene?')) {
-                return;
-            }
-            
-            try {
-                await fetch('/api/scenes/' + id, { method: 'DELETE' });
-                showToast('Scene deleted', 'success');
-                loadScenes();
-            } catch (e) {
-                showToast('Failed to delete scene', 'error');
-            }
-        }
-        
         // Color helpers
         function hexToRgb(hex) {
             const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -1390,7 +1326,6 @@
             await loadEffectMetadata(); // Load effect metadata FIRST
             await loadLedState();        // Then load LED state (which needs metadata)
             loadConfig();
-            loadScenes();
             loadNightlightStatus();
             setInterval(loadStatus, 10000);
         }

@@ -449,36 +449,7 @@
         .prompt-status.running { color: var(--warning); }
         .prompt-status.done { color: var(--success); }
         .prompt-status.error { color: var(--error); }
-        
-        .scene-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 12px;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            margin-bottom: 8px;
-        }
-        
-        .scene-item:hover {
-            border-color: var(--primary);
-        }
-        
-        .scene-name {
-            font-weight: 500;
-        }
-        
-        .scene-actions {
-            display: flex;
-            gap: 8px;
-        }
-        
-        .scene-actions button {
-            padding: 4px 10px;
-            font-size: 12px;
-        }
-        
+
         .grid-2 {
             display: grid;
             grid-template-columns: 1fr 1fr;

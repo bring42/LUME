@@ -9,8 +9,8 @@
 
 // RAII guard for Storage's NVS access. The single Preferences object is shared
 // across tasks (saveLastEffect from the web/AI task vs saveLedState from the
-// render loop) — concurrent begin()/end() corrupts the handle. Recursive because
-// getSceneCount()/listScenes() call loadScene() while already holding it.
+// render loop) — concurrent begin()/end() corrupts the handle. The mutex is
+// recursive so a locked method may safely call another locked method.
 class StorageLock {
 public:
     explicit StorageLock(SemaphoreHandle_t m) : m_(m) {
@@ -68,17 +68,6 @@ struct Config {
         mqttTopicPrefix("lume") {}
 };
 
-// Scene storage (saved AI-generated effects)
-#define MAX_SCENES 10
-
-struct Scene {
-    String name;
-    String jsonSpec;
-    
-    Scene() : name(""), jsonSpec("") {}
-    bool isEmpty() const { return name.length() == 0; }
-};
-
 class Storage {
 public:
     Storage();
@@ -104,20 +93,12 @@ public:
     
     // Import config from JSON
     bool configFromJson(Config& config, const JsonDocument& doc);
-    
-    // Scene operations
-    bool saveScene(uint8_t slot, const Scene& scene);
-    bool loadScene(uint8_t slot, Scene& scene);
-    bool deleteScene(uint8_t slot);
-    int getSceneCount();
-    bool listScenes(JsonDocument& doc);
-    
+
 private:
     Preferences prefs;
     SemaphoreHandle_t mutex_;   // guards all prefs access (see StorageLock)
     static const char* NAMESPACE_CONFIG;
     static const char* NAMESPACE_LED;
-    static const char* NAMESPACE_SCENES;
 };
 
 extern Storage storage;

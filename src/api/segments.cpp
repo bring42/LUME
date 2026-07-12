@@ -5,6 +5,7 @@
 #include "../constants.h"
 #include "../core/controller.h"
 #include "../core/effect_registry.h"
+#include "../core/effect_params.h"   // PALETTE_NAMES / PALETTE_COUNT
 #include "../core/param_schema.h"
 #include "../core/param_codec.h"
 #include "../core/segment_serializer.h"
@@ -406,16 +407,13 @@ void handleApiV2EffectsList(AsyncWebServerRequest* request) {
 void handleApiV2PalettesList(AsyncWebServerRequest* request) {
     JsonDocument doc;
     JsonArray palettes = doc["palettes"].to<JsonArray>();
-    
-    // Map palette enum to names
-    const char* paletteNames[] = {
-        "Rainbow", "Lava", "Ocean", "Party", "Forest", "Cloud", "Heat"
-    };
-    
-    for (int i = 0; i < 7; i++) {
+
+    // Driven by the single palette-name table (effect_params.h) so the list
+    // stays in sync with the enum — all built-in palettes, not just the first 7.
+    for (size_t i = 0; i < lume::PALETTE_COUNT; i++) {
         JsonObject pal = palettes.add<JsonObject>();
         pal["id"] = i;
-        pal["name"] = paletteNames[i];
+        pal["name"] = lume::PALETTE_NAMES[i];
     }
     
     String output;
