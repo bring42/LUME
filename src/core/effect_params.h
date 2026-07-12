@@ -25,6 +25,19 @@ enum class PalettePreset : uint8_t {
     COUNT
 };
 
+// Human-readable names for the selectable built-in palettes, in enum order
+// (Rainbow..Pink). Custom is user-defined and intentionally not listed. The
+// static_assert below makes adding a palette to the enum a compile error until
+// its name is added here, so the API list can never silently drift out of sync
+// again (it used to hardcode only the first 7).
+constexpr const char* PALETTE_NAMES[] = {
+    "Rainbow", "Lava", "Ocean", "Party", "Forest", "Cloud", "Heat",
+    "Sunset", "Autumn", "Retro", "Ice", "Pink"
+};
+constexpr size_t PALETTE_COUNT = sizeof(PALETTE_NAMES) / sizeof(PALETTE_NAMES[0]);
+static_assert(PALETTE_COUNT == static_cast<size_t>(PalettePreset::Custom),
+              "PALETTE_NAMES must list every built-in palette up to (not including) Custom");
+
 // Get a CRGBPalette16 from a preset
 inline CRGBPalette16 getPalette(PalettePreset preset) {
     switch (preset) {
