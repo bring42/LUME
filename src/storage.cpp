@@ -3,7 +3,6 @@
 
 const char* Storage::NAMESPACE_CONFIG = "config";
 const char* Storage::NAMESPACE_LED = "ledstate";
-const char* Storage::NAMESPACE_SCENES = "scenes";
 
 Storage storage;
 
@@ -247,87 +246,5 @@ bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
         config.mqttTopicPrefix = doc["mqttTopicPrefix"].as<String>();
     }
     
-    return true;
-}
-
-// Scene storage methods
-bool Storage::saveScene(uint8_t slot, const Scene& scene) {
-    StorageLock lock(mutex_);
-    if (slot >= MAX_SCENES) return false;
-    
-    if (!prefs.begin(NAMESPACE_SCENES, false)) {
-        return false;
-    }
-    
-    String nameKey = "n" + String(slot);
-    String specKey = "s" + String(slot);
-    
-    prefs.putString(nameKey.c_str(), scene.name.substring(0, 32));
-    prefs.putString(specKey.c_str(), scene.jsonSpec.substring(0, 1500));
-    
-    prefs.end();
-    return true;
-}
-
-bool Storage::loadScene(uint8_t slot, Scene& scene) {
-    StorageLock lock(mutex_);
-    if (slot >= MAX_SCENES) return false;
-    
-    if (!prefs.begin(NAMESPACE_SCENES, true)) {
-        return false;
-    }
-    
-    String nameKey = "n" + String(slot);
-    String specKey = "s" + String(slot);
-    
-    scene.name = prefs.getString(nameKey.c_str(), "");
-    scene.jsonSpec = prefs.getString(specKey.c_str(), "");
-    
-    prefs.end();
-    return scene.name.length() > 0;
-}
-
-bool Storage::deleteScene(uint8_t slot) {
-    StorageLock lock(mutex_);
-    if (slot >= MAX_SCENES) return false;
-    
-    if (!prefs.begin(NAMESPACE_SCENES, false)) {
-        return false;
-    }
-    
-    String nameKey = "n" + String(slot);
-    String specKey = "s" + String(slot);
-    
-    prefs.remove(nameKey.c_str());
-    prefs.remove(specKey.c_str());
-    
-    prefs.end();
-    return true;
-}
-
-int Storage::getSceneCount() {
-    StorageLock lock(mutex_);
-    int count = 0;
-    Scene scene;
-    for (int i = 0; i < MAX_SCENES; i++) {
-        if (loadScene(i, scene) && !scene.isEmpty()) {
-            count++;
-        }
-    }
-    return count;
-}
-
-bool Storage::listScenes(JsonDocument& doc) {
-    StorageLock lock(mutex_);
-    JsonArray arr = doc.to<JsonArray>();
-    
-    for (int i = 0; i < MAX_SCENES; i++) {
-        Scene scene;
-        if (loadScene(i, scene) && !scene.isEmpty()) {
-            JsonObject obj = arr.add<JsonObject>();
-            obj["id"] = i;
-            obj["name"] = scene.name;
-        }
-    }
     return true;
 }

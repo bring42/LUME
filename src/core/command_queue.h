@@ -45,8 +45,6 @@ enum class CommandType : uint8_t {
 
     // Advanced
     ApplyEffectSpec,    // Apply AI-generated effect spec
-    SaveScene,          // Persist current state
-    LoadScene,          // Load saved state
 
     // Protocols
     ReconfigureProtocols // Re-apply sACN/MQTT config from the persisted global config

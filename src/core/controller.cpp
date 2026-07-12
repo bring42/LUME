@@ -280,12 +280,6 @@ void LumeController::executeCommand(const Command& cmd) {
             // teardown no longer races processProtocols()/mqtt.update() (P0.8).
             if (reconfigureProtocolsFn) reconfigureProtocolsFn();
             break;
-
-        case CommandType::SaveScene:
-        case CommandType::LoadScene:
-            // Not yet implemented — scene presets are on the roadmap (see README).
-            LOG_WARN(LogTag::LED, "Command type %d not yet implemented", static_cast<int>(cmd.type));
-            break;
     }
 
     // A processed command may have changed the layout or params; schedule a save.
