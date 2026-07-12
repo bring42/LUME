@@ -21,7 +21,7 @@ class LumeController;
  * - Fixed-size scratchpad for stateful effects
  * 
  * Scratchpad design (see docs/ARCHITECTURE.md, Invariant 3):
- * - 512 bytes per segment for effect state
+ * - 640 bytes per segment for effect state (SCRATCHPAD_SIZE in segment_view.h)
  * - Cleared automatically when effect changes
  * - Effects use getScratchpad<T>() to access typed state
  * - firstFrame flag signals scratchpad reset

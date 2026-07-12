@@ -335,18 +335,17 @@ what `params` a segment accepts.**
 
 ### GET /api/v2/palettes
 
-List the palette presets exposed by the API (indices `0-6`).
+Built-in palette presets, generated from the firmware `PalettePreset` enum.
+**This endpoint is the source of truth** — fetch the list at runtime rather than
+hardcoding names or a count here. Each entry is `{ "id": int, "name": string }`
+(example truncated):
 
 ```json
 {
   "palettes": [
     {"id": 0, "name": "Rainbow"},
     {"id": 1, "name": "Lava"},
-    {"id": 2, "name": "Ocean"},
-    {"id": 3, "name": "Party"},
-    {"id": 4, "name": "Forest"},
-    {"id": 5, "name": "Cloud"},
-    {"id": 6, "name": "Heat"}
+    {"id": 2, "name": "Ocean"}
   ]
 }
 ```

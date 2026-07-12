@@ -4,13 +4,13 @@
  * Features:
  * - WiFi-enabled web server with modern UI
  * - WS2812B LED strip control via FastLED
- * - AI-powered effect generation via OpenRouter API
+ * - AI-powered effect generation via Anthropic Claude API
  * - Multiple built-in effects and color palettes
  * - Persistent configuration storage
  * 
  * Hardware:
  * - LILYGO T-Display S3
- * - WS2812B LED strip (default 160 LEDs on GPIO 21)
+ * - WS2812B LED strip (default 160 LEDs on GPIO 2, see LED_DATA_PIN)
  */
 
 #include <Arduino.h>
