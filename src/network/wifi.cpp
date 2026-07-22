@@ -68,30 +68,19 @@ void setupWiFi() {
     LOG_INFO(LogTag::WIFI, "AP started: %s", AP_SSID);
     LOG_DEBUG(LogTag::WIFI, "AP IP: %s", WiFi.softAPIP().toString().c_str());
     
-    // Try to connect to configured WiFi
+    // Kick off the station connect but DON'T block on it. The AP + web server must
+    // be reachable immediately — otherwise 192.168.4.1 is dead for up to ~10s while
+    // an unavailable saved network times out (the "moved the device somewhere new"
+    // case). handleWifiMaintenance() runs every loop, detects the false->true
+    // connect transition, and runs onWifiConnected() (mDNS/OTA/protocols) once the
+    // link is actually up.
     if (config.wifiSSID.length() > 0) {
-        LOG_INFO(LogTag::WIFI, "Connecting to WiFi: %s", config.wifiSSID.c_str());
+        LOG_INFO(LogTag::WIFI, "Connecting to WiFi in background: %s", config.wifiSSID.c_str());
         WiFi.begin(config.wifiSSID.c_str(), config.wifiPassword.c_str());
-        
-        // Wait for connection (with timeout)
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-            delay(500);
-            Serial.print(".");  // Keep dots for visual feedback
-            attempts++;
-        }
-        Serial.println();
-        
-        if (WiFi.status() == WL_CONNECTED) {
-            wifiConnected = true;
-            onWifiConnected();
-        } else {
-            LOG_WARN(LogTag::WIFI, "Connection failed, AP mode active");
-        }
     } else {
         LOG_INFO(LogTag::WIFI, "No WiFi configured, AP mode only");
     }
-    
+
     lastWifiAttempt = millis();
 }
 
