@@ -4,10 +4,6 @@ Current state as of PR #26. The structural audit that this register grew out of 
 been **worked off**: every **P0** (correctness / memory-safety / races) and every
 **P1** (2D pre-req seam) item is resolved.
 
-> The original six-auditor audit (full P0/P1/P2/P3 detail, kept for its historical
-> value) is archived at **`archive/TECH_DEBT.md`**. The P-numbers referenced from
-> other docs (e.g. `API_V2.md`, the RFCs) point into that archived register.
-
 ## Resolved — the whole P0/P1 backlog
 
 Confirmed in-tree (grep/read against current `src/`):
@@ -50,14 +46,38 @@ The old P0.8 (`setLedCount` re-bind / teardown race) is addressed via the
 
 ## Still open
 
-### MQTT bypasses the command bus (consistency, not a race)
-`mqtt.cpp:314-336` mutates `getSegment(0)->setEffect/setSpeed/setIntensity` plus
-`controller_->setPower/setBrightness` **directly** instead of enqueuing a command —
-and only ever the first segment ("apply to first segment for now").
-This is **safe today**: `mqtt.update()` runs on the loop task (`main.cpp:254`), same
-task as the renderer, so there is no data race — but it is the one input path that
-sidesteps the mutation spine. **Fix:** route it through `enqueueCommand` for
-consistency (and to gain multi-segment addressing) when MQTT is next touched.
+### ~~MQTT bypasses the command bus~~ (RESOLVED)
+`mqtt.cpp` now routes every control mutation through `enqueueCommand` (single-writer
+spine): power/brightness → `setPower`/`setGlobalBrightness`, effect/speed/intensity →
+one bundled `applyEffectSpec(0, …)`. The trailing `publishState()` calls were dropped
+because commands drain on the *next* `controller.update()` (which runs before
+`mqtt.update()` in `main.cpp`), so an immediate publish would emit stale pre-change
+state; `update()`'s `stateChanged()` poll republishes the fresh state after the command
+applies. **Follow-up:** still segment-0-only. Multi-segment was deferred deliberately —
+not a band-aid `segment` field on `lume/set`. The right design is **configure-once /
+projection**: the device's segment layout is the single source of truth, and every
+integration surface (REST, MQTT, HA discovery) *projects* from it rather than
+re-declaring it. Concretely: HA auto-discovery publishes one light entity per segment
+and re-publishes (with cleanup) when the layout changes — so pairing = "flash → pair →
+done", never "configure → pair → configure again". Do all three layers (JSON field +
+per-segment topics + discovery entity lifecycle) in one pass when picked up.
+
+### Firmware OTA — hardening follow-ups (feature shipped, UNTESTED on hardware)
+Pull-based GitHub OTA (app + FS, split, HTTPS + SHA-256 verify-before-commit) is
+implemented but not yet flashed on real silicon. Known hardening path, in priority order:
+1. **Self-heal rollback** — replace the unconditional `esp_ota_mark_app_valid_cancel_rollback()`
+   on boot with a **self-test gate** (WiFi up? render loop ticking? storage reads?); on
+   failure call the rollback-and-reboot sibling → bootloader reverts to the prior known-good
+   slot with no re-download. Requires `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` in a custom
+   sdkconfig (can only be enabled via a USB flash, not OTA). This closes the "checksum proves
+   it downloaded, not that it boots" gap.
+2. **C3 flash headroom** — app slot ~90% full; if it ever bites, ship a custom partition CSV
+   trading FS size for larger app slots.
+3. **Security** — currently `setInsecure()` + checksum only. Future: TLS cert pinning + code
+   signing / secure boot.
+4. **FS-flash-while-serving** — `serveStatic("/assets/")` reads LittleFS directly and isn't
+   gated by `updaterInProgress()`; worst case a garbled asset response mid-flash (non-brick,
+   recoverable). Replace with a guarded handler if it matters.
 
 ---
 
