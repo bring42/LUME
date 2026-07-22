@@ -34,6 +34,11 @@ const PALETTE_STOPS = {
   4: ["#08210f", "#134a1e", "#2c7a2c", "#5ea83b", "#a6c94a", "#e0e88a"],
   5: ["#0d1420", "#243a56", "#5878a3", "#9db6d6", "#dfe9f7", "#ffffff"],
   6: ["#000000", "#3a0a00", "#8a1400", "#d94d00", "#ff9d00", "#fff2c8"],
+  7: ["#2a1a5e", "#7b2a8a", "#d94a6a", "#ff8c42", "#ffd23b"], // Sunset
+  8: ["#3a1a08", "#7a2e12", "#b5451f", "#d9812e", "#e8c24a"], // Autumn
+  9: ["#1f6f6b", "#3aa89b", "#e8b13b", "#e2622e", "#f2e2c4"], // Retro
+  10: ["#062a4a", "#0f6aa3", "#4fc3e8", "#b8ecff", "#ffffff"], // Ice
+  11: ["#7a0f4a", "#c81f7a", "#ff5aa8", "#ff9dc8", "#ffd6ea"], // Pink
 };
 const FALLBACK_STOPS = ["#555555", "#999999"];
 function paletteStops(id) { return PALETTE_STOPS[id] || FALLBACK_STOPS; }

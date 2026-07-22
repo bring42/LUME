@@ -278,6 +278,14 @@
       });
     }
 
+    // Fire-and-forget variant for the optimistic UI setters: writeJson already
+    // logs + toasts on failure, so swallow the rethrow here to avoid an
+    // unhandled promise rejection. (create/delete/config keep the rejection —
+    // they act on the result.)
+    function fireWrite(path, method, obj) {
+      writeJson(path, method, obj).catch(function () {});
+    }
+
     function scheduleRefresh() {
       if (state.demo) return;
       if (refreshTimer) clearTimeout(refreshTimer);
@@ -415,14 +423,14 @@
       on = !!on;
       state.controller.power = on;
       notify();
-      writeJson("/api/v2/controller", "PUT", { power: on });
+      fireWrite("/api/v2/controller", "PUT", { power: on });
     }
 
     function setBrightness(v) {
       v = clampInt(v, 0, 255);
       state.controller.brightness = v;
       notify();
-      writeJson("/api/v2/controller", "PUT", { brightness: v });
+      fireWrite("/api/v2/controller", "PUT", { brightness: v });
     }
 
     function selectSegment(id) {
@@ -444,7 +452,7 @@
       notify();
       var body = { effect: effectId, params: seg.params };
       if (eff.usesPalette && seg._paletteIndex != null) body.palette = seg._paletteIndex;
-      writeJson("/api/v2/segments/" + id, "PUT", body);
+      fireWrite("/api/v2/segments/" + id, "PUT", body);
     }
 
     // Change ONE param. We send the COMPLETE params object (whole-object
@@ -470,7 +478,7 @@
       params[key] = value;
       seg.params = params;
       notify();
-      writeJson("/api/v2/segments/" + id, "PUT", { params: params });
+      fireWrite("/api/v2/segments/" + id, "PUT", { params: params });
     }
 
     // Palette is a top-level integer, tracked client-side (device never echoes).
@@ -480,7 +488,7 @@
       index = clampInt(index, 0, Math.max(0, state.palettes.length - 1));
       seg._paletteIndex = index;
       notify();
-      writeJson("/api/v2/segments/" + id, "PUT", { palette: index });
+      fireWrite("/api/v2/segments/" + id, "PUT", { palette: index });
     }
 
     function setSegmentBrightness(id, v) {
@@ -489,7 +497,7 @@
       v = clampInt(v, 0, 255);
       seg.brightness = v;
       notify();
-      writeJson("/api/v2/segments/" + id, "PUT", { brightness: v });
+      fireWrite("/api/v2/segments/" + id, "PUT", { brightness: v });
     }
 
     function createSegment(cfg) {
@@ -500,7 +508,7 @@
       };
       if (cfg.reverse != null) body.reverse = !!cfg.reverse;
       if (cfg.effect) { body.effect = cfg.effect; body.params = defaultParamsFor(cfg.effect); }
-      if (cfg.palette != null) body.palette = clampInt(cfg.palette, 0, 6);
+      if (cfg.palette != null) body.palette = clampInt(cfg.palette, 0, Math.max(0, state.palettes.length - 1));
       if (state.demo) {
         var nid = state.segments.reduce(function (m, s) { return Math.max(m, s.id); }, -1) + 1;
         state.segments.push(normalizeSegment({

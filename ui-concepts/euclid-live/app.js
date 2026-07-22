@@ -215,7 +215,12 @@
     3: ["#D8492C", "#F2B233", "#2E6DB4", "#B0357A"],
     4: ["#1E3B1E", "#3E8E4F", "#7BAA3C", "#C9C083"],
     5: ["#E8DEC9", "#C9C4B4", "#8FA9C2", "#2E6DB4"],
-    6: ["#16130E", "#D8492C", "#F2B233", "#FCEBB0"]
+    6: ["#16130E", "#D8492C", "#F2B233", "#FCEBB0"],
+    7: ["#7A4FA3", "#B0357A", "#D8492C", "#F2B233"], // Sunset
+    8: ["#5C3A16", "#A65A24", "#D8492C", "#C9A83C"], // Autumn
+    9: ["#2E6DB4", "#3E8E4F", "#F2B233", "#D8492C"], // Retro
+    10: ["#0E2A3D", "#2E6DB4", "#7FB8D8", "#E8F2F7"], // Ice
+    11: ["#5C1740", "#B0357A", "#E86FA6", "#F2C6DA"] // Pink
   };
   var FALLBACK_STOPS = ["#8a8478", "#5c574c"];
   function paletteStops(id){ return PALETTE_STOPS[id] || FALLBACK_STOPS; }
@@ -956,12 +961,9 @@
   });
 
   $("#btn-ota").addEventListener("click", function () {
-    var btn = $("#btn-ota");
-    btn.querySelector(".mono-label").textContent = "CHECKING…";
-    setTimeout(function () {
-      btn.querySelector(".mono-label").textContent = "UP TO DATE";
-      setTimeout(function () { btn.querySelector(".mono-label").textContent = "CHECK FOR UPDATE"; }, 2400);
-    }, 1100);
+    // No OTA endpoint exists in the device API / engine, so there is nothing to
+    // check. Report that honestly rather than faking an "up to date" result.
+    toast("Firmware updates aren't available from this UI");
   });
 
   // =========================================================================
