@@ -10,47 +10,80 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+        with:
+          fetch-depth: 0   # tags + full history so version.py can describe/rev-parse
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Install PlatformIO
         run: pip install platformio
-      
-      - name: Build T-Display S3
-        run: pio run -e lilygo-t-display-s3
-      
-      - name: Build Generic S3 DevKit
-        run: pio run -e esp32-s3-devkitc-1
-      
-      - name: Build ESP32-C3 DevKit
-        run: pio run -e esp32-c3-devkitm-1
-      
-      - name: Prepare Release Files
+
+      # FW_VERSION (tag minus leading "v") is read by scripts/version.py and
+      # baked into every image as FIRMWARE_VERSION, so the running device knows
+      # its own version and can compare against the published manifest.
+      - name: Derive version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Build firmware + LittleFS image for every board, then assemble a
+      # manifest.json carrying SHA-256 checksums the device verifies before it
+      # boots a downloaded image. Asset ids MUST match BOARD_ID_BY_ENV in
+      # scripts/version.py and LUME_BOARD_ID in the firmware.
+      - name: Build images + manifest
+        env:
+          FW_VERSION: ${{ steps.ver.outputs.version }}
         run: |
+          set -euo pipefail
+          declare -A BOARDS=(
+            [esp32-s3-devkitc-1]=esp32-s3-devkitc
+            [esp32-c3-devkitm-1]=esp32-c3-devkitm
+            [seeed_xiao_esp32c3]=seeed-xiao-esp32c3
+            [lilygo-t-display-s3]=lilygo-t-display-s3
+          )
           mkdir -p release
-          cp .pio/build/lilygo-t-display-s3/firmware.bin release/lume-lilygo-t-display-s3.bin
-          cp .pio/build/esp32-s3-devkitc-1/firmware.bin release/lume-esp32-s3-devkitc.bin
-          cp .pio/build/esp32-c3-devkitm-1/firmware.bin release/lume-esp32-c3-devkitm.bin
-      
+          for env in "${!BOARDS[@]}"; do
+            id="${BOARDS[$env]}"
+            echo "::group::Build $env ($id)"
+            pio run -e "$env"                 # -> firmware.bin
+            pio run -e "$env" -t buildfs      # -> littlefs.bin (gzips web files first)
+            cp ".pio/build/$env/firmware.bin" "release/lume-$id.bin"
+            cp ".pio/build/$env/littlefs.bin" "release/littlefs-$id.bin"
+            echo "::endgroup::"
+          done
+
+          python3 scripts/gen_manifest.py "${FW_VERSION}" release
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: release/*.bin
+          files: |
+            release/manifest.json
+            release/lume-*.bin
+            release/littlefs-*.bin
           generate_release_notes: true
           body: |
-            ## Flash with WebUSB
-            
-            Download the appropriate binary for your board:
-            - **LilyGo T-Display S3**: `lume-lilygo-t-display-s3.bin`
+            ## Over-the-air update
+
+            Devices running LUME can update themselves: **Settings → Firmware Update →
+            Check for Update**. The device pulls `manifest.json` from this release,
+            verifies the SHA-256 of each image, and flashes over HTTPS.
+
+            ## Manual flash (WebUSB / first install)
+
+            Flash the `lume-<board>.bin` for your board at address `0x0` with
+            [ESP Web Tool](https://esp.huhn.me/), then upload `littlefs-<board>.bin`
+            to the filesystem partition (or run `pio run -t uploadfs` from source).
+
             - **ESP32-S3 DevKitC**: `lume-esp32-s3-devkitc.bin`
+            - **LilyGo T-Display S3**: `lume-lilygo-t-display-s3.bin`
             - **ESP32-C3 DevKitM**: `lume-esp32-c3-devkitm.bin`
-            
-            Use [ESP Web Tool](https://esp.huhn.me/) or similar to flash at address `0x0`.
-            
-            **Note:** These builds use the default LED pin from constants.h. For custom pins, compile from source.
+            - **Seeed XIAO ESP32-C3**: `lume-seeed-xiao-esp32c3.bin`
+
+            **Note:** binaries use the default LED pin from constants.h. For custom
+            pins, compile from source.

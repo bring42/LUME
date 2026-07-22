@@ -49,6 +49,9 @@ def gzip_web_files(source, target, env):
     else:
         print("✓ All files already compressed")
 
-# Register the callback to run before uploadfs
+# Register the callback to run before the filesystem image is built/uploaded.
+# buildfs is what CI (release workflow) runs to produce littlefs.bin, so it must
+# gzip too — otherwise the published FS image would ship uncompressed assets.
+env.AddPreAction("buildfs", gzip_web_files)
 env.AddPreAction("uploadfs", gzip_web_files)
 env.AddPreAction("uploadfsota", gzip_web_files)

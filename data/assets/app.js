@@ -932,9 +932,95 @@ $("#sacnUniverse").addEventListener("change", (e) => {
   });
 });
 
-// OTA: left as a static visual/no-op — engine has no firmware-update method
-// and the API contract doesn't describe one, so wiring it would mean
-// inventing an endpoint. The static markup/copy in index.html is preserved.
+// OTA: real pull-based update, with the firmware and the web UI (filesystem) as
+// two INDEPENDENT actions (mirroring `pio run -t upload` vs `-t uploadfs`). One
+// unified check reveals what's available; each action then runs its own
+// confirm → progress → reboot. The device does the work asynchronously (engine
+// polls /api/firmware/status); this just drives the buttons/status/progress.
+(function wireOta() {
+  const btn = $("#otaBtn");
+  if (!btn) return;
+  const statusEl = $("#otaStatus");
+  const actions = $("#otaActions");
+  const btnApp = $("#otaBtnApp");
+  const btnFs = $("#otaBtnFs");
+  const wrap = $("#otaProgressWrap");
+  const fill = $("#otaProgressFill");
+  let busy = false;
+
+  function setProgress(pct) {
+    if (wrap) wrap.style.display = pct == null ? "none" : "block";
+    if (fill && pct != null) fill.style.width = pct + "%";
+  }
+  function showActions(show) { if (actions) actions.style.display = show ? "flex" : "none"; }
+  function setBusy(on) {
+    busy = on;
+    btn.disabled = on; if (btnApp) btnApp.disabled = on; if (btnFs) btnFs.disabled = on;
+  }
+
+  // Run one independent apply action (app or fs). `apply` is the engine method.
+  function runApply(kind, apply, label) {
+    setBusy(true);
+    if (statusEl) statusEl.textContent = "Installing " + label + "…";
+    setProgress(0);
+    apply((st) => {
+      if (!st) return;
+      if (st.percent != null) setProgress(st.percent);
+      if (statusEl) statusEl.textContent = "Installing " + label +
+        (st.stage ? " (" + st.stage + ")" : "") + "… " + (st.percent || 0) + "%";
+    }).then((final) => {
+      if (!final || final.phase === "rebooting") {
+        if (statusEl) statusEl.textContent = label + " installed — device rebooting. Reload in ~30 s.";
+        setProgress(100);
+        showToast(label + " updated — rebooting");
+      } else {
+        if (statusEl) statusEl.textContent = label + " update failed" + (final.error ? ": " + final.error : "");
+        setProgress(null); setBusy(false);
+      }
+    });
+  }
+
+  btn.addEventListener("click", () => {
+    if (busy) return;
+    setBusy(true);
+    showActions(false);
+    if (statusEl) statusEl.textContent = "Checking for updates…";
+    setProgress(null);
+
+    engine.checkFirmware().then((s) => {
+      setBusy(false);
+      if (!s || s.phase === "error") {
+        if (statusEl) statusEl.textContent = "Check failed" + (s && s.error ? ": " + s.error : "");
+        return;
+      }
+      if (!s.appAvailable && !s.fsAvailable) {
+        if (statusEl) statusEl.textContent = "Up to date (v" + (s.current || "?") + "). Last checked just now.";
+        return;
+      }
+      if (statusEl) statusEl.textContent = "Update available: v" + s.latest +
+        (s.notes ? " — " + s.notes : "") + ". Choose what to install.";
+      if (btnApp) btnApp.disabled = !s.appAvailable;
+      if (btnFs) btnFs.disabled = !s.fsAvailable;
+      showActions(true);
+    });
+  });
+
+  if (btnApp) btnApp.addEventListener("click", () => {
+    if (busy || btnApp.disabled) return;
+    if (!window.confirm("Update the device FIRMWARE now?\n\nThe device will reboot and be " +
+      "briefly offline. Firmware updates are A/B-protected — a failed download can't brick it. " +
+      "Do NOT power it off during the update.")) return;
+    runApply("app", engine.updateFirmware, "Firmware");
+  });
+
+  if (btnFs) btnFs.addEventListener("click", () => {
+    if (busy || btnFs.disabled) return;
+    if (!window.confirm("Update the WEB UI (filesystem) now?\n\nThe device will reboot and be " +
+      "briefly offline. If interrupted, the UI may need re-flashing (recoverable). " +
+      "Do NOT power it off during the update.")) return;
+    runApply("fs", engine.updateWebUi, "Web UI");
+  });
+})();
 
 /* ---------------------------------------------------------------------
    Master render
