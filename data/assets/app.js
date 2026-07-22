@@ -597,9 +597,9 @@ function buildKnobUnit(seg, p) {
   const uid = "knob_" + p.id + "_" + seg.id;
   unit.innerHTML = `
     <div class="knob" id="${uid}">
-      <svg class="knob-ring" viewBox="0 0 72 72">
+      <svg class="knob-ring" width="72" height="72" viewBox="0 0 72 72">
         <circle cx="36" cy="36" r="32" fill="none" stroke="#000" stroke-opacity="0.4" stroke-width="3"/>
-        <circle class="knob-fill" cx="36" cy="36" r="32" fill="none" stroke="#ff9d3d" stroke-width="3" stroke-linecap="round" stroke-dasharray="150.8" stroke-dashoffset="150.8" transform="rotate(135 36 36)"/>
+        <circle class="knob-fill" cx="36" cy="36" r="32" fill="none" stroke="#ff9d3d" stroke-width="3" stroke-linecap="round" stroke-dasharray="0 201.06" stroke-dashoffset="0" transform="rotate(135 36 36)"/>
       </svg>
       <div class="knob-indicator"></div>
     </div>
@@ -625,7 +625,10 @@ function buildKnobUnit(seg, p) {
     const pct = clamp((v - min) / (max - min), 0, 1);
     const angle = ANGLE_MIN + pct * (ANGLE_MAX - ANGLE_MIN);
     indicatorEl.style.transform = `rotate(${angle}deg)`;
-    fillEl.style.strokeDashoffset = CIRC * (1 - pct * 0.75);
+    // 270° gauge: draw one contiguous arc of length pct*0.75*CIRC, then an all-
+    // consuming gap. (The old single-value dasharray+dashoffset trick wrapped the
+    // circle and split the fill into two disjoint pieces — see the "off" knobs bug.)
+    fillEl.style.strokeDasharray = `${pct * 0.75 * CIRC} ${CIRC}`;
     valueEl.textContent = (p.type === "float") ? Number(v).toFixed(2) : Math.round(v);
   }
   unit._render = render;

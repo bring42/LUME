@@ -1040,7 +1040,12 @@ input, button, textarea{ font-family: inherit; color: inherit; }
 }
 .knob-ring{
   position: absolute;
-  inset: -7px;
+  /* Explicit size + centering, not `inset`. Safari/WebKit sizes an inline SVG with
+     no intrinsic width/height off its 300x150 default in absolute contexts, which
+     rendered the ring offset on the real device; this pins it in every engine. */
+  top: 50%; left: 50%;
+  width: calc(var(--size) + 14px); height: calc(var(--size) + 14px);
+  transform: translate(-50%, -50%);
   pointer-events: none;
 }
 .knob-ring circle:first-child{ stroke: var(--c-line-soft) !important; stroke-opacity: 1 !important; }
