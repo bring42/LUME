@@ -114,11 +114,6 @@ public:
         return effect ? effect->id : "none";
     }
     
-    // Get current effect display name
-    const char* getEffectName() const {
-        return effect ? effect->displayName : "None";
-    }
-    
     // Helper: check if effect has a specific parameter
     bool hasParam(const char* paramId) const {
         return effect && effect->hasParam(paramId);
