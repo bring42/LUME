@@ -11,9 +11,15 @@
 // Customize these for your specific hardware setup
 
 // Pick a free GPIO for the LED data line (board-dependent):
-//   ESP32-C3: safe 0-1, 4-7, 10, 18-21; avoid 2-3 (strapping), 8-9 & 11-17 (flash)
+//   ESP32-C3: safe 0-1, 4-7, 10, 18-21; avoid 2-3, 8-9 (strapping), 11-17 (flash)
 //   ESP32-S3: most GPIOs are free; avoid 0/3/45/46 (strapping) and 26-32 (flash)
+// Override per-env with -DLUME_LED_DATA_PIN=<gpio> in platformio.ini's build_flags
+// (e.g. the C3 boards need a non-strapping pin; GPIO2 is fine on S3/T-Display S3).
+#ifdef LUME_LED_DATA_PIN
+#define LED_DATA_PIN                LUME_LED_DATA_PIN
+#else
 #define LED_DATA_PIN                2               // GPIO2 (T-Display S3: broken out, not a strapping pin)
+#endif
 #define LED_STRIP_TYPE              WS2812B         // Common addressable RGB LED
 #define LED_COLOR_MODE              GRB             // Byte order (GRB for WS2812B)
 
