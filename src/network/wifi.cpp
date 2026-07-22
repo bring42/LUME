@@ -62,7 +62,10 @@ static void onWifiConnected() {
 void setupWiFi() {
     // Always start AP mode for initial access
     WiFi.mode(WIFI_AP_STA);
-    
+    // No modem power-save: this is a mains-powered controller, and WiFi sleep makes
+    // the SoftAP + web server sluggish/unreliable (slow loads, dropped connections).
+    WiFi.setSleep(false);
+
     // Start Access Point
     WiFi.softAP(AP_SSID, AP_PASSWORD);
     LOG_INFO(LogTag::WIFI, "AP started: %s", AP_SSID);
@@ -86,8 +89,11 @@ void setupWiFi() {
 
 // Helper function for WiFi reconnection and status monitoring
 void handleWifiMaintenance() {
-    // WiFi reconnection logic
-    if (!wifiConnected && config.wifiSSID.length() > 0) {
+    // WiFi reconnection logic. Skip it while a client is connected to the SoftAP:
+    // WiFi.begin() channel-hops the single radio to scan, which drops AP clients —
+    // so an unavailable saved network would kick anyone off the setup page every
+    // WIFI_RETRY_INTERVAL_MS. Resume reconnection once the AP is idle again.
+    if (!wifiConnected && config.wifiSSID.length() > 0 && WiFi.softAPgetStationNum() == 0) {
         if (millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS) {
             lastWifiAttempt = millis();
             LOG_INFO(LogTag::WIFI, "Attempting WiFi reconnection...");
