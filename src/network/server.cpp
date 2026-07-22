@@ -8,8 +8,10 @@
 #include "../protocols/mqtt.h"
 #include "../api/status.h"
 #include "../api/config.h"
+#include "../api/firmware.h"
 #include "../core/segment_serializer.h"   // canonical serializeSegment (P1.7)
 #include "../api/pixels.h"
+#include "updater.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 
@@ -114,7 +116,12 @@ void setupServer() {
 
     if (webUiAvailable) {
         server.serveStatic("/assets/", LittleFS, "/assets/")
-            .setCacheControl("public, max-age=604800");
+            .setCacheControl("public, max-age=604800")
+            // During an OTA filesystem flash the LittleFS partition is mid-erase.
+            // Disable static serving then, so the request falls through to the
+            // updaterInProgress() 503 guard in onNotFound instead of reading a
+            // partition being actively overwritten (garbage/fault -> FS corruption).
+            .setFilter([](AsyncWebServerRequest*) { return !lume::updaterInProgress(); });
         LOG_INFO(LogTag::WEB, "Serving UI assets from LittleFS");
     } else {
         LOG_WARN(LogTag::WEB, "LittleFS not mounted; UI assets unavailable");
@@ -156,7 +163,7 @@ void setupServer() {
         // Component health
         JsonObject components = doc["components"].to<JsonObject>();
         components["led_controller"] = lume::controller.getLedCount() > 0;
-        components["storage"] = true;  // Would fail at boot if broken
+        components["storage"] = storage.isReady();
         components["sacn_enabled"] = config.sacnEnabled;
         components["sacn_receiving"] = lume::sacnProtocol.isActive();
         components["mqtt_enabled"] = config.mqttEnabled;
@@ -269,7 +276,17 @@ void setupServer() {
     server.on("/api/v2/effects", HTTP_GET, handleApiV2EffectsList);
     server.on("/api/v2/palettes", HTTP_GET, handleApiV2PalettesList);
     server.on("/api/v2/info", HTTP_GET, handleApiV2Info);
-    
+
+    // Firmware auto-update (pull-based OTA from GitHub Releases). Check/update
+    // are async (worker does the blocking HTTPS transfer); the UI polls status.
+    // Check is unified (reports both images); apply is split into two fully
+    // independent operations (firmware vs filesystem) — flashing one never
+    // triggers the other.
+    server.on("/api/firmware/check", HTTP_POST, handleApiFirmwareCheck);
+    server.on("/api/firmware/status", HTTP_GET, handleApiFirmwareStatus);
+    server.on("/api/firmware/update/app", HTTP_POST, handleApiFirmwareUpdateApp);
+    server.on("/api/firmware/update/fs", HTTP_POST, handleApiFirmwareUpdateFs);
+
     // ===========================================================================
     
     // Handle CORS preflight
@@ -291,6 +308,12 @@ void setupServer() {
 
         if (!webUiAvailable) {
             request->send(404, "text/plain", "Not found");
+            return;
+        }
+
+        // Don't read LittleFS while an OTA is overwriting the FS partition.
+        if (lume::updaterInProgress()) {
+            request->send(503, "text/plain", "Firmware update in progress");
             return;
         }
 

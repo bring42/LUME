@@ -4,10 +4,6 @@ Current state as of PR #26. The structural audit that this register grew out of 
 been **worked off**: every **P0** (correctness / memory-safety / races) and every
 **P1** (2D pre-req seam) item is resolved.
 
-> The original six-auditor audit (full P0/P1/P2/P3 detail, kept for its historical
-> value) is archived at **`archive/TECH_DEBT.md`**. The P-numbers referenced from
-> other docs (e.g. `API_V2.md`, the RFCs) point into that archived register.
-
 ## Resolved — the whole P0/P1 backlog
 
 Confirmed in-tree (grep/read against current `src/`):
@@ -50,14 +46,52 @@ The old P0.8 (`setLedCount` re-bind / teardown race) is addressed via the
 
 ## Still open
 
-### MQTT bypasses the command bus (consistency, not a race)
-`mqtt.cpp:314-336` mutates `getSegment(0)->setEffect/setSpeed/setIntensity` plus
-`controller_->setPower/setBrightness` **directly** instead of enqueuing a command —
-and only ever the first segment ("apply to first segment for now").
-This is **safe today**: `mqtt.update()` runs on the loop task (`main.cpp:254`), same
-task as the renderer, so there is no data race — but it is the one input path that
-sidesteps the mutation spine. **Fix:** route it through `enqueueCommand` for
-consistency (and to gain multi-segment addressing) when MQTT is next touched.
+### ~~MQTT bypasses the command bus~~ (RESOLVED)
+`mqtt.cpp` now routes every control mutation through `enqueueCommand` (single-writer
+spine): power/brightness → `setPower`/`setGlobalBrightness`, effect/speed/intensity →
+one bundled `applyEffectSpec(0, …)`. The trailing `publishState()` calls were dropped
+because commands drain on the *next* `controller.update()` (which runs before
+`mqtt.update()` in `main.cpp`), so an immediate publish would emit stale pre-change
+state; `update()`'s `stateChanged()` poll republishes the fresh state after the command
+applies. **Follow-up:** still segment-0-only. Multi-segment was deferred deliberately —
+not a band-aid `segment` field on `lume/set`. The right design is **configure-once /
+projection**: the device's segment layout is the single source of truth, and every
+integration surface (REST, MQTT, HA discovery) *projects* from it rather than
+re-declaring it. Concretely: HA auto-discovery publishes one light entity per segment
+and re-publishes (with cleanup) when the layout changes — so pairing = "flash → pair →
+done", never "configure → pair → configure again". Do all three layers (JSON field +
+per-segment topics + discovery entity lifecycle) in one pass when picked up.
+
+### Firmware OTA — hardening follow-ups (app path HARDWARE-VALIDATED 2026-07-22; FS path untested)
+Pull-based GitHub OTA (app + FS, split, HTTPS + SHA-256 verify-before-commit). The **app**
+update is proven end-to-end on a Seeed XIAO ESP32-C3: v1.0.0 self-updated to v1.1.0
+(download over HTTPS from the GitHub release → SHA-256 verify → flash the inactive slot →
+clean reboot into the new image, healthy). The **FS** update path (`/api/firmware/update/fs`)
+is implemented but not yet exercised on hardware. Known hardening path, in priority order:
+1. **Self-heal rollback** — replace the unconditional `esp_ota_mark_app_valid_cancel_rollback()`
+   on boot with a **self-test gate** (WiFi up? render loop ticking? storage reads?); on
+   failure call the rollback-and-reboot sibling → bootloader reverts to the prior known-good
+   slot with no re-download. Requires `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` in a custom
+   sdkconfig (can only be enabled via a USB flash, not OTA). This closes the "checksum proves
+   it downloaded, not that it boots" gap.
+2. **C3 flash headroom** — app slot ~90% full; if it ever bites, ship a custom partition CSV
+   trading FS size for larger app slots.
+3. **Security / LAN trust** — `setInsecure()` (no TLS cert validation) + checksum-only, and the
+   flash endpoints are UNAUTHENTICATED when no auth token is set (the default). Per the
+   2026-07-23 audit, a single on-path LAN attacker can *trigger* an update **and** MITM it (serve
+   a malicious image + a matching manifest checksum) → arbitrary firmware, no credentials.
+   **Interim mitigation: set an auth token** — that gates `/api/firmware/update/*` like the rest
+   of the API. Real fix: TLS cert pinning + code signing / secure boot. Treat AP/LAN as trusted
+   until then.
+4. ~~**FS-flash-while-serving**~~ (RESOLVED 2026-07-23) — `serveStatic("/assets/")` now carries a
+   `setFilter([]{ return !updaterInProgress(); })`, so asset reads fall through to the `onNotFound`
+   503 guard during an FS flash instead of reading a partition mid-erase.
+
+**Deferred from the 2026-07-23 branch audit (LOW / nits):** manifest fetched via unbounded
+`getString()` (MITM-gated OOM risk on the ~130 KB-heap C3 — add a size cap); the `applyTarget`
+poller can misreport a suspiciously-fast reboot as "failed" (`sawFlashing` never set — cosmetic,
+bounded); effect/palette **names** are rendered via `innerHTML` in both skins (pre-existing, NOT
+this branch — device is the same-origin trust root, but worth moving to `textContent`).
 
 ---
 

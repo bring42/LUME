@@ -607,6 +607,76 @@
         function (err) { return { ok: false, status: err.status }; });
     }
 
+    /* ---- firmware auto-update (pull-based OTA) ---- */
+    // The device does check/apply asynchronously (a worker runs the blocking
+    // HTTPS transfer), so the flow is: trigger, then poll /api/firmware/status.
+    function currentVersion() {
+      return (state.info && state.info.firmware && state.info.firmware.version) ||
+             (state.status && state.status.version) || "";
+    }
+
+    function firmwareStatus() {
+      if (state.demo) return Promise.resolve(null);
+      return apiFetch("/api/firmware/status").catch(function () { return null; });
+    }
+
+    // Poll status until `isDone(status)` returns true (or we run out of tries).
+    // `onTick` is called with each status. Resolves with the final status.
+    function pollFirmware(isDone, onTick, tries, intervalMs) {
+      return new Promise(function (resolve) {
+        var left = tries;
+        function step() {
+          firmwareStatus().then(function (s) {
+            if (typeof onTick === "function" && s) onTick(s);
+            if (s && isDone(s)) { resolve(s); return; }
+            if (--left <= 0) { resolve(s || { phase: "error", error: "Timed out" }); return; }
+            setTimeout(step, intervalMs);
+          });
+        }
+        step();
+      });
+    }
+
+    // Trigger a check and resolve once it settles (up_to_date | available | error).
+    function checkFirmware() {
+      if (state.demo) {
+        return Promise.resolve({ phase: "up_to_date", updateAvailable: false,
+          current: currentVersion(), latest: currentVersion(), demo: true });
+      }
+      return apiFetch("/api/firmware/check", { method: "POST" }).then(function () {
+        return pollFirmware(function (s) {
+          return s.phase === "up_to_date" || s.phase === "available" || s.phase === "error";
+        }, null, 30, 1000);
+      }, function (err) {
+        return { phase: "error", error: (err && err.status === 409) ? "Updater busy" : "Check failed" };
+      });
+    }
+
+    // Trigger an apply for ONE target and poll progress. `onProgress(status)`
+    // fires each tick. Resolves when the device reboots (or reports an error). A
+    // dropped connection mid-poll is treated as the expected reboot. The two
+    // targets are fully independent on the device — this only picks the route.
+    function applyTarget(path, onProgress) {
+      if (state.demo) {
+        return Promise.resolve({ phase: "error", error: "Not available in demo mode" });
+      }
+      return apiFetch(path, { method: "POST" }).then(function () {
+        var sawFlashing = false;
+        return pollFirmware(function (s) {
+          if (!s) return sawFlashing; // connection dropped after flashing == reboot
+          if (s.phase === "downloading" || s.phase === "verifying" || s.phase === "flashing") sawFlashing = true;
+          return s.phase === "rebooting" || s.phase === "error";
+        }, onProgress, 240, 1000);
+      }, function (err) {
+        return { phase: "error", error: (err && err.status === 409) ? "Updater busy"
+          : (err && err.status === 400) ? "No update available" : "Update failed" };
+      });
+    }
+
+    // Two independent apply actions (mirror `pio run -t upload` / `-t uploadfs`).
+    function updateFirmware(onProgress) { return applyTarget("/api/firmware/update/app", onProgress); }
+    function updateWebUi(onProgress)    { return applyTarget("/api/firmware/update/fs", onProgress); }
+
     return {
       state: state,
       on: on,
@@ -632,6 +702,10 @@
       sendPrompt: sendPrompt,
       getConfig: getConfig,
       saveConfig: saveConfig,
+      checkFirmware: checkFirmware,
+      updateFirmware: updateFirmware,
+      updateWebUi: updateWebUi,
+      firmwareStatus: firmwareStatus,
       refreshSegments: refreshSegments,
       refreshStatus: refreshStatus,
       // color helpers (shared by skins)

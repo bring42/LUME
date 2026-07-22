@@ -882,7 +882,10 @@
     var status = engine.state.status;
     $("#ledcount-value").textContent = engine.state.controller.ledCount;
     if (info && info.firmware) {
-      $("#info-firmware").textContent = "v" + info.firmware.version + (info.firmware.buildHash ? "—" + info.firmware.buildHash : "");
+      var fw = "v" + info.firmware.version + (info.firmware.buildHash ? "—" + info.firmware.buildHash : "");
+      $("#info-firmware").textContent = fw;
+      var otaCurrent = $("#ota-current");
+      if (otaCurrent) otaCurrent.textContent = fw;
     }
     if (status) {
       if (status.uptime != null) $("#info-uptime").textContent = formatUptime(status.uptime) || "—";
@@ -960,11 +963,86 @@
     });
   });
 
-  $("#btn-ota").addEventListener("click", function () {
-    // No OTA endpoint exists in the device API / engine, so there is nothing to
-    // check. Report that honestly rather than faking an "up to date" result.
-    toast("Firmware updates aren't available from this UI");
-  });
+  // Real pull-based update, split into two INDEPENDENT actions (firmware vs web
+  // UI / filesystem — mirroring `pio run -t upload` vs `-t uploadfs`). One check
+  // reveals what's available; each action runs its own confirm → install →
+  // reboot. The device runs transfers asynchronously; the engine polls status.
+  (function wireEuclidOta() {
+    var btnCheck = $("#btn-ota");
+    var btnApp = $("#btn-ota-app");
+    var btnFs = $("#btn-ota-fs");
+    if (!btnCheck) return;
+    var busy = false;
+
+    function label(btn, t) {
+      var el = btn.querySelector(".mono-label") || btn;
+      el.textContent = t;
+    }
+    function setBusy(on) {
+      busy = on;
+      btnCheck.disabled = on;
+      if (btnApp) btnApp.disabled = on;
+      if (btnFs) btnFs.disabled = on;
+    }
+    function show(btn, on) { if (btn) btn.style.display = on ? "" : "none"; }
+
+    // Run one independent apply action.
+    function runApply(btn, apply, name) {
+      setBusy(true);
+      label(btn, "INSTALLING…");
+      apply(function (st) {
+        if (st && st.percent != null) {
+          label(btn, "INSTALLING " + (st.stage ? st.stage.toUpperCase() + " " : "") + (st.percent || 0) + "%");
+        }
+      }).then(function (final) {
+        if (!final || final.phase === "rebooting") {
+          label(btn, "REBOOTING…");
+          toast(name + " updated — rebooting");
+        } else {
+          toast(name + " update failed" + (final.error ? ": " + final.error : ""));
+          label(btn, btn === btnApp ? "UPDATE FIRMWARE" : "UPDATE WEB UI");
+          setBusy(false);
+        }
+      });
+    }
+
+    btnCheck.addEventListener("click", function () {
+      if (busy) return;
+      setBusy(true);
+      show(btnApp, false); show(btnFs, false);
+      label(btnCheck, "CHECKING…");
+
+      engine.checkFirmware().then(function (s) {
+        setBusy(false);
+        label(btnCheck, "CHECK FOR UPDATE");
+        if (!s || s.phase === "error") {
+          toast("Check failed" + (s && s.error ? ": " + s.error : "")); return;
+        }
+        if (!s.appAvailable && !s.fsAvailable) {
+          toast("Up to date (v" + (s.current || "?") + ")"); return;
+        }
+        toast("Update available: v" + s.latest);
+        if (s.appAvailable) show(btnApp, true);
+        if (s.fsAvailable) show(btnFs, true);
+      });
+    });
+
+    if (btnApp) btnApp.addEventListener("click", function () {
+      if (busy) return;
+      if (!window.confirm("Update the device FIRMWARE now?\n\nThe instrument will reboot and be " +
+        "briefly offline. Firmware updates are A/B-protected — a failed download can't brick it. " +
+        "Do NOT power it off during the update.")) return;
+      runApply(btnApp, engine.updateFirmware, "Firmware");
+    });
+
+    if (btnFs) btnFs.addEventListener("click", function () {
+      if (busy) return;
+      if (!window.confirm("Update the WEB UI (filesystem) now?\n\nThe instrument will reboot and be " +
+        "briefly offline. If interrupted, the UI may need re-flashing (recoverable). " +
+        "Do NOT power it off during the update.")) return;
+      runApply(btnFs, engine.updateWebUi, "Web UI");
+    });
+  })();
 
   // =========================================================================
   // Connection / demo indicator (folded into the header eyebrow line)

@@ -45,7 +45,9 @@
 // Network setup
 #include "network/server.h"   // Web server route registration
 #include "network/ota.h"      // OTA updates and mDNS
+#include "network/updater.h"  // Pull-based OTA from GitHub Releases
 #include "network/wifi.h"     // WiFi AP+STA setup
+#include <esp_ota_ops.h>      // esp_ota_mark_app_valid_cancel_rollback
 
 // Optional development secrets (create src/secrets.h from secrets.h.example)
 #ifdef __has_include
@@ -232,6 +234,17 @@ void setup() {
     // Start the background AI worker (keeps the blocking prompt call off the
     // AsyncTCP task — P0.4).
     initAiPromptWorker();
+
+    // Start the firmware auto-update worker (pull-based OTA from GitHub).
+    lume::initUpdater();
+
+    // If we just booted a freshly-OTA'd image and the bootloader supports
+    // rollback (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE), confirm the image so the
+    // bootloader stops treating it as pending. No-op on the default Arduino
+    // sdkconfig (rollback disabled) — harmless, and correct once it's enabled.
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+        LOG_INFO(LogTag::OTA, "Running image marked valid (rollback confirmed)");
+    }
 
     LOG_INFO(LogTag::MAIN, "Setup complete!");
     logMemoryStats(LogTag::MAIN, "at startup");

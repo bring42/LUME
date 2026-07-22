@@ -44,6 +44,10 @@ constexpr uint16_t LED_MAX_MILLIAMPS        = 2000;  // Max current (adjust for 
 
 // Timeouts (milliseconds)
 constexpr uint32_t WIFI_RETRY_INTERVAL_MS   = 30000;
+// Slower reconnect cadence while a client is parked on the SoftAP: keeps a scan's
+// brief AP disruption rare during setup, while still letting the device recover on
+// its own if a saved network returns while an idle client is holding the AP.
+constexpr uint32_t WIFI_RETRY_INTERVAL_AP_BUSY_MS = 120000;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SYSTEM LIMITS & BUFFERS
@@ -56,6 +60,16 @@ constexpr size_t MAX_REQUEST_BODY_SIZE      = 16384;  // 16KB max POST body
 constexpr size_t   ANTHROPIC_TASK_STACK_SIZE = 16384;
 constexpr uint8_t  ANTHROPIC_TASK_PRIORITY   = 1;
 constexpr uint8_t  ANTHROPIC_TASK_CORE       = 0;
+
+// Firmware updater worker (pull-based OTA from GitHub Releases). A generous
+// stack: the worker runs a TLS download + streaming SHA-256 + Update.write.
+constexpr size_t   UPDATER_TASK_STACK_SIZE   = 16384;
+constexpr uint8_t  UPDATER_TASK_PRIORITY     = 1;
+constexpr uint8_t  UPDATER_TASK_CORE         = 0;
+// Chunk size for streaming the downloaded image into Update.write + the hasher.
+constexpr size_t   UPDATER_CHUNK_SIZE        = 2048;
+// How long the updater waits on a stalled HTTP read before aborting the download.
+constexpr uint32_t UPDATER_HTTP_TIMEOUT_MS   = 20000;
 
 // System Timing
 constexpr uint32_t WATCHDOG_TIMEOUT_SEC     = 30;     // Auto-reset timeout
@@ -75,14 +89,41 @@ constexpr uint8_t  NIGHTLIGHT_DEFAULT_TARGET    = 0;     // Target brightness (o
 // ═══════════════════════════════════════════════════════════════════════════
 
 #define FIRMWARE_NAME    "LUME"
-#define FIRMWARE_VERSION "1.0.0"
 
+// FIRMWARE_VERSION is normally injected at build time from the git tag by
+// scripts/version.py (e.g. -DFIRMWARE_VERSION=\"1.2.0\"). This fallback is what
+// a plain local `pio run` (no tag) compiles with.
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "1.0.0"
+#endif
+
+// Short git hash, injected by scripts/version.py; "dev" for un-tagged builds.
 #ifndef FIRMWARE_BUILD_HASH
 #define FIRMWARE_BUILD_HASH "dev"
 #endif
 
 #ifndef FIRMWARE_BUILD_TIMESTAMP
 #define FIRMWARE_BUILD_TIMESTAMP __DATE__ " " __TIME__
+#endif
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIRMWARE AUTO-UPDATE (pull-based OTA from GitHub Releases)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GitHub repo that publishes the release assets (manifest.json + per-board
+// firmware/filesystem images). Override at build time if you fork.
+#ifndef LUME_GH_OWNER
+#define LUME_GH_OWNER "bring42"
+#endif
+#ifndef LUME_GH_REPO
+#define LUME_GH_REPO "LUME"
+#endif
+
+// Which release asset set belongs to THIS build. Injected per-env by
+// scripts/version.py (maps the PlatformIO env name to the release asset id).
+// Must match the keys CI writes into manifest.json ("boards": { <id>: ... }).
+#ifndef LUME_BOARD_ID
+#define LUME_BOARD_ID "esp32-s3-devkitc"
 #endif
 
 #endif // CONSTANTS_H

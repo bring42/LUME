@@ -165,6 +165,4 @@ Add or extend a `test_<area>` suite (and the stubs in `test/stubs/`) when you ch
 ## Known Residuals
 
 Scenes are not implemented (P1.6): the backend was removed and the UI route 404s — implement or
-remove, don't assume it works. Historical pre-refactor code (old `led.*`, `prompt.*`,
-`anthropic_client.*`, `scenes.*`) lives under [docs/archive/](docs/archive/) for reference only;
-none of it is compiled.
+remove, don't assume it works.

@@ -15,6 +15,19 @@ bool Storage::begin() {
     return true; // Preferences doesn't need explicit init
 }
 
+bool Storage::isReady() {
+    StorageLock lock(mutex_);
+    // Probe NVS by opening the config namespace read-WRITE: this succeeds whenever
+    // NVS is healthy (creating the namespace if it doesn't exist yet) and fails only
+    // when the partition is genuinely broken. A read-only open would false-negative
+    // on a factory-fresh device whose config namespace no save has created yet.
+    if (!prefs.begin(NAMESPACE_CONFIG, false)) {
+        return false;
+    }
+    prefs.end();
+    return true;
+}
+
 bool Storage::loadConfig(Config& config) {
     StorageLock lock(mutex_);
     if (!prefs.begin(NAMESPACE_CONFIG, true)) { // read-only

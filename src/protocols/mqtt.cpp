@@ -295,81 +295,80 @@ void MqttProtocol::handleMessage(const String& topic, const String& payload) {
     }
 }
 
+// NOTE: all handlers below route mutations through enqueueCommand (single-writer
+// spine) instead of touching controller/segment state directly. They do NOT
+// publishState() afterwards: commands drain on the *next* controller.update()
+// (main.cpp runs controller.update() before mqtt.update()), so an immediate
+// publish would emit stale pre-change state. update()'s stateChanged() poll
+// republishes the fresh state once the command has been applied.
+
 void MqttProtocol::handleSetCommand(const JsonDocument& doc) {
     if (!controller_) return;
-    
-    // Power state
+
+    // Power state → global command
     if (doc["state"].is<const char*>()) {
         String state = doc["state"].as<String>();
         state.toUpperCase();
-        controller_->setPower(state == "ON" || state == "TRUE" || state == "1");
+        bool on = (state == "ON" || state == "TRUE" || state == "1");
+        controller_->enqueueCommand(Command::setPower(on));
     }
-    
-    // Brightness
+
+    // Brightness → global command
     if (doc["brightness"].is<int>()) {
-        controller_->setBrightness(doc["brightness"].as<uint8_t>());
+        controller_->enqueueCommand(Command::setGlobalBrightness(doc["brightness"].as<uint8_t>()));
     }
-    
-    // Effect
-    if (doc["effect"].is<const char*>()) {
-        String effect = doc["effect"].as<String>();
-        // Apply to first segment for now
-        if (controller_->getSegmentCount() > 0) {
-            auto* seg = controller_->getSegment(0);
-            if (seg) seg->setEffect(effect.c_str());
+
+    // Per-segment fields (segment 0 only, matching prior behavior) bundled into a
+    // single compound spec so effect is applied before speed/intensity on the loop.
+    if (controller_->getSegmentCount() > 0 &&
+        (doc["effect"].is<const char*>() || doc["speed"].is<int>() || doc["intensity"].is<int>())) {
+        EffectSpec spec = {};
+        if (doc["effect"].is<const char*>()) {
+            // Copy id into the spec (self-validated by setEffect on the loop).
+            spec.hasEffect = true;
+            strncpy(spec.effectId, doc["effect"].as<const char*>(), MAX_EFFECT_ID_LEN - 1);
+            spec.effectId[MAX_EFFECT_ID_LEN - 1] = '\0';
         }
-    }
-    
-    // Speed
-    if (doc["speed"].is<int>()) {
-        if (controller_->getSegmentCount() > 0) {
-            auto* seg = controller_->getSegment(0);
-            if (seg) seg->setSpeed(doc["speed"].as<uint8_t>());
+        if (doc["speed"].is<int>()) {
+            spec.hasSpeed = true;
+            spec.speed = doc["speed"].as<uint8_t>();
         }
-    }
-    
-    // Intensity
-    if (doc["intensity"].is<int>()) {
-        if (controller_->getSegmentCount() > 0) {
-            auto* seg = controller_->getSegment(0);
-            if (seg) seg->setIntensity(doc["intensity"].as<uint8_t>());
+        if (doc["intensity"].is<int>()) {
+            spec.hasIntensity = true;
+            spec.intensity = doc["intensity"].as<uint8_t>();
         }
+        controller_->enqueueCommand(Command::applyEffectSpec(0, spec));
     }
-    
-    // Immediate state publish to confirm
-    publishState();
 }
 
 void MqttProtocol::handleBrightnessSet(const String& payload) {
     if (!controller_) return;
-    
+
     int brightness = payload.toInt();
     if (brightness >= 0 && brightness <= 255) {
-        controller_->setBrightness(brightness);
-        publishState();
+        controller_->enqueueCommand(Command::setGlobalBrightness((uint8_t)brightness));
     }
 }
 
 void MqttProtocol::handleEffectSet(const String& payload) {
     if (!controller_ || controller_->getSegmentCount() == 0) return;
-    
-    auto* seg = controller_->getSegment(0);
-    if (seg) {
-        seg->setEffect(payload.c_str());
-        publishState();
-    }
+
+    EffectSpec spec = {};
+    spec.hasEffect = true;
+    strncpy(spec.effectId, payload.c_str(), MAX_EFFECT_ID_LEN - 1);
+    spec.effectId[MAX_EFFECT_ID_LEN - 1] = '\0';
+    controller_->enqueueCommand(Command::applyEffectSpec(0, spec));
 }
 
 void MqttProtocol::handlePowerSet(const String& payload) {
     if (!controller_) return;
-    
+
     String state = payload;
     state.toUpperCase();
     state.trim();
-    
+
     bool power = (state == "ON" || state == "TRUE" || state == "1");
-    controller_->setPower(power);
-    publishState();
+    controller_->enqueueCommand(Command::setPower(power));
 }
 
 void MqttProtocol::updateStateHash() {

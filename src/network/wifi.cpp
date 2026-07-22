@@ -62,53 +62,53 @@ static void onWifiConnected() {
 void setupWiFi() {
     // Always start AP mode for initial access
     WiFi.mode(WIFI_AP_STA);
-    
+    // No modem power-save: this is a mains-powered controller, and WiFi sleep makes
+    // the SoftAP + web server sluggish/unreliable (slow loads, dropped connections).
+    WiFi.setSleep(false);
+
     // Start Access Point
     WiFi.softAP(AP_SSID, AP_PASSWORD);
     LOG_INFO(LogTag::WIFI, "AP started: %s", AP_SSID);
     LOG_DEBUG(LogTag::WIFI, "AP IP: %s", WiFi.softAPIP().toString().c_str());
     
-    // Try to connect to configured WiFi
+    // Kick off the station connect but DON'T block on it. The AP + web server must
+    // be reachable immediately — otherwise 192.168.4.1 is dead for up to ~10s while
+    // an unavailable saved network times out (the "moved the device somewhere new"
+    // case). handleWifiMaintenance() runs every loop, detects the false->true
+    // connect transition, and runs onWifiConnected() (mDNS/OTA/protocols) once the
+    // link is actually up.
     if (config.wifiSSID.length() > 0) {
-        LOG_INFO(LogTag::WIFI, "Connecting to WiFi: %s", config.wifiSSID.c_str());
+        LOG_INFO(LogTag::WIFI, "Connecting to WiFi in background: %s", config.wifiSSID.c_str());
         WiFi.begin(config.wifiSSID.c_str(), config.wifiPassword.c_str());
-        
-        // Wait for connection (with timeout)
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-            delay(500);
-            Serial.print(".");  // Keep dots for visual feedback
-            attempts++;
-        }
-        Serial.println();
-        
-        if (WiFi.status() == WL_CONNECTED) {
-            wifiConnected = true;
-            onWifiConnected();
-        } else {
-            LOG_WARN(LogTag::WIFI, "Connection failed, AP mode active");
-        }
     } else {
         LOG_INFO(LogTag::WIFI, "No WiFi configured, AP mode only");
     }
-    
+
     lastWifiAttempt = millis();
 }
 
 // Helper function for WiFi reconnection and status monitoring
 void handleWifiMaintenance() {
-    // WiFi reconnection logic
+    // WiFi reconnection logic. While a client is connected to the SoftAP, back OFF
+    // but do NOT stop: WiFi.begin() channel-hops the single radio to scan, which
+    // briefly drops AP clients (annoying mid-setup). Using a much longer interval
+    // instead of skipping entirely means an idle phone parked on the AP can't wedge
+    // the device offline forever if it drops its saved network (e.g. router reboot).
     if (!wifiConnected && config.wifiSSID.length() > 0) {
-        if (millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS) {
+        uint32_t interval = (WiFi.softAPgetStationNum() > 0)
+                                ? WIFI_RETRY_INTERVAL_AP_BUSY_MS
+                                : WIFI_RETRY_INTERVAL_MS;
+        if (millis() - lastWifiAttempt > interval) {
             lastWifiAttempt = millis();
             LOG_INFO(LogTag::WIFI, "Attempting WiFi reconnection...");
             WiFi.begin(config.wifiSSID.c_str(), config.wifiPassword.c_str());
         }
     }
     
-    // Check WiFi status change. Seed from the state already established during
-    // setupWiFi(), so the first loop iteration doesn't see a phantom transition
-    // and re-run the post-connect setup (which caused duplicate mDNS/OTA init).
+    // Detect the STA connect as a false->true edge. Seed from the current
+    // wifiConnected (false at boot, since setupWiFi() now connects in the
+    // background), so the first real connect is caught here and onWifiConnected()
+    // runs exactly once per edge (no duplicate mDNS/OTA init).
     static bool lastWifiState = wifiConnected;
     bool currentWifiState = (WiFi.status() == WL_CONNECTED);
     if (currentWifiState != lastWifiState) {
