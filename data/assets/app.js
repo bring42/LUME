@@ -836,7 +836,14 @@ function renderSettingsFromState() {
   const config = engine.state.config;
 
   if (info && info.firmware && info.firmware.version) {
-    $("#dFirmware").textContent = "v" + info.firmware.version;
+    const v = "v" + info.firmware.version;
+    $("#dFirmware").textContent = v;
+    const otaCurrent = $("#otaCurrent");
+    if (otaCurrent) otaCurrent.textContent = "Current: " + v;
+    const footerFirmware = $("#footerFirmware");
+    if (footerFirmware) footerFirmware.textContent = v;
+    const footerBuild = $("#footerBuild");
+    if (footerBuild && info.firmware.buildHash) footerBuild.textContent = "Build " + info.firmware.buildHash;
   }
   if (status) {
     if (status.uptime != null) {

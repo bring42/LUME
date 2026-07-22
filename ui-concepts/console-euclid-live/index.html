@@ -229,7 +229,7 @@
         <div class="row-3">
           <div class="readout-cell">
             <div class="rl">Firmware</div>
-            <div class="rv accent" id="dFirmware">v1.4.2</div>
+            <div class="rv accent" id="dFirmware">—</div>
           </div>
           <div class="readout-cell">
             <div class="rl">Uptime</div>
@@ -346,10 +346,14 @@
       <div class="rack-unit-body">
         <div class="ota-row">
           <div>
-            <div class="toggle-field-title">Current: v1.4.2</div>
+            <div class="toggle-field-title" id="otaCurrent">Current: —</div>
             <div class="helptext" id="otaStatus">Up to date. Last checked 3 hours ago.</div>
           </div>
           <button class="btn primary" id="otaBtn" type="button">Check for Update</button>
+        </div>
+        <div class="ota-actions" id="otaActions" style="gap:8px; margin-top:10px; display:none">
+          <button class="btn" id="otaBtnApp" type="button">Update firmware</button>
+          <button class="btn" id="otaBtnFs" type="button">Update web UI</button>
         </div>
         <div class="ota-progress" id="otaProgressWrap" style="display:none">
           <div class="ota-progress-fill" id="otaProgressFill"></div>
@@ -357,7 +361,7 @@
       </div>
     </div>
 
-    <div class="rack-footer">LUME Console · Rack Unit Firmware v1.4.2 · Serial LM-3391</div>
+    <div class="rack-footer">LUME Console · Rack Unit Firmware <span id="footerFirmware">—</span> · <span id="footerBuild">Build —</span></div>
 
   </section>
 

@@ -882,7 +882,10 @@
     var status = engine.state.status;
     $("#ledcount-value").textContent = engine.state.controller.ledCount;
     if (info && info.firmware) {
-      $("#info-firmware").textContent = "v" + info.firmware.version + (info.firmware.buildHash ? "—" + info.firmware.buildHash : "");
+      var fw = "v" + info.firmware.version + (info.firmware.buildHash ? "—" + info.firmware.buildHash : "");
+      $("#info-firmware").textContent = fw;
+      var otaCurrent = $("#ota-current");
+      if (otaCurrent) otaCurrent.textContent = fw;
     }
     if (status) {
       if (status.uptime != null) $("#info-uptime").textContent = formatUptime(status.uptime) || "—";

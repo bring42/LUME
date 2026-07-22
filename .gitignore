@@ -12,3 +12,6 @@ src/secrets.h
 
 # macOS
 .DS_Store
+
+# generated at buildfs/uploadfs/CI — not source
+data/**/*.gz
