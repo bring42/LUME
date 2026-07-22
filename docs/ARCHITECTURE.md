@@ -4,10 +4,6 @@ How the firmware is put together and the invariants that keep it correct. For
 day-to-day building and contributing, see [DEVELOPMENT.md](DEVELOPMENT.md); for
 adding an effect, see [ADDING_EFFECTS.md](ADDING_EFFECTS.md).
 
-> A longer pre-migration design proposal lives in
-> [archive/ARCHITECTURE.md](archive/ARCHITECTURE.md). This document describes the
-> system as it is actually built today.
-
 ---
 
 ## Big picture

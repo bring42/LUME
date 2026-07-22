@@ -15,6 +15,16 @@ bool Storage::begin() {
     return true; // Preferences doesn't need explicit init
 }
 
+bool Storage::isReady() {
+    StorageLock lock(mutex_);
+    // Actually probe NVS instead of assuming: open the config namespace read-only.
+    if (!prefs.begin(NAMESPACE_CONFIG, true)) {
+        return false;
+    }
+    prefs.end();
+    return true;
+}
+
 bool Storage::loadConfig(Config& config) {
     StorageLock lock(mutex_);
     if (!prefs.begin(NAMESPACE_CONFIG, true)) { // read-only

@@ -5,10 +5,6 @@ residue that this document used to track have been **removed** — the DELETE-NO
 cut-list was executed across PRs #7–#24 and the command bus is now the live mutation
 spine, not dead code.
 
-> The original point-in-time audit (an exhaustive symbol-level sweep, kept for its
-> historical value) is archived at **`archive/DEAD_CODE.md`**. Do not treat it as
-> current — most of what it lists is already gone.
-
 ## What was cleared (no longer in the tree)
 
 Verified absent from `src/` by grep:

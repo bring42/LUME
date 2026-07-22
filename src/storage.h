@@ -74,6 +74,10 @@ public:
     
     // Initialize storage
     bool begin();
+
+    // Probe whether persistent storage (NVS) is actually reachable.
+    // Real health signal for /health — NVS is opened lazily, so begin() alone proves nothing.
+    bool isReady();
     
     // Config operations
     bool loadConfig(Config& config);
