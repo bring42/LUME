@@ -62,9 +62,12 @@ and re-publishes (with cleanup) when the layout changes — so pairing = "flash 
 done", never "configure → pair → configure again". Do all three layers (JSON field +
 per-segment topics + discovery entity lifecycle) in one pass when picked up.
 
-### Firmware OTA — hardening follow-ups (feature shipped, UNTESTED on hardware)
-Pull-based GitHub OTA (app + FS, split, HTTPS + SHA-256 verify-before-commit) is
-implemented but not yet flashed on real silicon. Known hardening path, in priority order:
+### Firmware OTA — hardening follow-ups (app path HARDWARE-VALIDATED 2026-07-22; FS path untested)
+Pull-based GitHub OTA (app + FS, split, HTTPS + SHA-256 verify-before-commit). The **app**
+update is proven end-to-end on a Seeed XIAO ESP32-C3: v1.0.0 self-updated to v1.1.0
+(download over HTTPS from the GitHub release → SHA-256 verify → flash the inactive slot →
+clean reboot into the new image, healthy). The **FS** update path (`/api/firmware/update/fs`)
+is implemented but not yet exercised on hardware. Known hardening path, in priority order:
 1. **Self-heal rollback** — replace the unconditional `esp_ota_mark_app_valid_cancel_rollback()`
    on boot with a **self-test gate** (WiFi up? render loop ticking? storage reads?); on
    failure call the rollback-and-reboot sibling → bootloader reverts to the prior known-good
