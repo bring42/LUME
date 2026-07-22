@@ -92,8 +92,11 @@ std::atomic<bool> g_busy{false};
 // Live status, guarded by g_mutex.
 UpdateStatus g_status;
 
-// Resolved download targets from the last successful check. Touched only by the
-// worker task (single-threaded), so no lock needed.
+// Resolved download targets from the last successful check. Written by the worker
+// task; the web task reads only the word-atomic bool availability fields in
+// requestAppUpdate/requestFsUpdate. The g_busy CAS gate is the real serialization
+// (an apply can't proceed during a check), so those unsynchronized bool reads are
+// benign. Do NOT add a non-atomic field read cross-task here without a lock.
 struct Target {
     String  latest;
     String  appUrl, appSha;  size_t appSize = 0;

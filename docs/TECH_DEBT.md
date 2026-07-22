@@ -76,11 +76,22 @@ is implemented but not yet exercised on hardware. Known hardening path, in prior
    it downloaded, not that it boots" gap.
 2. **C3 flash headroom** — app slot ~90% full; if it ever bites, ship a custom partition CSV
    trading FS size for larger app slots.
-3. **Security** — currently `setInsecure()` + checksum only. Future: TLS cert pinning + code
-   signing / secure boot.
-4. **FS-flash-while-serving** — `serveStatic("/assets/")` reads LittleFS directly and isn't
-   gated by `updaterInProgress()`; worst case a garbled asset response mid-flash (non-brick,
-   recoverable). Replace with a guarded handler if it matters.
+3. **Security / LAN trust** — `setInsecure()` (no TLS cert validation) + checksum-only, and the
+   flash endpoints are UNAUTHENTICATED when no auth token is set (the default). Per the
+   2026-07-23 audit, a single on-path LAN attacker can *trigger* an update **and** MITM it (serve
+   a malicious image + a matching manifest checksum) → arbitrary firmware, no credentials.
+   **Interim mitigation: set an auth token** — that gates `/api/firmware/update/*` like the rest
+   of the API. Real fix: TLS cert pinning + code signing / secure boot. Treat AP/LAN as trusted
+   until then.
+4. ~~**FS-flash-while-serving**~~ (RESOLVED 2026-07-23) — `serveStatic("/assets/")` now carries a
+   `setFilter([]{ return !updaterInProgress(); })`, so asset reads fall through to the `onNotFound`
+   503 guard during an FS flash instead of reading a partition mid-erase.
+
+**Deferred from the 2026-07-23 branch audit (LOW / nits):** manifest fetched via unbounded
+`getString()` (MITM-gated OOM risk on the ~130 KB-heap C3 — add a size cap); the `applyTarget`
+poller can misreport a suspiciously-fast reboot as "failed" (`sawFlashing` never set — cosmetic,
+bounded); effect/palette **names** are rendered via `innerHTML` in both skins (pre-existing, NOT
+this branch — device is the same-origin trust root, but worth moving to `textContent`).
 
 ---
 

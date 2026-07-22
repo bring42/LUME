@@ -116,7 +116,12 @@ void setupServer() {
 
     if (webUiAvailable) {
         server.serveStatic("/assets/", LittleFS, "/assets/")
-            .setCacheControl("public, max-age=604800");
+            .setCacheControl("public, max-age=604800")
+            // During an OTA filesystem flash the LittleFS partition is mid-erase.
+            // Disable static serving then, so the request falls through to the
+            // updaterInProgress() 503 guard in onNotFound instead of reading a
+            // partition being actively overwritten (garbage/fault -> FS corruption).
+            .setFilter([](AsyncWebServerRequest*) { return !lume::updaterInProgress(); });
         LOG_INFO(LogTag::WEB, "Serving UI assets from LittleFS");
     } else {
         LOG_WARN(LogTag::WEB, "LittleFS not mounted; UI assets unavailable");

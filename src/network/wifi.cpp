@@ -89,21 +89,26 @@ void setupWiFi() {
 
 // Helper function for WiFi reconnection and status monitoring
 void handleWifiMaintenance() {
-    // WiFi reconnection logic. Skip it while a client is connected to the SoftAP:
-    // WiFi.begin() channel-hops the single radio to scan, which drops AP clients —
-    // so an unavailable saved network would kick anyone off the setup page every
-    // WIFI_RETRY_INTERVAL_MS. Resume reconnection once the AP is idle again.
-    if (!wifiConnected && config.wifiSSID.length() > 0 && WiFi.softAPgetStationNum() == 0) {
-        if (millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS) {
+    // WiFi reconnection logic. While a client is connected to the SoftAP, back OFF
+    // but do NOT stop: WiFi.begin() channel-hops the single radio to scan, which
+    // briefly drops AP clients (annoying mid-setup). Using a much longer interval
+    // instead of skipping entirely means an idle phone parked on the AP can't wedge
+    // the device offline forever if it drops its saved network (e.g. router reboot).
+    if (!wifiConnected && config.wifiSSID.length() > 0) {
+        uint32_t interval = (WiFi.softAPgetStationNum() > 0)
+                                ? WIFI_RETRY_INTERVAL_AP_BUSY_MS
+                                : WIFI_RETRY_INTERVAL_MS;
+        if (millis() - lastWifiAttempt > interval) {
             lastWifiAttempt = millis();
             LOG_INFO(LogTag::WIFI, "Attempting WiFi reconnection...");
             WiFi.begin(config.wifiSSID.c_str(), config.wifiPassword.c_str());
         }
     }
     
-    // Check WiFi status change. Seed from the state already established during
-    // setupWiFi(), so the first loop iteration doesn't see a phantom transition
-    // and re-run the post-connect setup (which caused duplicate mDNS/OTA init).
+    // Detect the STA connect as a false->true edge. Seed from the current
+    // wifiConnected (false at boot, since setupWiFi() now connects in the
+    // background), so the first real connect is caught here and onWifiConnected()
+    // runs exactly once per edge (no duplicate mDNS/OTA init).
     static bool lastWifiState = wifiConnected;
     bool currentWifiState = (WiFi.status() == WL_CONNECTED);
     if (currentWifiState != lastWifiState) {

@@ -44,6 +44,10 @@ constexpr uint16_t LED_MAX_MILLIAMPS        = 2000;  // Max current (adjust for 
 
 // Timeouts (milliseconds)
 constexpr uint32_t WIFI_RETRY_INTERVAL_MS   = 30000;
+// Slower reconnect cadence while a client is parked on the SoftAP: keeps a scan's
+// brief AP disruption rare during setup, while still letting the device recover on
+// its own if a saved network returns while an idle client is holding the AP.
+constexpr uint32_t WIFI_RETRY_INTERVAL_AP_BUSY_MS = 120000;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SYSTEM LIMITS & BUFFERS
@@ -64,7 +68,7 @@ constexpr uint8_t  UPDATER_TASK_PRIORITY     = 1;
 constexpr uint8_t  UPDATER_TASK_CORE         = 0;
 // Chunk size for streaming the downloaded image into Update.write + the hasher.
 constexpr size_t   UPDATER_CHUNK_SIZE        = 2048;
-// Guard: refuse to start a download the app slot obviously can't hold.
+// How long the updater waits on a stalled HTTP read before aborting the download.
 constexpr uint32_t UPDATER_HTTP_TIMEOUT_MS   = 20000;
 
 // System Timing

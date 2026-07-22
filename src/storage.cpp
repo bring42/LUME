@@ -17,8 +17,11 @@ bool Storage::begin() {
 
 bool Storage::isReady() {
     StorageLock lock(mutex_);
-    // Actually probe NVS instead of assuming: open the config namespace read-only.
-    if (!prefs.begin(NAMESPACE_CONFIG, true)) {
+    // Probe NVS by opening the config namespace read-WRITE: this succeeds whenever
+    // NVS is healthy (creating the namespace if it doesn't exist yet) and fails only
+    // when the partition is genuinely broken. A read-only open would false-negative
+    // on a factory-fresh device whose config namespace no save has created yet.
+    if (!prefs.begin(NAMESPACE_CONFIG, false)) {
         return false;
     }
     prefs.end();
