@@ -416,10 +416,55 @@
        Public mutations — optimistic local update + fire-and-forget write.
        ================================================================= */
 
+    // Premium easing durations (ms). Nothing in the UI should hard-snap:
+    //   DRAG   — short follow while a control is being dragged; because the
+    //            device re-eases from its current value, rapid re-targets read
+    //            as the light chasing your finger with a little inertia.
+    //   SETTLE — graceful ease when a control is released / a value committed.
+    //   POWER  — a touch heavier for on/off, so it feels deliberate.
+    // Tunable in one place; skins reference engine.TRANSITION. These are the
+    // "feel" of the whole UI — the Tuning settings section lets the user adjust
+    // them live via setTransition() below, persisted client-side (localStorage,
+    // per-browser: they shape interaction feel, not device state, so they belong
+    // with the client, not in NVS).
+    var TRANSITION = { DRAG: 150, SETTLE: 300, POWER: 400 };
+    var TRANSITION_LS_KEY = "lume.transition";
+    var TRANSITION_MAX_MS = 5000; // sane upper bound so a fat-fingered value can't wedge the UI
+
+    // Restore any saved duration overrides (best-effort; ignore malformed/absent).
+    (function loadTransitionOverrides() {
+      try {
+        var raw = global.localStorage && global.localStorage.getItem(TRANSITION_LS_KEY);
+        if (!raw) return;
+        var saved = JSON.parse(raw);
+        ["DRAG", "SETTLE", "POWER"].forEach(function (k) {
+          if (saved && typeof saved[k] === "number" && isFinite(saved[k])) {
+            TRANSITION[k] = clampInt(saved[k], 0, TRANSITION_MAX_MS);
+          }
+        });
+      } catch (e) { /* corrupt/blocked storage → keep defaults */ }
+    })();
+
+    // Live-tune a transition duration (ms). Updates engine.TRANSITION in place so
+    // every subsequent interaction uses the new feel immediately, and persists the
+    // set to localStorage. `key` is "DRAG" | "SETTLE" | "POWER".
+    function setTransition(key, ms) {
+      if (!TRANSITION.hasOwnProperty(key)) return;
+      TRANSITION[key] = clampInt(ms, 0, TRANSITION_MAX_MS);
+      try {
+        if (global.localStorage) {
+          global.localStorage.setItem(TRANSITION_LS_KEY, JSON.stringify(TRANSITION));
+        }
+      } catch (e) { /* storage blocked → in-memory only, still applies this session */ }
+    }
+
     // Optional transitionMs eases the strip on/off on-device (premium fade); the
     // brightness level is preserved across the toggle. Sent as Matter tenths.
+    // Defaults to a weighted power fade so a bare setPower() still eases; pass 0
+    // to force an instant snap.
     function setPower(on, transitionMs) {
       on = !!on;
+      if (transitionMs === undefined) transitionMs = TRANSITION.POWER;
       state.controller.power = on;
       notify();
       var body = { power: on };
@@ -616,6 +661,29 @@
         function (err) { return { ok: false, status: err.status }; });
     }
 
+    /* ---- gamma (perceptual dimming curve) ---- */
+    // Gamma is device state (persisted in NVS, applied on the render loop), so
+    // unlike the client-side TRANSITION durations it flows through /api/config.
+    // The one source of truth is state.config.gamma, populated by getConfig().
+    var GAMMA_MIN = 1.0, GAMMA_MAX = 3.5, GAMMA_DEFAULT = 2.2;
+
+    // Current gamma from device config, or the firmware default if unknown yet.
+    function getGamma() {
+      var g = state.config && state.config.gamma;
+      return (typeof g === "number" && isFinite(g)) ? g : GAMMA_DEFAULT;
+    }
+    // Set gamma: clamp to the firmware's sane range and persist via /api/config.
+    // The device re-applies it live on the render loop (single-writer command
+    // bus); resolves with { ok } like saveConfig. Snaps local state immediately.
+    function setGamma(v) {
+      v = Number(v);
+      if (!isFinite(v)) v = GAMMA_DEFAULT;
+      if (v < GAMMA_MIN) v = GAMMA_MIN;
+      if (v > GAMMA_MAX) v = GAMMA_MAX;
+      v = Math.round(v * 10) / 10; // 0.1 steps
+      return saveConfig({ gamma: v });
+    }
+
     /* ---- firmware auto-update (pull-based OTA) ---- */
     // The device does check/apply asynchronously (a worker runs the blocking
     // HTTPS transfer), so the flow is: trigger, then poll /api/firmware/status.
@@ -690,6 +758,9 @@
       state: state,
       on: on,
       start: start,
+      TRANSITION: TRANSITION,   // premium easing durations (ms); tune here
+      setTransition: setTransition,  // live-tune + persist a TRANSITION duration
+      GAMMA: { MIN: GAMMA_MIN, MAX: GAMMA_MAX, DEFAULT: GAMMA_DEFAULT }, // gamma bounds for UI
       // catalogue helpers
       effectById: effectById,
       paletteName: paletteName,
@@ -711,6 +782,8 @@
       sendPrompt: sendPrompt,
       getConfig: getConfig,
       saveConfig: saveConfig,
+      getGamma: getGamma,
+      setGamma: setGamma,
       checkFirmware: checkFirmware,
       updateFirmware: updateFirmware,
       updateWebUi: updateWebUi,

@@ -41,7 +41,16 @@ constexpr uint16_t LED_MAX_MILLIAMPS        = 2000;  // Max current (adjust for 
 // Human brightness perception is ~logarithmic, so without this a value-linear
 // fade looks dead at the top and rushes at the bottom. ~2.2 = sRGB/eye-ish;
 // 2.6–2.8 dims "deeper". Tune on hardware.
+//
+// This is the compile-time DEFAULT (seed). Gamma is runtime-adjustable: the
+// persisted config carries a `gamma` value, seeded from this at first boot, and
+// the render loop applies the controller's runtime member (LumeController::
+// setGamma) — so it can be tuned live from the web UI without a reflash.
 constexpr float    LED_GAMMA                = 2.2f;
+// Sane runtime range for live gamma tuning; clamped on both the API and the
+// controller so an out-of-range value can never reach the output stage.
+constexpr float    LED_GAMMA_MIN            = 1.0f;
+constexpr float    LED_GAMMA_MAX            = 3.5f;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NETWORK CONFIGURATION

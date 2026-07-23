@@ -39,6 +39,8 @@ enum class CommandType : uint8_t {
     SetPower,           // Power on/off
     SetGlobalBrightness,// Global brightness (eased when transitionMs > 0; the
                         // powerOffAtZero rider makes it a "nightlight")
+    SetGamma,           // Runtime perceptual-dimming gamma (see LED_GAMMA); applied
+                        // on the loop so the output stage never reads a torn value
 
     // Advanced
     ApplyEffectSpec,    // Apply AI-generated effect spec
@@ -156,6 +158,9 @@ struct Command {
         // Generic 32-bit value
         uint32_t value32;
 
+        // SetGamma — runtime perceptual-dimming exponent
+        float valueFloat;
+
         // ApplyEffectSpec — the compound segment mutation (create/update)
         EffectSpec spec;
     } data;
@@ -222,6 +227,16 @@ struct Command {
         cmd.type = CommandType::SetGlobalBrightness;
         cmd.segmentId = 255;  // Global
         cmd.data.value8 = brightness;
+        return cmd;
+    }
+
+    // Runtime gamma (perceptual-dimming exponent). Clamped on apply; see
+    // LED_GAMMA / LED_GAMMA_MIN / LED_GAMMA_MAX. Global (segment 255).
+    static Command setGamma(float gamma) {
+        Command cmd;
+        cmd.type = CommandType::SetGamma;
+        cmd.segmentId = 255;  // Global
+        cmd.data.valueFloat = gamma;
         return cmd;
     }
     

@@ -159,6 +159,19 @@ public:
         brightnessTransition_.start(target, durationMs, millis());
     }
 
+    // --- Runtime perceptual-dimming gamma ---
+
+    // Set the gamma exponent applied when encoding the eased perceptual level to
+    // PWM (see update()). Runtime-adjustable so it can be tuned live; clamped to
+    // [LED_GAMMA_MIN, LED_GAMMA_MAX] so the output stage never reads a wild
+    // value. Single-writer: drive via Command::setGamma so it lands on the loop.
+    void setGamma(float gamma) {
+        if (gamma < LED_GAMMA_MIN) gamma = LED_GAMMA_MIN;
+        if (gamma > LED_GAMMA_MAX) gamma = LED_GAMMA_MAX;
+        ledGamma_ = gamma;
+    }
+    float getGamma() const { return ledGamma_; }
+
     // --- Brightness-fade status (what "nightlight" reporting reduces to) ---
 
     // True while an eased brightness fade is in progress (a nightlight is just
@@ -253,6 +266,11 @@ private:
     // State
     bool power;
     uint8_t globalBrightness;
+
+    // Runtime perceptual-dimming exponent, applied in update() when encoding the
+    // eased level to PWM. Seeded from the LED_GAMMA compile constant in the ctor;
+    // updated live via setGamma() (single-writer, on the loop). See constants.h.
+    float ledGamma_;
 
     // Premium easing engine for global brightness. Owned + advanced only on the
     // render loop; snapped whenever brightness is hard-set so the two never

@@ -334,12 +334,62 @@
       </div>
     </div>
 
+    <!-- Feel / Tuning -->
+    <div class="rack-unit">
+      <div class="rack-unit-head">
+        <div class="title-group">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h13M21 18h-1"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="19" cy="18" r="2"/></svg>
+          <span class="rack-unit-title">06 · Feel / Tuning</span>
+        </div>
+        <span class="rack-led on"></span>
+      </div>
+      <div class="rack-unit-body">
+        <div class="helptext">Shape how the light moves. The durations are the eased <b>follow</b> while you drag a control, the graceful <b>settle</b> on release, and the deliberate <b>power</b> fade. <b>Gamma</b> bends the dimming curve so equal fader steps read as equal <em>perceived</em> steps.</div>
+
+        <div class="tune-field">
+          <span class="jack-label">Transition · Follow (drag)</span>
+          <input type="range" class="mini-slider" id="tuneDrag" min="0" max="1000" step="10" value="150" />
+          <span class="tune-val" id="tuneDragVal">150 ms</span>
+        </div>
+        <div class="tune-field">
+          <span class="jack-label">Transition · Settle (release)</span>
+          <input type="range" class="mini-slider" id="tuneSettle" min="0" max="1500" step="10" value="300" />
+          <span class="tune-val" id="tuneSettleVal">300 ms</span>
+        </div>
+        <div class="tune-field">
+          <span class="jack-label">Transition · Power</span>
+          <input type="range" class="mini-slider" id="tunePower" min="0" max="2000" step="10" value="400" />
+          <span class="tune-val" id="tunePowerVal">400 ms</span>
+        </div>
+        <div class="tune-field">
+          <span class="jack-label">Gamma · Dimming Curve</span>
+          <input type="range" class="mini-slider" id="tuneGamma" min="1.0" max="3.5" step="0.1" value="2.2" />
+          <span class="tune-val" id="tuneGammaVal">2.2</span>
+        </div>
+
+        <div class="tune-live">
+          <span class="jack-label">Feel it live — drives the real strip</span>
+          <div class="tune-field">
+            <span class="tune-scratch-cap">Scratch brightness</span>
+            <input type="range" class="mini-slider" id="tuneScratch" min="0" max="255" value="180" />
+            <span class="tune-val" id="tuneScratchVal">180</span>
+          </div>
+          <div class="btn-row" style="margin-top:11px">
+            <button class="btn" id="tuneSampleFade" type="button">Sample fade</button>
+            <button class="btn" id="tunePowerBlink" type="button">Power blink</button>
+            <button class="btn" id="tuneColorSweep" type="button">Color sweep</button>
+          </div>
+          <div class="helptext" id="tuneHint">Drag the scratch slider to feel the follow-then-settle on the master brightness; the buttons play a full-scale test on the strip using the durations above.</div>
+        </div>
+      </div>
+    </div>
+
     <!-- OTA -->
     <div class="rack-unit">
       <div class="rack-unit-head">
         <div class="title-group">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-          <span class="rack-unit-title">06 · Firmware Update</span>
+          <span class="rack-unit-title">07 · Firmware Update</span>
         </div>
         <span class="rack-led on"></span>
       </div>

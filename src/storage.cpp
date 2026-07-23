@@ -42,6 +42,8 @@ bool Storage::loadConfig(Config& config) {
     // Clamp on load too, in case NVS holds an out-of-range value (P0.2).
     config.ledCount = constrain((int)prefs.getUShort("ledcount", 160), 1, (int)MAX_LED_COUNT);
     config.defaultBrightness = prefs.getUChar("brightness", 128);
+    // Clamp on load too, in case NVS holds an out-of-range value.
+    config.gamma = constrain(prefs.getFloat("gamma", LED_GAMMA), LED_GAMMA_MIN, LED_GAMMA_MAX);
     config.sacnEnabled = prefs.getBool("sacn_en", false);
     config.sacnUniverse = prefs.getUShort("sacn_uni", 1);
     config.sacnUniverseCount = prefs.getUChar("sacn_ucnt", 1);
@@ -73,6 +75,7 @@ bool Storage::saveConfig(const Config& config) {
     prefs.putString("authtoken", config.authToken);
     prefs.putUShort("ledcount", config.ledCount);
     prefs.putUChar("brightness", config.defaultBrightness);
+    prefs.putFloat("gamma", config.gamma);
     prefs.putBool("sacn_en", config.sacnEnabled);
     prefs.putUShort("sacn_uni", config.sacnUniverse);
     prefs.putUChar("sacn_ucnt", config.sacnUniverseCount);
@@ -166,6 +169,7 @@ void Storage::configToJson(const Config& config, JsonDocument& doc, bool maskApi
     doc["authEnabled"] = config.authToken.length() > 0;
     doc["ledCount"] = config.ledCount;
     doc["defaultBrightness"] = config.defaultBrightness;
+    doc["gamma"] = config.gamma;
     doc["sacnEnabled"] = config.sacnEnabled;
     doc["sacnUniverse"] = config.sacnUniverse;
     doc["sacnUniverseCount"] = config.sacnUniverseCount;
@@ -216,6 +220,10 @@ bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
     }
     if (doc["defaultBrightness"].is<int>()) {
         config.defaultBrightness = doc["defaultBrightness"].as<uint8_t>();
+    }
+    if (doc["gamma"].is<float>()) {
+        // Clamp to the sane runtime range; the controller clamps again on apply.
+        config.gamma = constrain(doc["gamma"].as<float>(), LED_GAMMA_MIN, LED_GAMMA_MAX);
     }
     if (doc["sacnEnabled"].is<bool>()) {
         config.sacnEnabled = doc["sacnEnabled"].as<bool>();

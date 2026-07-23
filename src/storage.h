@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include "constants.h"   // LED_GAMMA (seed for the persisted gamma default)
 
 // RAII guard for Storage's NVS access. The single Preferences object is shared
 // across tasks (saveLastEffect from the web/AI task vs saveLedState from the
@@ -32,6 +33,7 @@ struct Config {
     String authToken;             // Optional API auth token (empty = no auth)
     uint16_t ledCount;
     uint8_t defaultBrightness;
+    float gamma;                  // Perceptual-dimming exponent (see LED_GAMMA)
     // sACN (E1.31) settings
     bool sacnEnabled;
     uint16_t sacnUniverse;        // Starting universe
@@ -55,6 +57,7 @@ struct Config {
         authToken(""),
         ledCount(160),
         defaultBrightness(128),
+        gamma(LED_GAMMA),
         sacnEnabled(false),
         sacnUniverse(1),
         sacnUniverseCount(1),

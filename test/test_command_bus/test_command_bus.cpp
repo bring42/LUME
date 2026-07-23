@@ -449,9 +449,40 @@ void test_led_output_is_pluggable() {
     TEST_ASSERT_TRUE(mock.lastBrightness < 42);                     // gamma pulled it down
 }
 
+// Runtime gamma flows through the single-writer bus: an enqueued value is
+// applied only when the loop drains the queue in update(), and out-of-range
+// values are clamped to [LED_GAMMA_MIN, LED_GAMMA_MAX]. A higher gamma must also
+// reach the output stage, pulling a mid level further down the curve.
+void test_gamma_via_bus_and_clamps() {
+    LumeController c;
+    MockOutput mock;
+    c.setLedOutput(&mock);
+    c.begin(60);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_GAMMA, c.getGamma());   // seeded from the compile default
+
+    c.enqueueCommand(Command::setGamma(2.8f));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_GAMMA, c.getGamma());   // deferred (single writer)
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.8f, c.getGamma());        // applied on the loop
+
+    // A mid level is encoded with the *runtime* gamma now (2.8, deeper than 2.2).
+    c.enqueueCommand(Command::setGlobalBrightness(128));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(applyGamma_video(128, 2.8f), mock.lastBrightness);
+
+    // Above range -> clamped to max; below range -> clamped to min.
+    c.enqueueCommand(Command::setGamma(9.0f));
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_GAMMA_MAX, c.getGamma());
+    c.enqueueCommand(Command::setGamma(0.1f));
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_GAMMA_MIN, c.getGamma());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_led_output_is_pluggable);
+    RUN_TEST(test_gamma_via_bus_and_clamps);
     RUN_TEST(test_serialize_segment_canonical_shape);
     RUN_TEST(test_create_is_deferred_then_applied);
     RUN_TEST(test_update_changes_params);

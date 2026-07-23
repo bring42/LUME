@@ -183,6 +183,7 @@ void setup() {
     LOG_INFO(LogTag::LED, "Initializing LED controller...");
     lume::controller.begin(config.ledCount);
     lume::controller.setBrightness(config.defaultBrightness);
+    lume::controller.setGamma(config.gamma);  // seed runtime gamma from persisted config
     
     // Register protocols with controller
     lume::controller.registerProtocol(&lume::sacnProtocol);

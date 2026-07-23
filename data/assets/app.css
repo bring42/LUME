@@ -1403,6 +1403,43 @@ input, button, textarea{ font-family: inherit; color: inherit; }
   margin-top: -12px;
 }
 
+/* Feel / Tuning section — slider rows + live-test block */
+.tune-field{
+  display: grid;
+  grid-template-columns: 1fr minmax(90px, 1.1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+.tune-field .jack-label{ margin: 0; }
+.tune-val{
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--c-amber);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 52px;
+}
+.tune-scratch-cap{
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--c-text-faint);
+}
+.tune-live{
+  border-top: var(--hair) solid var(--c-line-hair);
+  padding-top: 13px;
+  display: grid;
+  gap: 11px;
+}
+.tune-live .jack-label{ color: var(--c-text-dim); }
+@media (max-width: 480px){
+  .tune-field{ grid-template-columns: 1fr auto; }
+  .tune-field .mini-slider{ grid-column: 1 / -1; order: 3; }
+}
+
 /* footer */
 .rack-footer{
   text-align: center;

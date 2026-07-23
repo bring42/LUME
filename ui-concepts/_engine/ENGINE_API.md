@@ -86,7 +86,12 @@ hard-code a fixed control set per the old model.
 then write to the device fire-and-forget; the WS reconciles)
 
 ```
-setPower(bool, transitionMs?)         // transitionMs>0 = eased on/off fade (level preserved)
+setPower(bool, transitionMs?)         // defaults to engine.TRANSITION.POWER; pass 0 to snap
+                                      // eased on/off fade, brightness level preserved
+// engine.TRANSITION = { DRAG, SETTLE, POWER } ms — premium easing durations; skins
+// pass DRAG while dragging (light follows with inertia) and SETTLE on release.
+// These are client-side "feel" values, persisted per-browser in localStorage and
+// restored on load. Adjust them live with engine.setTransition(key, ms).
 setBrightness(0-255, transitionMs?)   // transitionMs>0 = premium eased fade on-device
                                       // (sent as Matter tenths-of-a-second `transition`)
 selectSegment(id)                     // client-only selection
@@ -103,6 +108,12 @@ stopNightlight()
 sendPrompt(text) → Promise<{ok, reason?}>  // reason: rate_limited|busy|bad_request|error
 getConfig() → Promise<config>         // for the settings view
 saveConfig(body) → Promise<{ok}>      // POST /api/config (see safety note)
+getGamma() → number                   // current dimming gamma (device config)
+setGamma(v) → Promise<{ok}>           // clamp to [1.0,3.5], persist via /api/config;
+                                      // device re-applies live on the render loop
+setTransition(key, ms)                // live-tune a TRANSITION duration ("DRAG"|
+                                      // "SETTLE"|"POWER"); updates engine.TRANSITION
+                                      // in place + persists to localStorage
 refreshSegments(), refreshStatus()
 util.normalizeHex, util.coerceColor, util.rgbArrayToHex, util.clampInt
 ```
@@ -121,7 +132,9 @@ util.normalizeHex, util.coerceColor, util.rgbArrayToHex, util.clampInt
 
 ### Settings write safety
 `saveConfig` posts to `/api/config`. Wiring `ledCount`, `aiApiKey`, `aiModel`,
-`mqttEnabled/mqttBroker/mqttPort`, `sacnEnabled` is safe (deferred/rebooted by
-firmware). **WiFi credential changes restart the device** — put those behind an
-explicit confirm, and never send a blank password (omit password fields to keep
-the current one). Populate the settings view from `getConfig()` + `state.status`.
+`mqttEnabled/mqttBroker/mqttPort`, `sacnEnabled`, `gamma` is safe. Most are
+deferred/rebooted by firmware; **`gamma` applies live** (the firmware re-adopts
+it on the render loop via the command bus — no reboot). **WiFi credential
+changes restart the device** — put those behind an explicit confirm, and never
+send a blank password (omit password fields to keep the current one). Populate
+the settings view from `getConfig()` + `state.status`.

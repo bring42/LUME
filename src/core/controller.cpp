@@ -24,6 +24,8 @@ LumeController::LumeController()
     , workbufferOwner_(-1)
     , power(true)
     , globalBrightness(255)
+    , ledGamma_(LED_GAMMA)          // runtime gamma, seeded from the compile default
+
     , powerOffWhenSettled_(false)
     , powerOffWhenFadeSettles_(false)
     , protocolCount_(0)
@@ -116,7 +118,7 @@ void LumeController::update() {
     // Gamma-encode to PWM just before the driver so that equal steps in the
     // (linearly-eased) perceptual level produce equal *perceived* steps — the
     // difference between a fade that reads dead at the top and one that glides.
-    output_->setBrightness(applyGamma_video(perceptual, LED_GAMMA));
+    output_->setBrightness(applyGamma_video(perceptual, ledGamma_));
 
     // Flip logical power off once a fade-out envelope reaches zero — this is
     // when we stop rendering (below) instead of burning cycles on a black frame.
@@ -259,7 +261,15 @@ void LumeController::executeCommand(const Command& cmd) {
             // The powerOffAtZero rider makes a fade-to-zero a "nightlight".
             setBrightnessEased(cmd.data.value8, cmd.transitionMs, cmd.powerOffAtZero);
             break;
-            
+
+        case CommandType::SetGamma:
+            // Runtime perceptual-dimming gamma. Applied on the loop (single
+            // writer) so update()'s output-encode never reads a torn value.
+            // setGamma() clamps to [LED_GAMMA_MIN, LED_GAMMA_MAX].
+            setGamma(cmd.data.valueFloat);
+            LOG_INFO(LogTag::LED, "Gamma -> %.2f", ledGamma_);
+            break;
+
         case CommandType::ApplyEffectSpec: {
             // Compound segment mutation (create/update) — the single-writer path
             // that replaces direct handler mutation (RFC 0001 §3).

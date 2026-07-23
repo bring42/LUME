@@ -145,7 +145,9 @@ function setFaderFromClientX(clientX) {
   const rect = faderEl.getBoundingClientRect();
   const pad = 9;
   const pct = clamp((clientX - rect.left - pad) / (rect.width - pad * 2), 0, 1);
-  engine.setBrightness(Math.round(pct * 255));
+  // Short follow while dragging: the light chases the fader with a little
+  // inertia (device re-eases from its current value) instead of snapping.
+  engine.setBrightness(Math.round(pct * 255), engine.TRANSITION.DRAG);
 }
 faderEl.addEventListener("pointerdown", (e) => {
   faderDragging = true;
@@ -161,6 +163,9 @@ function endFaderDrag() {
   if (!faderDragging) return;
   faderDragging = false;
   faderEl.classList.remove("dragging");
+  // Graceful settle on release: re-ease from wherever the follow left off to
+  // the final value over the longer settle window.
+  engine.setBrightness(engine.state.controller.brightness, engine.TRANSITION.SETTLE);
 }
 faderEl.addEventListener("pointerup", endFaderDrag);
 faderEl.addEventListener("pointercancel", endFaderDrag);
@@ -584,7 +589,7 @@ function buildColorUnit(seg, p) {
     hexLabel.textContent = e.target.value.toUpperCase();
   });
   native.addEventListener("change", (e) => {
-    engine.setParam(seg.id, p.id, e.target.value);
+    engine.setParam(seg.id, p.id, e.target.value, engine.TRANSITION.SETTLE);
   });
   return unit;
 }
@@ -657,7 +662,7 @@ function buildKnobUnit(seg, p) {
     unit._dragging = false;
     knobEl.style.cursor = "grab";
     if (unit._pendingVal != null) {
-      engine.setParam(seg.id, p.id, unit._pendingVal);
+      engine.setParam(seg.id, p.id, unit._pendingVal, engine.TRANSITION.SETTLE);
       unit._pendingVal = null;
     }
   }
@@ -675,7 +680,7 @@ function buildKnobUnit(seg, p) {
     clearTimeout(wheelCommitTimer);
     wheelCommitTimer = setTimeout(() => {
       if (unit._pendingVal != null) {
-        engine.setParam(seg.id, p.id, unit._pendingVal);
+        engine.setParam(seg.id, p.id, unit._pendingVal, engine.TRANSITION.SETTLE);
         unit._pendingVal = null;
       }
     }, 300);
@@ -879,6 +884,32 @@ function renderSettingsFromState() {
     }
     if (config.sacnUniverse) $("#sacnUniverse").value = config.sacnUniverse;
   }
+
+  renderTuningFromState();
+}
+
+/* ---------------------------------------------------------------------
+   Feel / Tuning — reflects the current durations (engine.TRANSITION,
+   client-side + persisted) and gamma (device config). Populated whenever
+   the settings view renders; committed live by the handlers below.
+   -------------------------------------------------------------------- */
+
+function renderTuningFromState() {
+  const T = engine.TRANSITION;
+  const set = (slider, label, val, suffix) => {
+    const s = $(slider), l = $(label);
+    // Don't fight the user mid-drag.
+    if (s && document.activeElement !== s) s.value = val;
+    if (l) l.textContent = val + suffix;
+  };
+  set("#tuneDrag", "#tuneDragVal", T.DRAG, " ms");
+  set("#tuneSettle", "#tuneSettleVal", T.SETTLE, " ms");
+  set("#tunePower", "#tunePowerVal", T.POWER, " ms");
+
+  const g = engine.getGamma();
+  const gs = $("#tuneGamma"), gl = $("#tuneGammaVal");
+  if (gs && document.activeElement !== gs) gs.value = g;
+  if (gl) gl.textContent = Number(g).toFixed(1);
 }
 
 $("#ledCount").addEventListener("change", (e) => {
@@ -1026,6 +1057,142 @@ $("#sacnUniverse").addEventListener("change", (e) => {
       "briefly offline. If interrupted, the UI may need re-flashing (recoverable). " +
       "Do NOT power it off during the update.")) return;
     runApply("fs", engine.updateWebUi, "Web UI");
+  });
+})();
+
+/* ---------------------------------------------------------------------
+   Feel / Tuning handlers — durations tune engine.TRANSITION live (and
+   persist via the engine); gamma persists to device config (applied live
+   on the render loop). The "feel it" triggers drive the REAL strip through
+   engine.* so the user can judge the settings on the hardware as they tune.
+   -------------------------------------------------------------------- */
+
+(function wireTuning() {
+  // --- duration sliders: apply on input so the very next interaction uses it ---
+  const durMap = [
+    ["#tuneDrag", "#tuneDragVal", "DRAG"],
+    ["#tuneSettle", "#tuneSettleVal", "SETTLE"],
+    ["#tunePower", "#tunePowerVal", "POWER"],
+  ];
+  durMap.forEach(([slider, label, key]) => {
+    const s = $(slider);
+    if (!s) return;
+    s.addEventListener("input", (e) => {
+      const v = +e.target.value;
+      $(label).textContent = v + " ms";
+      engine.setTransition(key, v);
+    });
+  });
+
+  // --- gamma: preview readout while dragging, commit (device write) on release ---
+  const gEl = $("#tuneGamma");
+  if (gEl) {
+    gEl.addEventListener("input", (e) => {
+      $("#tuneGammaVal").textContent = Number(e.target.value).toFixed(1);
+    });
+    gEl.addEventListener("change", (e) => {
+      const v = Number(e.target.value);
+      engine.setGamma(v).then((res) => {
+        showToast(res && res.ok ? `Gamma → ${v.toFixed(1)}` : "Failed to save gamma");
+      });
+    });
+  }
+
+  // --- scratch brightness: exactly the master fader's feel (DRAG follow, SETTLE release) ---
+  const scratch = $("#tuneScratch");
+  if (scratch) {
+    scratch.addEventListener("input", (e) => {
+      const v = +e.target.value;
+      $("#tuneScratchVal").textContent = v;
+      engine.setBrightness(v, engine.TRANSITION.DRAG);
+    });
+    scratch.addEventListener("change", () => {
+      engine.setBrightness(engine.state.controller.brightness, engine.TRANSITION.SETTLE);
+    });
+    // Keep the scratch slider in sync when brightness changes elsewhere.
+    engine.on("change", () => {
+      if (document.activeElement !== scratch) {
+        scratch.value = engine.state.controller.brightness;
+        $("#tuneScratchVal").textContent = engine.state.controller.brightness;
+      }
+    });
+  }
+
+  // --- sequenced live tests. A single guard stops overlapping runs. ---
+  let testBusy = false;
+  const btns = ["#tuneSampleFade", "#tunePowerBlink", "#tuneColorSweep"].map($);
+  function lockTests(on) {
+    testBusy = on;
+    btns.forEach((b) => { if (b) b.disabled = on; });
+  }
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Full → dim → back, each leg using the current SETTLE duration, so the user
+  // watches a full-scale eased brightness move on the strip.
+  $("#tuneSampleFade") && $("#tuneSampleFade").addEventListener("click", async () => {
+    if (testBusy) return;
+    lockTests(true);
+    const start = engine.state.controller.brightness;
+    const S = engine.TRANSITION.SETTLE;
+    const leg = Math.max(S, 200) + 120;
+    try {
+      engine.setBrightness(255, S); await wait(leg);
+      engine.setBrightness(30, S);  await wait(leg);
+      engine.setBrightness(start, S);
+      showToast("Sample fade");
+    } finally { await wait(leg); lockTests(false); }
+  });
+
+  // Off then back on, using the current POWER fade both ways.
+  $("#tunePowerBlink") && $("#tunePowerBlink").addEventListener("click", async () => {
+    if (testBusy) return;
+    lockTests(true);
+    const wasOn = engine.state.controller.power;
+    const P = engine.TRANSITION.POWER;
+    const leg = Math.max(P, 200) + 150;
+    try {
+      engine.setPower(false, P); await wait(leg);
+      engine.setPower(true, P);  await wait(leg);
+      if (!wasOn) { await wait(80); engine.setPower(false, P); } // restore prior state
+      showToast("Power blink");
+    } finally { lockTests(false); }
+  });
+
+  // Crossfade the selected channel through a few hues (eased on-device via
+  // setParam transition), then restore. Falls back to cycling palette presets
+  // for palette-driven effects; no-op with a nudge if the effect has neither.
+  const SWEEP_HUES = ["#ff3b3b", "#ffb23b", "#3bff6a", "#3bd0ff", "#7a3bff"];
+  $("#tuneColorSweep") && $("#tuneColorSweep").addEventListener("click", async () => {
+    if (testBusy) return;
+    const seg = engine.selectedSegment();
+    const eff = seg && engine.effectById(seg.effect);
+    if (!seg || !eff) return;
+    const colorParam = eff.params.find((p) => p.type === "color");
+    const S = engine.TRANSITION.SETTLE;
+    const leg = Math.max(S, 200) + 150;
+    lockTests(true);
+    try {
+      if (colorParam) {
+        const original = seg.params[colorParam.id];
+        for (const hue of SWEEP_HUES) {
+          engine.setParam(seg.id, colorParam.id, hue, S);
+          await wait(leg);
+        }
+        engine.setParam(seg.id, colorParam.id, original, S);
+        showToast(`Color sweep · CH ${seg.id + 1}`);
+      } else if (eff.usesPalette) {
+        const original = seg._paletteIndex != null ? seg._paletteIndex : 0;
+        const n = engine.state.palettes.length;
+        for (let i = 0; i < Math.min(5, n); i++) {
+          engine.setPalette(seg.id, i % n);
+          await wait(leg);
+        }
+        engine.setPalette(seg.id, original);
+        showToast(`Palette sweep · CH ${seg.id + 1}`);
+      } else {
+        showToast("This channel has no color to sweep");
+      }
+    } finally { await wait(leg); lockTests(false); }
   });
 })();
 
