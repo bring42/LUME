@@ -107,14 +107,16 @@ void LumeController::update() {
         LOG_INFO(LogTag::LED, "Brightness fade settled -> power off");
     }
 
-    // Advance the power on/off envelope and apply the composed output brightness:
-    // the user's level scaled by the fade envelope (255 = fully on, 0 = off). The
-    // level stays pristine, so a power toggle never loses the set brightness.
+    // Compose the perceptual output level: the user's level scaled by the power
+    // fade envelope (255 = fully on, 0 = off), all still in perceptual space.
+    // globalBrightness stays pristine, so a power toggle never loses the level.
     uint8_t powerEnv = powerFade_.advance(now);
-    // At full envelope the output is exactly the level (no scale8 rounding, and
-    // identical to the pre-envelope behaviour); only compose during a fade.
-    output_->setBrightness(powerEnv == 255 ? globalBrightness
-                                           : scale8(globalBrightness, powerEnv));
+    uint8_t perceptual = (powerEnv == 255) ? globalBrightness
+                                           : scale8(globalBrightness, powerEnv);
+    // Gamma-encode to PWM just before the driver so that equal steps in the
+    // (linearly-eased) perceptual level produce equal *perceived* steps — the
+    // difference between a fade that reads dead at the top and one that glides.
+    output_->setBrightness(applyGamma_video(perceptual, LED_GAMMA));
 
     // Flip logical power off once a fade-out envelope reaches zero — this is
     // when we stop rendering (below) instead of burning cycles on a black frame.

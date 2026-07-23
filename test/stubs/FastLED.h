@@ -100,6 +100,15 @@ inline uint8_t map8(uint8_t in, uint8_t rangeStart, uint8_t rangeEnd) {
     return rangeStart + scale8(in, rangeEnd - rangeStart);
 }
 
+// Perceptual gamma encode, matching FastLED's colorutils applyGamma_video:
+// (b/255)^gamma * 255, never dropping a positive input to zero.
+inline uint8_t applyGamma_video(uint8_t brightness, float gamma) {
+    float adj = powf((float)brightness / 255.0f, gamma) * 255.0f;
+    uint8_t result = (uint8_t)adj;
+    if (brightness > 0 && result == 0) result = 1;
+    return result;
+}
+
 // --- Driver: chipset templates, color correction, and the CFastLED object. ---
 enum EOrder { RGB = 0x012, RBG = 0x021, GRB = 0x102, GBR = 0x120, BRG = 0x201, BGR = 0x210 };
 

@@ -438,9 +438,15 @@ void test_led_output_is_pluggable() {
     c.update();                                    // a render frame -> show() on the driver
     TEST_ASSERT_TRUE(mock.shows > showsBefore);
 
+    // Brightness reaches the driver gamma-encoded (perceptual dimming): full
+    // stays full, but a mid/low level is pulled down along the gamma curve.
+    c.enqueueCommand(Command::setGlobalBrightness(255));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastBrightness);              // full = full
     c.enqueueCommand(Command::setGlobalBrightness(42));
     c.update();
-    TEST_ASSERT_EQUAL_UINT8(42, mock.lastBrightness);  // brightness routed to the driver
+    TEST_ASSERT_EQUAL_UINT8(applyGamma_video(42, LED_GAMMA), mock.lastBrightness);
+    TEST_ASSERT_TRUE(mock.lastBrightness < 42);                     // gamma pulled it down
 }
 
 int main(int, char**) {

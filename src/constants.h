@@ -35,6 +35,14 @@ constexpr uint16_t MAX_LED_COUNT            = 1000;
 constexpr uint8_t  LED_VOLTAGE              = 5;     // LED strip voltage
 constexpr uint16_t LED_MAX_MILLIAMPS        = 2000;  // Max current (adjust for PSU)
 
+// Perceptual dimming. Global brightness is treated as a *perceptual* level and
+// eased linearly; the output is gamma-encoded (output = (level/255)^GAMMA) just
+// before FastLED so equal steps in the fade produce equal *perceived* steps.
+// Human brightness perception is ~logarithmic, so without this a value-linear
+// fade looks dead at the top and rushes at the bottom. ~2.2 = sRGB/eye-ish;
+// 2.6–2.8 dims "deeper". Tune on hardware.
+constexpr float    LED_GAMMA                = 2.2f;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // NETWORK CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
