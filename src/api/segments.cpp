@@ -328,7 +328,17 @@ void handleApiV2SegmentUpdate(AsyncWebServerRequest* request, uint8_t* data, siz
         lume::EffectSpec spec = {};
         populateEffectSpecFromBody(spec, doc, /*currentEffect=*/seg->getEffect());
 
-        lume::controller.enqueueCommand(lume::Command::applyEffectSpec(id, spec));
+        // Optional premium eased transition (Matter-shaped: tenths of a second).
+        // The loop eases continuous params/colors over this window; discrete
+        // params and effect changes still snap. 0/absent = instant.
+        uint32_t transitionMs = 0;
+        if (doc["transition"].is<int>()) {
+            transitionMs = lume::transitionTenthsToMs(
+                (uint16_t)constrain(doc["transition"].as<int>(), 0, 65535));
+        }
+
+        lume::controller.enqueueCommand(
+            lume::Command::applyEffectSpec(id, spec).withTransition(transitionMs));
 
         request->send(202, "application/json", "{\"status\":\"accepted\"}");
         LOG_INFO(LogTag::LED, "Enqueued segment %d update", id);

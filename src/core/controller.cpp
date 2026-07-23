@@ -144,10 +144,10 @@ void LumeController::update() {
     // while still blacking out uncovered pixels (gaps, removed segments).
     clearUncoveredLeds();
 
-    // Update all active segments
+    // Update all active segments. `now` drives per-segment param/color easing.
     for (uint8_t i = 0; i < segmentCount; i++) {
         if (segments[i].isActive()) {
-            segments[i].update(frameCounter);
+            segments[i].update(frameCounter, now);
         }
     }
     
@@ -253,6 +253,15 @@ void LumeController::executeCommand(const Command& cmd) {
             }
             if (!target) break;  // update targeting an unknown segment
 
+            // Ease the param/color change when the command asks for it — but
+            // only for an in-place update of an existing effect. A create or an
+            // effect *change* has nothing coherent to ease from (new schema /
+            // freshly-defaulted params), so those snap. setEffect() below also
+            // cancels any transition, so snapshot BEFORE it.
+            bool easeParams = cmd.transitionMs > 0 && !spec.create && !spec.hasEffect;
+            uint32_t nowMs = millis();
+            if (easeParams) target->snapshotParamsForTransition(nowMs);
+
             if (spec.hasEffect)     target->setEffect(spec.effectId);
             if (spec.hasParams)     target->getParamValues().setSlots(spec.slots);
             // Semantic params (AI path) resolve param names on the loop.
@@ -263,6 +272,8 @@ void LumeController::executeCommand(const Command& cmd) {
             }
             if (spec.hasPalette)    target->setPalette(static_cast<PalettePreset>(spec.palette));
             if (spec.hasBrightness) target->setBrightness(spec.brightness);
+
+            if (easeParams) target->startParamTransition(cmd.transitionMs, nowMs);
             break;
         }
 

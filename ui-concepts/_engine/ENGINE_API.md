@@ -91,7 +91,9 @@ setBrightness(0-255, transitionMs?)   // transitionMs>0 = premium eased fade on-
                                       // (sent as Matter tenths-of-a-second `transition`)
 selectSegment(id)                     // client-only selection
 setEffect(id, effectId)               // resets params to schema defaults
-setParam(id, paramId, value)          // sends the WHOLE params object for you
+setParam(id, paramId, value, transitionMs?)  // whole params object; transitionMs>0
+                                      // eases continuous params/colors on-device
+                                      // (discrete params + effect changes snap)
 setPalette(id, paletteIndex)          // top-level int; updates _paletteIndex
 setSegmentBrightness(id, 0-255)
 createSegment({start, length, effect?, palette?, reverse?})

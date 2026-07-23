@@ -51,6 +51,21 @@ static EffectSpec makeCreateSpec(uint16_t start, uint16_t length, uint8_t speed)
     return spec;
 }
 
+// A recording effect: captures the param values it is actually rendered with,
+// so a test can prove the loop feeds it *interpolated* params during a
+// transition (slot 0 = Int level, slot 1 = Color).
+static uint8_t g_recInt = 0;
+static CRGB    g_recColor;
+static void recfx(SegmentView&, const ParamValues& p, uint32_t, bool) {
+    g_recInt = p.getInt(0);
+    g_recColor = p.getColor(1);
+}
+DEFINE_EFFECT_SCHEMA(kRecSchema,
+    ParamDesc::Int("level", "Level", 0, 0, 255),
+    ParamDesc::Color("color", "Color", CRGB(0, 0, 0))
+);
+REGISTER_EFFECT_SCHEMA(recfx, "recfx", "Rec FX", Animated, kRecSchema, 0);
+
 void setUp() {}
 void tearDown() {}
 
@@ -175,6 +190,61 @@ void test_manual_set_clears_power_off_rider() {
     for (int i = 0; i < 50 && c.isBrightnessFading(); i++) c.update();
     TEST_ASSERT_TRUE(c.getPower());             // never powered off
     TEST_ASSERT_EQUAL_UINT8(200, c.getBrightness());
+}
+
+// An eased ApplyEffectSpec update interpolates continuous params/colors over the
+// transition window rather than snapping — the effect is rendered with values
+// strictly between old and new before landing exactly on the target.
+void test_param_transition_eases_then_lands() {
+    LumeController c;
+    c.begin(60);
+
+    // Create a full-strip segment running recfx (level defaults to 0, black).
+    EffectSpec create = {};
+    create.create = true; create.start = 0; create.length = 60;
+    create.hasEffect = true; std::strcpy(create.effectId, "recfx");
+    c.enqueueCommand(Command::applyEffectSpec(255, create));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(0, g_recInt);   // starts at the default
+
+    // Eased update: level 0 -> 200, color black -> red, over 4s.
+    EffectSpec upd = {};
+    upd.hasParams = true;
+    upd.slots[0].intVal = 200;
+    upd.slots[1].colorVal = CRGB(255, 0, 0);
+    c.enqueueCommand(Command::applyEffectSpec(0, upd).withTransition(4000));
+    c.update();  // apply the command -> transition starts
+    TEST_ASSERT_TRUE(c.getSegment(0)->isParamsTransitioning());
+
+    bool sawIntermediate = false;
+    for (int i = 0; i < 80 && c.getSegment(0)->isParamsTransitioning(); i++) {
+        c.update();
+        if (g_recInt > 0 && g_recInt < 200) sawIntermediate = true;
+    }
+
+    TEST_ASSERT_TRUE(sawIntermediate);          // eased, did not snap
+    TEST_ASSERT_EQUAL_UINT8(200, g_recInt);     // landed exactly
+    TEST_ASSERT_EQUAL_UINT8(255, g_recColor.r); // color reached red
+    TEST_ASSERT_EQUAL_UINT8(0,   g_recColor.g);
+    TEST_ASSERT_EQUAL_UINT8(0,   g_recColor.b);
+}
+
+// An eased spec that also *changes the effect* must snap (new schema / defaults
+// — nothing coherent to ease from), never leaving a transition running.
+void test_effect_change_ignores_transition() {
+    LumeController c;
+    c.begin(60);
+    EffectSpec create = {};
+    create.create = true; create.start = 0; create.length = 60;
+    create.hasEffect = true; std::strcpy(create.effectId, "recfx");
+    c.enqueueCommand(Command::applyEffectSpec(255, create));
+    c.update();
+
+    EffectSpec chg = {};
+    chg.hasEffect = true; std::strcpy(chg.effectId, "testfx");
+    c.enqueueCommand(Command::applyEffectSpec(0, chg).withTransition(4000));
+    c.update();
+    TEST_ASSERT_FALSE(c.getSegment(0)->isParamsTransitioning());
 }
 
 // The AI path carries semantic params (speed/color) that resolve to schema slots
@@ -353,6 +423,8 @@ int main(int, char**) {
     RUN_TEST(test_fade_to_zero_rider_powers_off);
     RUN_TEST(test_fade_to_dim_stays_on);
     RUN_TEST(test_manual_set_clears_power_off_rider);
+    RUN_TEST(test_param_transition_eases_then_lands);
+    RUN_TEST(test_effect_change_ignores_transition);
     RUN_TEST(test_ai_semantic_params_via_bus);
     RUN_TEST(test_setcolor_maps_index_to_ordered_color_slot);
     RUN_TEST(test_enumeration_survives_middle_delete);

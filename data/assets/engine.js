@@ -457,8 +457,10 @@
     }
 
     // Change ONE param. We send the COMPLETE params object (whole-object
-    // semantics) so no sibling param is reset to its default.
-    function setParam(id, key, value) {
+    // semantics) so no sibling param is reset to its default. Optional
+    // transitionMs eases continuous params/colors on-device (skins opt in, e.g.
+    // on slider release; discrete params snap regardless).
+    function setParam(id, key, value, transitionMs) {
       var seg = segmentById(id);
       if (!seg) return;
       var eff = effectById(seg.effect);
@@ -479,7 +481,9 @@
       params[key] = value;
       seg.params = params;
       notify();
-      fireWrite("/api/v2/segments/" + id, "PUT", { params: params });
+      var body = { params: params };
+      if (transitionMs > 0) body.transition = Math.round(transitionMs / 100);
+      fireWrite("/api/v2/segments/" + id, "PUT", body);
     }
 
     // Palette is a top-level integer, tracked client-side (device never echoes).

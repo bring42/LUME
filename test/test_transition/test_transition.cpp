@@ -141,6 +141,46 @@ void test_now_before_start_clamps() {
     TEST_ASSERT_TRUE(b.isActive());
 }
 
+// --- Transition (bare timer) + lerp helpers, used for param/color easing ---
+
+void test_transition_timer_lifecycle() {
+    Transition tr;
+    TEST_ASSERT_FALSE(tr.isActive());
+    tr.start(0, 0);                       // zero duration = snap, never active
+    TEST_ASSERT_FALSE(tr.isActive());
+
+    tr.start(1000, 0);
+    TEST_ASSERT_TRUE(tr.isActive());
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, tr.eased(0));      // t=0
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, tr.linearProgress(500));
+    TEST_ASSERT_TRUE(tr.eased(500) < 0.5f + 0.001f);         // eased <= linear-ish
+    // Reaching the end returns 1.0 and auto-deactivates.
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, tr.eased(1000));
+    TEST_ASSERT_FALSE(tr.isActive());
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, tr.eased(1200));           // idle -> 1.0
+}
+
+void test_transition_now_before_start_clamps() {
+    Transition tr;
+    tr.start(1000, 1000);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, tr.eased(900));   // clamped, still active
+    TEST_ASSERT_TRUE(tr.isActive());
+}
+
+void test_lerp_u8_endpoints_and_rounding() {
+    TEST_ASSERT_EQUAL_UINT8(0,   lerpU8(0, 200, 0.0f));      // exact start
+    TEST_ASSERT_EQUAL_UINT8(200, lerpU8(0, 200, 1.0f));      // exact end
+    TEST_ASSERT_EQUAL_UINT8(100, lerpU8(0, 200, 0.5f));      // rounded midpoint
+    TEST_ASSERT_EQUAL_UINT8(100, lerpU8(200, 0, 0.5f));      // symmetric downward
+    TEST_ASSERT_EQUAL_UINT8(255, lerpU8(255, 255, 0.3f));    // no drift when equal
+}
+
+void test_lerp_f32() {
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, lerpF32(0.0f, 1.0f, 0.0f));
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, lerpF32(0.0f, 1.0f, 1.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.25f, lerpF32(0.0f, 1.0f, 0.25f));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_tenths_to_ms);
@@ -153,5 +193,9 @@ int main(int, char**) {
     RUN_TEST(test_retarget_midflight_no_jump);
     RUN_TEST(test_progress_is_linear_time_not_eased_value);
     RUN_TEST(test_now_before_start_clamps);
+    RUN_TEST(test_transition_timer_lifecycle);
+    RUN_TEST(test_transition_now_before_start_clamps);
+    RUN_TEST(test_lerp_u8_endpoints_and_rounding);
+    RUN_TEST(test_lerp_f32);
     return UNITY_END();
 }

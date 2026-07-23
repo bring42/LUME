@@ -132,6 +132,68 @@ private:
     bool     active_;
 };
 
+/**
+ * Transition — a bare eased timer with no value of its own.
+ *
+ * Where EasedU8 owns and interpolates one scalar, Transition just tracks a time
+ * window; the caller applies the eased fraction to as many values as it likes
+ * (e.g. every continuous slot of a segment's ParamValues). Same single-writer /
+ * clock-injected contract, and deliberately FastLED-free so this header stays
+ * host-testable with only <stdint.h>.
+ */
+class Transition {
+public:
+    Transition() : startMs_(0), durationMs_(0), active_(false) {}
+
+    // Begin a window of `durationMs`. Zero duration leaves it inactive (snap).
+    void start(uint32_t durationMs, uint32_t nowMs) {
+        if (durationMs == 0) { active_ = false; return; }
+        startMs_ = nowMs;
+        durationMs_ = durationMs;
+        active_ = true;
+    }
+
+    void stop() { active_ = false; }
+    bool isActive() const { return active_; }
+
+    // Linear fraction of the window elapsed, in [0,1]; 1.0 when settled/idle.
+    float linearProgress(uint32_t nowMs) const {
+        if (!active_ || durationMs_ == 0) return 1.0f;
+        uint32_t elapsed = (nowMs > startMs_) ? (nowMs - startMs_) : 0u;
+        if (elapsed >= durationMs_) return 1.0f;
+        return static_cast<float>(elapsed) / static_cast<float>(durationMs_);
+    }
+
+    // Eased fraction in [0,1] for lerping. Auto-deactivates once the window
+    // elapses (so the caller can gate on isActive() and render the target
+    // directly afterwards). Clamps to 0 if `nowMs` precedes the start.
+    float eased(uint32_t nowMs) {
+        if (!active_) return 1.0f;
+        uint32_t elapsed = (nowMs > startMs_) ? (nowMs - startMs_) : 0u;
+        if (elapsed >= durationMs_) { active_ = false; return 1.0f; }
+        return easeInOutCubic(static_cast<float>(elapsed) / static_cast<float>(durationMs_));
+    }
+
+private:
+    uint32_t startMs_;
+    uint32_t durationMs_;
+    bool     active_;
+};
+
+// Rounded linear interpolation of a uint8 (per-channel color, Int params). t is
+// expected in [0,1]; rounds toward the endpoint so both ends are exact.
+inline uint8_t lerpU8(uint8_t a, uint8_t b, float t) {
+    int32_t d = static_cast<int32_t>(b) - static_cast<int32_t>(a);
+    float rounding = (d >= 0) ? 0.5f : -0.5f;
+    int32_t v = static_cast<int32_t>(a) + static_cast<int32_t>(d * t + rounding);
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    return static_cast<uint8_t>(v);
+}
+
+// Linear interpolation of a float (Float params, range 0..1).
+inline float lerpF32(float a, float b, float t) { return a + (b - a) * t; }
+
 } // namespace lume
 
 #endif // LUME_TRANSITION_H
