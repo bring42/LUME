@@ -71,110 +71,95 @@ void LumeController::begin(uint16_t count) {
 }
 
 void LumeController::update() {
-    // Frame rate limiting
     uint32_t now = millis();
     uint32_t frameInterval = 1000 / targetFps;
-    
-    if (now - lastFrameTime < frameInterval) {
-        return;  // Not time for next frame yet
-    }
-    lastFrameTime = now;
-    
-    // Process any pending commands (single-writer model)
-    processCommands();
-    
-    // FPS calculation
-    fpsFrameCount++;
-    if (now - fpsUpdateTime >= 1000) {
-        actualFps = fpsFrameCount;
-        fpsFrameCount = 0;
-        fpsUpdateTime = now;
-    }
 
-    // Advance the premium easing engine (eased global brightness — the user's
-    // level). Single-writer: the loop steps it toward its target; idle is a
-    // cheap no-op. Output brightness is applied below, composed with the power
-    // envelope, so this only updates the stored level.
-    if (brightnessTransition_.isActive()) {
-        globalBrightness = brightnessTransition_.advance(now);
-    }
+    // Rendering (command processing, transition advance, effect draw) is frame-
+    // rate limited. But output_->show() runs on EVERY call — see the end. FastLED
+    // temporal dithering fakes the low-end bit depth WS2812B lacks, and it only
+    // works when show() is called far faster than the animation rate (FastLED
+    // auto-disables dithering at low refresh). So: draw at targetFps, refresh as
+    // fast as the loop allows. This is what makes deep dimming smooth instead of
+    // stepping into the red/near-black floor.
+    if (now - lastFrameTime >= frameInterval) {
+        lastFrameTime = now;
 
-    // Power-off rider: when a brightness fade carrying the "power off at zero"
-    // policy settles, switch the strip off. This is all that remains of
-    // "nightlight" in the core — the fade itself is the shared easing engine
-    // (advanced above), which has already left globalBrightness at the target.
-    if (powerOffWhenSettled_ && !brightnessTransition_.isActive()) {
-        powerOffWhenSettled_ = false;
-        setPower(false);
-        LOG_INFO(LogTag::LED, "Brightness fade settled -> power off");
-    }
+        // Process any pending commands (single-writer model)
+        processCommands();
 
-    // Compose the perceptual output level: the user's level scaled by the power
-    // fade envelope (255 = fully on, 0 = off), all still in perceptual space.
-    // globalBrightness stays pristine, so a power toggle never loses the level.
-    uint8_t powerEnv = powerFade_.advance(now);
-    uint8_t perceptual = (powerEnv == 255) ? globalBrightness
-                                           : scale8(globalBrightness, powerEnv);
-    // Gamma-encode to PWM just before the driver so that equal steps in the
-    // (linearly-eased) perceptual level produce equal *perceived* steps — the
-    // difference between a fade that reads dead at the top and one that glides.
-    output_->setBrightness(applyGamma_video(perceptual, ledGamma_));
-
-    // Flip logical power off once a fade-out envelope reaches zero — this is
-    // when we stop rendering (below) instead of burning cycles on a black frame.
-    if (powerOffWhenFadeSettles_ && !powerFade_.isActive()) {
-        powerOffWhenFadeSettles_ = false;
-        power = false;
-        LOG_INFO(LogTag::LED, "Power fade settled -> off");
-    }
-
-    // Clear or handle power off
-    if (!power) {
-        output_->clear();
-        output_->show();
-        return;
-    }
-    
-    // Check protocols for incoming data
-    processProtocols();
-    
-    // If a protocol is active, it has already written to LEDs - just show
-    if (protocolActive_) {
-        output_->show();
-        frameCounter++;
-        return;
-    }
-
-    // Drain a staged direct-pixel frame (debug /api/pixels). Single-writer: the
-    // web task only wrote directPixels_ (atomic ready flag); leds[] is touched
-    // here, on the loop, then shown once. One-frame overlay — segments resume
-    // next frame (P0.1).
-    if (directPixels_.isReady()) {
-        uint16_t count = min(directPixels_.getLedCount(), ledCount);
-        memcpy(leds, directPixels_.getBuffer(), count * sizeof(CRGB));
-        directPixels_.clearReady();
-        output_->show();
-        frameCounter++;
-        return;
-    }
-
-    // Clear only the LEDs not owned by an active segment. Effects own their
-    // canvas (fill or fade) and many build fade-trails by reading the previous
-    // frame (sinelon, wave, comet...). A blanket FastLED.clear() here
-    // would wipe that history every frame; clearing only gaps keeps it intact
-    // while still blacking out uncovered pixels (gaps, removed segments).
-    clearUncoveredLeds();
-
-    // Update all active segments. `now` drives per-segment param/color easing.
-    for (uint8_t i = 0; i < segmentCount; i++) {
-        if (segments[i].isActive()) {
-            segments[i].update(frameCounter, now);
+        // FPS calculation
+        fpsFrameCount++;
+        if (now - fpsUpdateTime >= 1000) {
+            actualFps = fpsFrameCount;
+            fpsFrameCount = 0;
+            fpsUpdateTime = now;
         }
+
+        // Advance the premium easing engine (eased global brightness — the
+        // user's level). Output brightness is composed + applied below; this
+        // only steps the stored level toward its target.
+        if (brightnessTransition_.isActive()) {
+            globalBrightness = brightnessTransition_.advance(now);
+        }
+
+        // Power-off rider: when a brightness fade carrying the "power off at
+        // zero" policy settles, switch the strip off (all that remains of
+        // "nightlight" in the core).
+        if (powerOffWhenSettled_ && !brightnessTransition_.isActive()) {
+            powerOffWhenSettled_ = false;
+            setPower(false);
+            LOG_INFO(LogTag::LED, "Brightness fade settled -> power off");
+        }
+
+        // Compose the perceptual output level (user level scaled by the power
+        // fade envelope, still perceptual) and gamma-encode to PWM. Equal steps
+        // in the linearly-eased level then read as equal *perceived* steps.
+        uint8_t powerEnv = powerFade_.advance(now);
+        uint8_t perceptual = (powerEnv == 255) ? globalBrightness
+                                               : scale8(globalBrightness, powerEnv);
+        output_->setBrightness(applyGamma_video(perceptual, ledGamma_));
+
+        // Flip logical power off once a fade-out envelope reaches zero.
+        if (powerOffWhenFadeSettles_ && !powerFade_.isActive()) {
+            powerOffWhenFadeSettles_ = false;
+            power = false;
+            LOG_INFO(LogTag::LED, "Power fade settled -> off");
+        }
+
+        // Draw this frame into leds[] from the active source (mutually exclusive).
+        if (!power) {
+            output_->clear();
+        } else {
+            processProtocols();
+            if (protocolActive_) {
+                // A protocol (sACN) has already written leds[]; nothing to draw.
+            } else if (directPixels_.isReady()) {
+                // Drain a staged direct-pixel frame (debug /api/pixels). Single-
+                // writer: the web task only wrote directPixels_ (atomic ready
+                // flag); leds[] is touched here, on the loop. One-frame overlay.
+                uint16_t count = min(directPixels_.getLedCount(), ledCount);
+                memcpy(leds, directPixels_.getBuffer(), count * sizeof(CRGB));
+                directPixels_.clearReady();
+            } else {
+                // Clear only the LEDs not owned by an active segment. Effects
+                // own their canvas and many build fade-trails by reading the
+                // previous frame (sinelon, wave, comet...); a blanket clear
+                // would wipe that history. Clearing only gaps keeps it intact.
+                clearUncoveredLeds();
+                for (uint8_t i = 0; i < segmentCount; i++) {
+                    if (segments[i].isActive()) {
+                        segments[i].update(frameCounter, now);
+                    }
+                }
+            }
+        }
+        frameCounter++;
     }
-    
-    // Show the result
+
+    // Push the frame on EVERY call. Repeated refreshes of the same buffer are
+    // what drive FastLED's temporal dithering (see the note above); the physical
+    // WS2812 transmission time naturally caps the rate.
     output_->show();
-    frameCounter++;
 }
 
 void LumeController::processCommands() {

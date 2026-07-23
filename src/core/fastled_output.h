@@ -17,6 +17,12 @@ public:
         FastLED.addLeds<LED_STRIP_TYPE, LED_DATA_PIN, LED_COLOR_MODE>(leds, count);
         FastLED.setCorrection(TypicalLEDStrip);
         FastLED.setMaxPowerInVoltsAndMilliamps(LED_VOLTAGE, LED_MAX_MILLIAMPS);
+        // Temporal dithering recovers the low-end bit depth WS2812B lacks (8-bit
+        // per channel dims into a red/near-black floor). It only works when the
+        // controller refreshes far faster than the animation rate — the render
+        // loop calls show() every pass for exactly this reason. BINARY_DITHER is
+        // FastLED's default; set it explicitly so the intent is on the record.
+        FastLED.setDither(BINARY_DITHER);
     }
     void show() override { FastLED.show(); }
     void setBrightness(uint8_t brightness) override { FastLED.setBrightness(brightness); }

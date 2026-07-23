@@ -119,6 +119,9 @@ enum LEDColorCorrection : uint32_t {
 
 template <uint8_t DATA_PIN, EOrder RGB_ORDER = GRB> class WS2812B {};
 
+// Temporal dither modes (mirror FastLED's EDitherMode).
+enum EDitherMode { DISABLE_DITHER = 0x00, BINARY_DITHER = 0x01 };
+
 class CLEDController {};
 
 class CFastLED {
@@ -129,6 +132,7 @@ public:
     void setBrightness(uint8_t) {}
     template <typename T> void setCorrection(T) {}  // accepts CRGB or a correction enum
     void setMaxPowerInVoltsAndMilliamps(uint8_t, uint32_t) {}
+    void setDither(uint8_t) {}
     void clear(bool = false) {}
     void show() {}
 };
