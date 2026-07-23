@@ -31,6 +31,11 @@ public:
     // Used by dim-to-warm. Default no-op so alternate/mock outputs need not care.
     virtual void setTemperature(CRGB /*temp*/) {}
 
+    // Set the per-channel color-correction (CRGB scalar, 0xFFFFFF = none). Driven
+    // per-frame so the low-end floor can ramp toward uncorrected white and keep
+    // dim white from collapsing to red. Default no-op for alternate/mock outputs.
+    virtual void setCorrection(CRGB /*correction*/) {}
+
     // Blank the output.
     virtual void clear() = 0;
 };

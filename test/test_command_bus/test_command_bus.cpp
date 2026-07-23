@@ -420,9 +420,11 @@ void test_serialize_segment_canonical_shape() {
 struct MockOutput : ILedOutput {
     int begins = 0, shows = 0, clears = 0;
     uint8_t lastBrightness = 0;
+    CRGB lastCorrection = CRGB(255, 255, 255);
     void begin(CRGB*, uint16_t) override { begins++; }
     void show() override { shows++; }
     void setBrightness(uint8_t b) override { lastBrightness = b; }
+    void setCorrection(CRGB c) override { lastCorrection = c; }
     void clear() override { clears++; }
 };
 
@@ -445,8 +447,63 @@ void test_led_output_is_pluggable() {
     TEST_ASSERT_EQUAL_UINT8(255, mock.lastBrightness);              // full = full
     c.enqueueCommand(Command::setGlobalBrightness(42));
     c.update();
-    TEST_ASSERT_EQUAL_UINT8(applyGamma_video(42, LED_GAMMA), mock.lastBrightness);
+    // Gamma-encoded, then clamped up to the low-end floor (they coincide at 42).
+    uint8_t expected42 = applyGamma_video(42, LED_GAMMA);
+    if (expected42 < LED_MIN_OUTPUT) expected42 = LED_MIN_OUTPUT;
+    TEST_ASSERT_EQUAL_UINT8(expected42, mock.lastBrightness);
     TEST_ASSERT_TRUE(mock.lastBrightness < 42);                     // gamma pulled it down
+}
+
+// The low-end color floor (LED_MIN_OUTPUT): a very low but non-zero perceptual
+// level must never reach the driver inside the broken sub-floor PWM zone where
+// dim white collapses to red — it is held at the floor. A true zero still cuts
+// to black. This is the deterministic white→red→black fix.
+void test_low_end_output_floor() {
+    LumeController c;
+    MockOutput mock;
+    c.setLedOutput(&mock);
+    c.begin(60);
+
+    // A tiny level gamma-encodes below the floor; the output must be clamped up.
+    c.enqueueCommand(Command::setGlobalBrightness(5));
+    c.update();
+    TEST_ASSERT_TRUE(applyGamma_video(5, LED_GAMMA) < LED_MIN_OUTPUT); // would be red zone
+    TEST_ASSERT_EQUAL_UINT8(LED_MIN_OUTPUT, mock.lastBrightness);       // held at floor
+    TEST_ASSERT_TRUE(mock.lastBrightness > 0);                         // not black
+
+    // Brightness 0 is a true off: the floor does NOT light the strip.
+    c.enqueueCommand(Command::setGlobalBrightness(0));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(0, mock.lastBrightness);
+
+    // A high level is well above the floor and passes through untouched.
+    c.enqueueCommand(Command::setGlobalBrightness(255));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastBrightness);
+}
+
+// Correction ramp: near the floor the applied correction relaxes toward
+// uncorrected white (green/blue restored) so dim white reads white, not red;
+// at a high level the strip's full TypicalLEDStrip white balance is applied.
+void test_low_end_correction_ramp() {
+    LumeController c;
+    MockOutput mock;
+    c.setLedOutput(&mock);
+    c.begin(60);
+
+    // At full brightness (output >= LED_CORRECTION_FULL_AT): full correction.
+    c.enqueueCommand(Command::setGlobalBrightness(255));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(LED_CORRECTION_G, mock.lastCorrection.g);   // 176
+    TEST_ASSERT_EQUAL_UINT8(LED_CORRECTION_B, mock.lastCorrection.b);   // 240
+
+    // At the floor: correction relaxed toward uncorrected white — green/blue are
+    // pulled back up above their fully-corrected values (no red collapse).
+    c.enqueueCommand(Command::setGlobalBrightness(5));
+    c.update();
+    TEST_ASSERT_TRUE(mock.lastCorrection.g > LED_CORRECTION_G);
+    TEST_ASSERT_TRUE(mock.lastCorrection.b > LED_CORRECTION_B);
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastCorrection.r);               // red never scaled
 }
 
 // Runtime gamma flows through the single-writer bus: an enqueued value is
@@ -502,6 +559,8 @@ void test_warmth_via_bus_and_clamps() {
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_led_output_is_pluggable);
+    RUN_TEST(test_low_end_output_floor);
+    RUN_TEST(test_low_end_correction_ramp);
     RUN_TEST(test_gamma_via_bus_and_clamps);
     RUN_TEST(test_warmth_via_bus_and_clamps);
     RUN_TEST(test_serialize_segment_canonical_shape);

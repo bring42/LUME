@@ -77,11 +77,11 @@ void LumeController::update() {
 
     // Rendering (command processing, transition advance, effect draw) is frame-
     // rate limited. But output_->show() runs on EVERY call — see the end. FastLED
-    // temporal dithering fakes the low-end bit depth WS2812B lacks, and it only
-    // works when show() is called far faster than the animation rate (FastLED
-    // auto-disables dithering at low refresh). So: draw at targetFps, refresh as
-    // fast as the loop allows. This is what makes deep dimming smooth instead of
-    // stepping into the red/near-black floor.
+    // temporal dithering advances its counter each show(), so refreshing faster
+    // than the animation rate lets it smooth *mid-range* dim content. It does not
+    // fix dim white going red (saturated source bytes gain no dither headroom);
+    // that is handled by the output floor + correction ramp below. So: draw at
+    // targetFps, refresh as fast as the loop allows.
     if (now - lastFrameTime >= frameInterval) {
         lastFrameTime = now;
 
@@ -118,7 +118,30 @@ void LumeController::update() {
         uint8_t powerEnv = powerFade_.advance(now);
         uint8_t perceptual = (powerEnv == 255) ? globalBrightness
                                                : scale8(globalBrightness, powerEnv);
-        output_->setBrightness(applyGamma_video(perceptual, ledGamma_));
+        uint8_t encoded = applyGamma_video(perceptual, ledGamma_);
+
+        // Low-end floor (deterministic; see LED_MIN_OUTPUT). Below a few PWM
+        // levels the green/blue channels of a white pixel round to 0 before red,
+        // so dim white collapses to (1,0,0) RED. Never emit a non-zero level
+        // inside that broken zone: hold the lowest clean level and let a true
+        // zero still cut to black. This is the white→red→black fix, and it needs
+        // no eyeball tuning.
+        if (perceptual > 0 && encoded < LED_MIN_OUTPUT) encoded = LED_MIN_OUTPUT;
+        output_->setBrightness(encoded);
+
+        // Correction ramp: the red bias *is* the color correction. TypicalLEDStrip
+        // (255,176,240) pulls green/blue down, so near the floor they die first.
+        // Ramp the applied correction from full TypicalLEDStrip (at/above
+        // LED_CORRECTION_FULL_AT) toward uncorrected white (255,255,255) as the
+        // output approaches the floor, so the dim end reads as clean white — the
+        // strip's normal white balance above the knee is untouched.
+        uint8_t k = (encoded >= LED_CORRECTION_FULL_AT)
+                        ? 255
+                        : (uint8_t)((uint16_t)encoded * 255 / LED_CORRECTION_FULL_AT);
+        float kf = (float)k / 255.0f;
+        output_->setCorrection(CRGB(lerpU8(255, LED_CORRECTION_R, kf),
+                                    lerpU8(255, LED_CORRECTION_G, kf),
+                                    lerpU8(255, LED_CORRECTION_B, kf)));
 
         // Dim-to-warm: blend the output color temperature from neutral white
         // toward the warm target as the perceptual level drops, so the low end
@@ -169,9 +192,9 @@ void LumeController::update() {
         frameCounter++;
     }
 
-    // Push the frame on EVERY call. Repeated refreshes of the same buffer are
-    // what drive FastLED's temporal dithering (see the note above); the physical
-    // WS2812 transmission time naturally caps the rate.
+    // Push the frame on EVERY call. Repeated refreshes of the same buffer drive
+    // FastLED's temporal dithering for mid-range content (see the note above);
+    // the physical WS2812 transmission time naturally caps the rate.
     output_->show();
 }
 
