@@ -24,11 +24,7 @@ LumeController::LumeController()
     , workbufferOwner_(-1)
     , power(true)
     , globalBrightness(255)
-    , nightlightActive(false)
-    , nightlightStartTime(0)
-    , nightlightDuration(0)
-    , nightlightStartBrightness(0)
-    , nightlightTargetBrightness(0)
+    , powerOffWhenSettled_(false)
     , protocolCount_(0)
     , protocolActive_(false)
     , activeProtocol_(nullptr)
@@ -60,7 +56,11 @@ void LumeController::begin(uint16_t count) {
     output_->setBrightness(globalBrightness);
     output_->clear();
     output_->show();
-    
+
+    // Seed the easing engine with the current brightness so the first eased
+    // change starts from the real value, not zero.
+    brightnessTransition_.snap(globalBrightness);
+
     lastFrameTime = millis();
     fpsUpdateTime = millis();
 }
@@ -85,32 +85,28 @@ void LumeController::update() {
         fpsFrameCount = 0;
         fpsUpdateTime = now;
     }
-    
-    // Update nightlight if active
-    if (nightlightActive) {
-        // Guard the subtraction: a StartNightlight command is applied inside this
-        // frame *after* `now` was captured, so nightlightStartTime can be slightly
-        // ahead of `now` on the first frame. Clamp to 0 to avoid unsigned underflow
-        // (which would otherwise insta-complete the fade).
-        uint32_t elapsed = (now > nightlightStartTime) ? (now - nightlightStartTime) / 1000 : 0;
-        if (elapsed >= nightlightDuration) {
-            // Nightlight complete - set target brightness and stop
-            setBrightness(nightlightTargetBrightness);
-            if (nightlightTargetBrightness == 0) {
-                setPower(false);
-            }
-            nightlightActive = false;
-            LOG_INFO(LogTag::LED, "Nightlight complete");
-        } else {
-            // Calculate current brightness based on progress
-            float progress = (float)elapsed / (float)nightlightDuration;
-            // Use int16_t to handle negative differences (fade down)
-            int16_t diff = (int16_t)nightlightTargetBrightness - (int16_t)nightlightStartBrightness;
-            int16_t newBri = (int16_t)nightlightStartBrightness + (int16_t)(diff * progress);
-            setBrightness((uint8_t)max((int16_t)0, min((int16_t)255, newBri)));
-        }
+
+    // Advance the premium easing engine (eased global brightness). When a
+    // transition is active the loop is the single writer that steps it toward
+    // its target and pushes each interpolated value to the output; when idle
+    // it is a cheap no-op. Runs before the power/protocol branches so the
+    // brightness is correct on every render path this frame.
+    if (brightnessTransition_.isActive()) {
+        uint8_t bri = brightnessTransition_.advance(now);
+        globalBrightness = bri;
+        output_->setBrightness(bri);
     }
-    
+
+    // Power-off rider: when a brightness fade carrying the "power off at zero"
+    // policy settles, switch the strip off. This is all that remains of
+    // "nightlight" in the core — the fade itself is the shared easing engine
+    // (advanced above), which has already left globalBrightness at the target.
+    if (powerOffWhenSettled_ && !brightnessTransition_.isActive()) {
+        powerOffWhenSettled_ = false;
+        setPower(false);
+        LOG_INFO(LogTag::LED, "Brightness fade settled -> power off");
+    }
+
     // Clear or handle power off
     if (!power) {
         output_->clear();
@@ -143,7 +139,7 @@ void LumeController::update() {
 
     // Clear only the LEDs not owned by an active segment. Effects own their
     // canvas (fill or fade) and many build fade-trails by reading the previous
-    // frame (confetti, sinelon, wave, comet...). A blanket FastLED.clear() here
+    // frame (sinelon, wave, comet...). A blanket FastLED.clear() here
     // would wipe that history every frame; clearing only gaps keeps it intact
     // while still blacking out uncovered pixels (gaps, removed segments).
     clearUncoveredLeds();
@@ -236,7 +232,10 @@ void LumeController::executeCommand(const Command& cmd) {
             break;
             
         case CommandType::SetGlobalBrightness:
-            setBrightness(cmd.data.value8);
+            // Eased when the command carries a transition window, instant
+            // otherwise (setBrightnessEased falls back to setBrightness at 0).
+            // The powerOffAtZero rider makes a fade-to-zero a "nightlight".
+            setBrightnessEased(cmd.data.value8, cmd.transitionMs, cmd.powerOffAtZero);
             break;
             
         case CommandType::ApplyEffectSpec: {
@@ -266,14 +265,6 @@ void LumeController::executeCommand(const Command& cmd) {
             if (spec.hasBrightness) target->setBrightness(spec.brightness);
             break;
         }
-
-        case CommandType::StartNightlight:
-            startNightlight(cmd.data.nightlight.durationSec, cmd.data.nightlight.targetBrightness);
-            break;
-
-        case CommandType::StopNightlight:
-            stopNightlight();
-            break;
 
         case CommandType::ReconfigureProtocols:
             // Applied on the loop (single writer) so protocol socket/config
@@ -546,37 +537,6 @@ void LumeController::processProtocols() {
             activeProtocol_ = nullptr;
         }
     }
-}
-
-void LumeController::startNightlight(uint16_t durationSeconds, uint8_t targetBrightness) {
-    nightlightActive = true;
-    nightlightStartTime = millis();
-    nightlightDuration = durationSeconds;
-    nightlightStartBrightness = globalBrightness;
-    nightlightTargetBrightness = targetBrightness;
-    
-    LOG_INFO(LogTag::LED, "Nightlight started: %ds fade from %d to %d", 
-             durationSeconds, nightlightStartBrightness, targetBrightness);
-}
-
-void LumeController::stopNightlight() {
-    if (nightlightActive) {
-        nightlightActive = false;
-        LOG_INFO(LogTag::LED, "Nightlight stopped");
-    }
-}
-
-float LumeController::getNightlightProgress() const {
-    if (!nightlightActive) {
-        return 0.0f;
-    }
-    
-    uint32_t elapsed = (millis() - nightlightStartTime) / 1000;
-    if (elapsed >= nightlightDuration) {
-        return 1.0f;
-    }
-    
-    return (float)elapsed / (float)nightlightDuration;
 }
 
 } // namespace lume

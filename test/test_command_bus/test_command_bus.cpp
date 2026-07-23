@@ -127,19 +127,54 @@ void test_power_and_brightness_via_bus() {
     TEST_ASSERT_EQUAL_UINT8(40, c.getBrightness());
 }
 
-// Nightlight start/stop route through the bus and toggle the active flag.
-void test_nightlight_start_stop_via_bus() {
+// "Nightlight" is no longer a bus command or controller state — it decomposes
+// into an eased brightness fade plus a power-off-at-zero rider. A fade to zero
+// carrying the rider powers the strip off once it settles.
+void test_fade_to_zero_rider_powers_off() {
     LumeController c;
     c.begin(60);
-    TEST_ASSERT_FALSE(c.isNightlightActive());
+    TEST_ASSERT_TRUE(c.getPower());
 
-    c.enqueueCommand(Command::startNightlight(/*durationSec=*/900, /*target=*/0));
+    c.enqueueCommand(Command::setGlobalBrightness(0)
+                         .withTransition(3000).withPowerOffAtZero(true));
     c.update();
-    TEST_ASSERT_TRUE(c.isNightlightActive());
+    TEST_ASSERT_TRUE(c.isBrightnessFading());   // fading, not yet settled
+    TEST_ASSERT_TRUE(c.getPower());             // still on mid-fade
 
-    c.enqueueCommand(Command::stopNightlight());
+    for (int i = 0; i < 50 && c.isBrightnessFading(); i++) c.update();
+    TEST_ASSERT_FALSE(c.isBrightnessFading());
+    TEST_ASSERT_FALSE(c.getPower());            // powered off once settled
+}
+
+// A fade to a dim, non-zero target is an ordinary eased change: it must land on
+// the target and leave the strip on (no rider).
+void test_fade_to_dim_stays_on() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::setGlobalBrightness(50)
+                         .withTransition(3000).withPowerOffAtZero(false));
+    c.update();                                  // apply the command -> fade starts
+    TEST_ASSERT_TRUE(c.isBrightnessFading());
+    for (int i = 0; i < 50 && c.isBrightnessFading(); i++) c.update();
+    TEST_ASSERT_FALSE(c.isBrightnessFading());
+    TEST_ASSERT_TRUE(c.getPower());
+    TEST_ASSERT_EQUAL_UINT8(50, c.getBrightness());
+}
+
+// A manual brightness set mid-fade overrides the fade AND clears the pending
+// power-off rider — the strip must not switch off behind the user.
+void test_manual_set_clears_power_off_rider() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::setGlobalBrightness(0)
+                         .withTransition(5000).withPowerOffAtZero(true));
     c.update();
-    TEST_ASSERT_FALSE(c.isNightlightActive());
+    TEST_ASSERT_TRUE(c.isBrightnessFading());
+
+    c.enqueueCommand(Command::setGlobalBrightness(200));  // instant manual set
+    for (int i = 0; i < 50 && c.isBrightnessFading(); i++) c.update();
+    TEST_ASSERT_TRUE(c.getPower());             // never powered off
+    TEST_ASSERT_EQUAL_UINT8(200, c.getBrightness());
 }
 
 // The AI path carries semantic params (speed/color) that resolve to schema slots
@@ -315,7 +350,9 @@ int main(int, char**) {
     RUN_TEST(test_update_changes_params);
     RUN_TEST(test_remove_is_deferred_then_applied);
     RUN_TEST(test_power_and_brightness_via_bus);
-    RUN_TEST(test_nightlight_start_stop_via_bus);
+    RUN_TEST(test_fade_to_zero_rider_powers_off);
+    RUN_TEST(test_fade_to_dim_stays_on);
+    RUN_TEST(test_manual_set_clears_power_off_rider);
     RUN_TEST(test_ai_semantic_params_via_bus);
     RUN_TEST(test_setcolor_maps_index_to_ordered_color_slot);
     RUN_TEST(test_enumeration_survives_middle_delete);

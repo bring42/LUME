@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include "segment.h"
 #include "command_queue.h"
+#include "transition.h"              // premium easing engine (eased brightness)
 #include "led_output.h"              // ILedOutput HAL seam (RFC 0001 §6)
 #include "../protocols/protocol.h"   // ProtocolBuffer (direct-pixel staging)
 #include "../constants.h"
@@ -105,19 +106,42 @@ public:
     void setPower(bool on) { power = on; }
     bool getPower() const { return power; }
     
+    // Hard-set global brightness (transitionTime == 0). Keeps the easing engine
+    // in sync by snapping it, so a subsequent eased change starts from here and
+    // an in-flight fade is cancelled cleanly. A manual set also clears any
+    // pending power-off rider, so the strip never switches off behind the user.
     void setBrightness(uint8_t bri) {
+        powerOffWhenSettled_ = false;
         globalBrightness = bri;
         output_->setBrightness(bri);
+        brightnessTransition_.snap(bri);
     }
     uint8_t getBrightness() const { return globalBrightness; }
-    
-    // --- Nightlight ---
-    
-    void startNightlight(uint16_t durationSeconds, uint8_t targetBrightness);
-    void stopNightlight();
-    bool isNightlightActive() const { return nightlightActive; }
-    float getNightlightProgress() const;
-    
+
+    // Ease global brightness toward `target` over `durationMs` (the premium
+    // path). `powerOffAtZero` powers the strip off once the fade settles — the
+    // one bit that turns a plain fade into a "nightlight". The render loop
+    // advances the interpolation each frame; a zero duration falls back to an
+    // immediate set. Single-writer: call on the loop.
+    void setBrightnessEased(uint8_t target, uint32_t durationMs,
+                            bool powerOffAtZero = false) {
+        if (durationMs == 0) {
+            setBrightness(target);                 // snaps, clears the rider
+            if (powerOffAtZero && target == 0) setPower(false);
+            return;
+        }
+        powerOffWhenSettled_ = powerOffAtZero;
+        brightnessTransition_.start(target, durationMs, millis());
+    }
+
+    // --- Brightness-fade status (what "nightlight" reporting reduces to) ---
+
+    // True while an eased brightness fade is in progress (a nightlight is just
+    // a long one). The UI shows a countdown/cancel while this holds.
+    bool isBrightnessFading() const { return brightnessTransition_.isActive(); }
+    // Linear fraction of the fade's time window elapsed, for a UI countdown.
+    float brightnessFadeProgress() const { return brightnessTransition_.progress(millis()); }
+
     // --- Protocol management ---
 
     // Register a protocol (called at startup)
@@ -204,13 +228,18 @@ private:
     // State
     bool power;
     uint8_t globalBrightness;
+
+    // Premium easing engine for global brightness. Owned + advanced only on the
+    // render loop; snapped whenever brightness is hard-set so the two never
+    // disagree. See core/transition.h.
+    EasedU8 brightnessTransition_;
     
-    // Nightlight state
-    bool nightlightActive;
-    uint32_t nightlightStartTime;
-    uint16_t nightlightDuration;  // in seconds
-    uint8_t nightlightStartBrightness;
-    uint8_t nightlightTargetBrightness;
+    // The only nightlight-specific state left in the core: when a brightness
+    // fade carrying the power-off rider settles, the loop switches the strip
+    // off. Everything else about "nightlight" (its name, trigger, duration,
+    // progress reporting) lives at the API boundary or falls out of the shared
+    // brightnessTransition_. Cleared by any manual brightness set.
+    bool powerOffWhenSettled_;
     
     // Protocol handling
     static constexpr uint8_t MAX_PROTOCOLS = 4;

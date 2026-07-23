@@ -87,7 +87,8 @@ then write to the device fire-and-forget; the WS reconciles)
 
 ```
 setPower(bool)
-setBrightness(0-255)
+setBrightness(0-255, transitionMs?)   // transitionMs>0 = premium eased fade on-device
+                                      // (sent as Matter tenths-of-a-second `transition`)
 selectSegment(id)                     // client-only selection
 setEffect(id, effectId)               // resets params to schema defaults
 setParam(id, paramId, value)          // sends the WHOLE params object for you

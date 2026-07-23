@@ -204,7 +204,11 @@ void setupServer() {
             sendUnauthorized(request);
             return;
         }
-        lume::controller.enqueueCommand(lume::Command::stopNightlight());
+        // Stop = freeze the fade where it is: snap brightness to its current
+        // (reconciled) value with no transition, which also clears the pending
+        // power-off rider. "Nightlight" needs no dedicated command anymore.
+        lume::controller.enqueueCommand(
+            lume::Command::setGlobalBrightness(lume::controller.getBrightness()));
         request->send(202, "application/json", "{\"status\":\"accepted\"}");
     });
     

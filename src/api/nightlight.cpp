@@ -13,10 +13,13 @@
 static String nightlightBodyBuffer;
 
 void handleApiNightlightGet(AsyncWebServerRequest* request) {
+    // "Nightlight" is a name that lives here, at the API boundary. In the core
+    // it is just an eased brightness fade, so its status maps onto the generic
+    // brightness-fade state.
     JsonDocument doc;
-    doc["active"] = lume::controller.isNightlightActive();
-    doc["progress"] = lume::controller.getNightlightProgress();
-    
+    doc["active"] = lume::controller.isBrightnessFading();
+    doc["progress"] = lume::controller.brightnessFadeProgress();
+
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);
@@ -79,8 +82,13 @@ void handleApiNightlightPost(AsyncWebServerRequest* request, uint8_t* data, size
     // Get target brightness (default: 0 = fade to off)
     uint8_t targetBrightness = doc["targetBrightness"] | NIGHTLIGHT_DEFAULT_TARGET;
 
-    // Route through the bus (single writer); applied by the render loop.
-    lume::controller.enqueueCommand(lume::Command::startNightlight(duration, targetBrightness));
+    // Compose "nightlight" from the generic primitives: an eased brightness fade
+    // over the requested duration, plus the power-off-at-zero rider. No bespoke
+    // nightlight command or controller state — the name stops at this boundary.
+    lume::controller.enqueueCommand(
+        lume::Command::setGlobalBrightness(targetBrightness)
+            .withTransition((uint32_t)duration * 1000u)
+            .withPowerOffAtZero(targetBrightness == 0));
 
     request->send(202, "application/json", "{\"status\":\"accepted\"}");
 

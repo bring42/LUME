@@ -523,9 +523,18 @@ void handleApiV2ControllerUpdate(AsyncWebServerRequest* request, uint8_t* data, 
             lume::controller.enqueueCommand(lume::Command::setPower(doc["power"].as<bool>()));
         }
 
+        // Optional premium eased transition (Matter-shaped: tenths of a second).
+        // Applied to brightness; 0/absent preserves the instant-apply default.
+        uint32_t transitionMs = 0;
+        if (doc["transition"].is<int>()) {
+            transitionMs = lume::transitionTenthsToMs(
+                (uint16_t)constrain(doc["transition"].as<int>(), 0, 65535));
+        }
+
         if (doc["brightness"].is<int>()) {
             uint8_t bri = constrain(doc["brightness"].as<int>(), 0, 255);
-            lume::controller.enqueueCommand(lume::Command::setGlobalBrightness(bri));
+            lume::controller.enqueueCommand(
+                lume::Command::setGlobalBrightness(bri).withTransition(transitionMs));
         }
 
         request->send(202, "application/json", "{\"status\":\"accepted\"}");

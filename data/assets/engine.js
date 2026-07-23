@@ -64,7 +64,6 @@
     fx("candle", "Candle", "Animated", [C("color", "Color", "#ff8c28"), I("speed", "Flicker Speed", 128, 1, 255), I("intensity", "Flicker Intensity", 128, 1, 255)]),
     fx("colorwaves", "Color Waves", "Animated", [P("palette", "Palette"), I("speed", "Speed", 128, 1, 255)]),
     fx("comet", "Comet", "Moving", [C("colorHead", "Head Color", "#ffffff"), C("colorTail", "Tail Color", "#0000ff"), I("speed", "Speed", 128, 1, 255), I("intensity", "Tail Length", 120, 1, 255), E("direction", "Direction", "Up|Down", 0)]),
-    fx("confetti", "Confetti", "Animated", [P("palette", "Palette"), I("speed", "Spawn Rate", 128, 1, 255)]),
     fx("fire", "Fire", "Animated", [I("cooling", "Cooling", 55, 20, 100), I("sparking", "Sparking", 120, 50, 200), B("reversed", "Reversed", false)]),
     fx("fireup", "Fire Up", "Animated", [I("speed", "Sparking", 120, 1, 255), I("intensity", "Cooling", 55, 1, 255)]),
     fx("meteor", "Meteor", "Moving", [C("color", "Meteor Color", "#ffffff"), I("speed", "Fall Speed", 128, 1, 255)]),
@@ -77,8 +76,6 @@
     fx("scanner", "Scanner", "Moving", [C("color", "Color", "#ff0000"), I("speed", "Speed", 128, 1, 255), I("intensity", "Tail Length", 80, 1, 255)]),
     fx("sinelon", "Sinelon", "Moving", [P("palette", "Palette"), I("speed", "Speed", 128, 1, 255)]),
     fx("sparkle", "Sparkle", "Animated", [C("color", "Background Color", "#0000ff"), I("speed", "Sparkle Density", 128, 1, 255)]),
-    fx("strobe", "Strobe", "Animated", [C("color", "Strobe Color", "#ffffff"), I("speed", "Flash Rate", 128, 1, 255)]),
-    fx("theater", "Theater Chase", "Moving", [P("palette", "Palette"), I("speed", "Speed", 128, 1, 255)]),
     fx("twinkle", "Twinkle", "Animated", [C("color", "Color", "#ffffff"), I("speed", "Twinkle Rate", 128, 1, 255)]),
     fx("wave", "Wave", "Moving", [C("color", "Wave Color", "#0000ff"), I("speed", "Wave Speed", 128, 1, 255), I("intensity", "Wave Width", 160, 1, 255), E("direction", "Direction", "Up|Down|Center", 0)])
   ];
@@ -426,11 +423,15 @@
       fireWrite("/api/v2/controller", "PUT", { power: on });
     }
 
-    function setBrightness(v) {
+    // Optional transitionMs eases the change on-device (premium fade) instead of
+    // snapping. The device speaks Matter-shaped tenths-of-a-second, so convert.
+    function setBrightness(v, transitionMs) {
       v = clampInt(v, 0, 255);
       state.controller.brightness = v;
       notify();
-      fireWrite("/api/v2/controller", "PUT", { brightness: v });
+      var body = { brightness: v };
+      if (transitionMs > 0) body.transition = Math.round(transitionMs / 100);
+      fireWrite("/api/v2/controller", "PUT", body);
     }
 
     function selectSegment(id) {

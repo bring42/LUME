@@ -37,11 +37,8 @@ enum class CommandType : uint8_t {
     
     // Global control
     SetPower,           // Power on/off
-    SetGlobalBrightness,// Global brightness
-
-    // Nightlight
-    StartNightlight,    // Begin a timed fade
-    StopNightlight,     // Cancel an active nightlight
+    SetGlobalBrightness,// Global brightness (eased when transitionMs > 0; the
+                        // powerOffAtZero rider makes it a "nightlight")
 
     // Advanced
     ApplyEffectSpec,    // Apply AI-generated effect spec
@@ -67,14 +64,6 @@ struct SegmentData {
     uint16_t start;
     uint16_t length;
     bool reversed;
-};
-
-/**
- * Nightlight start data
- */
-struct NightlightData {
-    uint16_t durationSec;
-    uint8_t  targetBrightness;
 };
 
 /**
@@ -133,6 +122,21 @@ struct Command {
     CommandType type;
     uint8_t segmentId;      // Target segment (255 = all/global)
 
+    // Premium easing (Matter/Zigbee-shaped): how long the render loop should
+    // interpolate this change over, in milliseconds. 0 = apply instantly (the
+    // historical behaviour). uint32 so it also covers long fades — a "nightlight"
+    // is just a brightness fade with a large transition (up to an hour). Producers
+    // set it via withTransition(); the factory methods below leave it 0. A default
+    // member initializer keeps every `Command cmd;` path zeroed even though
+    // Command is built field-by-field.
+    uint32_t transitionMs = 0;
+
+    // Rider for eased brightness fades: power the strip off once the fade
+    // settles at zero. This is the *only* thing "nightlight" adds over a plain
+    // eased brightness change — so nightlight no longer needs its own command or
+    // controller state; the API composes it from setGlobalBrightness + this.
+    bool powerOffAtZero = false;
+
     union {
         // SetEffect
         const char* effectId;
@@ -151,9 +155,6 @@ struct Command {
 
         // Generic 32-bit value
         uint32_t value32;
-
-        // StartNightlight
-        NightlightData nightlight;
 
         // ApplyEffectSpec — the compound segment mutation (create/update)
         EffectSpec spec;
@@ -249,26 +250,26 @@ struct Command {
         return cmd;
     }
 
-    static Command startNightlight(uint16_t durationSec, uint8_t targetBrightness) {
-        Command cmd;
-        cmd.type = CommandType::StartNightlight;
-        cmd.segmentId = 255;
-        cmd.data.nightlight = { durationSec, targetBrightness };
-        return cmd;
-    }
-
-    static Command stopNightlight() {
-        Command cmd;
-        cmd.type = CommandType::StopNightlight;
-        cmd.segmentId = 255;
-        return cmd;
-    }
-
     static Command reconfigureProtocols() {
         Command cmd;
         cmd.type = CommandType::ReconfigureProtocols;
         cmd.segmentId = 255;
         return cmd;
+    }
+
+    // Attach an eased transition window (milliseconds) to a command. Chains off
+    // any factory, e.g. Command::setGlobalBrightness(200).withTransition(300).
+    // The render loop interpolates over this window; 0 means apply instantly.
+    Command& withTransition(uint32_t ms) {
+        transitionMs = ms;
+        return *this;
+    }
+
+    // Attach the power-off-at-zero rider to an eased brightness fade — the
+    // building block a "nightlight" is composed from at the API boundary.
+    Command& withPowerOffAtZero(bool on) {
+        powerOffAtZero = on;
+        return *this;
     }
 };
 
