@@ -91,7 +91,10 @@ inline uint16_t scale16by8(uint16_t i, uint8_t scale) {
     return (uint16_t)(((uint32_t)i * scale) >> 8);
 }
 inline uint8_t scale8(uint8_t i, uint8_t scale) {
-    return (uint8_t)(((uint16_t)i * scale) >> 8);
+    // Match real FastLED's default (SCALE8_FIXED): the (scale + 1) term makes
+    // scale8(i, 255) == i exactly, so this fake never disagrees with on-device
+    // math by one. Without it, scale8(42, 255) would be 41.
+    return (uint8_t)(((uint16_t)i * (uint16_t)(scale + 1)) >> 8);
 }
 inline uint8_t map8(uint8_t in, uint8_t rangeStart, uint8_t rangeEnd) {
     return rangeStart + scale8(in, rangeEnd - rangeStart);

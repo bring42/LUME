@@ -416,11 +416,15 @@
        Public mutations — optimistic local update + fire-and-forget write.
        ================================================================= */
 
-    function setPower(on) {
+    // Optional transitionMs eases the strip on/off on-device (premium fade); the
+    // brightness level is preserved across the toggle. Sent as Matter tenths.
+    function setPower(on, transitionMs) {
       on = !!on;
       state.controller.power = on;
       notify();
-      fireWrite("/api/v2/controller", "PUT", { power: on });
+      var body = { power: on };
+      if (transitionMs > 0) body.transition = Math.round(transitionMs / 100);
+      fireWrite("/api/v2/controller", "PUT", body);
     }
 
     // Optional transitionMs eases the change on-device (premium fade) instead of

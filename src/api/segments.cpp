@@ -527,18 +527,19 @@ void handleApiV2ControllerUpdate(AsyncWebServerRequest* request, uint8_t* data, 
             return;
         }
         
-        // Route global mutations through the bus (single writer); no direct
-        // controller mutation on this (AsyncTCP) task.
-        if (doc["power"].is<bool>()) {
-            lume::controller.enqueueCommand(lume::Command::setPower(doc["power"].as<bool>()));
-        }
-
         // Optional premium eased transition (Matter-shaped: tenths of a second).
-        // Applied to brightness; 0/absent preserves the instant-apply default.
+        // Applied to power and brightness; 0/absent preserves instant-apply.
         uint32_t transitionMs = 0;
         if (doc["transition"].is<int>()) {
             transitionMs = lume::transitionTenthsToMs(
                 (uint16_t)constrain(doc["transition"].as<int>(), 0, 65535));
+        }
+
+        // Route global mutations through the bus (single writer); no direct
+        // controller mutation on this (AsyncTCP) task.
+        if (doc["power"].is<bool>()) {
+            lume::controller.enqueueCommand(
+                lume::Command::setPower(doc["power"].as<bool>()).withTransition(transitionMs));
         }
 
         if (doc["brightness"].is<int>()) {

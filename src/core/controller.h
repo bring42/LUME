@@ -103,8 +103,33 @@ public:
     
     // --- Global controls ---
     
-    void setPower(bool on) { power = on; }
+    // Instant power (transitionTime == 0). Snaps the on/off envelope so the
+    // output matches immediately and any in-flight power fade is cancelled.
+    void setPower(bool on) {
+        power = on;
+        powerOffWhenFadeSettles_ = false;
+        powerFade_.snap(on ? 255 : 0);
+    }
     bool getPower() const { return power; }
+
+    // Eased power on/off (the premium path). Fade-on flips the strip logically
+    // on and eases the envelope 0 -> full; fade-off eases full -> 0 and flips
+    // off once it settles (so it keeps rendering, dimming, until dark). The
+    // brightness level is untouched, so toggling never loses it. durationMs == 0
+    // falls back to instant. Single-writer: call on the loop.
+    void setPowerEased(bool on, uint32_t durationMs) {
+        if (durationMs == 0) { setPower(on); return; }
+        if (on) {
+            power = true;                 // render while we fade up from black
+            powerOffWhenFadeSettles_ = false;
+            powerFade_.start(255, durationMs, millis());
+        } else {
+            powerOffWhenFadeSettles_ = true;  // stay on until the fade reaches 0
+            powerFade_.start(0, durationMs, millis());
+        }
+    }
+    // True while an on/off power fade is animating (for UI, mirrors brightness).
+    bool isPowerFading() const { return powerFade_.isActive(); }
     
     // Hard-set global brightness (transitionTime == 0). Keeps the easing engine
     // in sync by snapping it, so a subsequent eased change starts from here and
@@ -240,6 +265,12 @@ private:
     // progress reporting) lives at the API boundary or falls out of the shared
     // brightnessTransition_. Cleared by any manual brightness set.
     bool powerOffWhenSettled_;
+
+    // Power on/off fade envelope (0..255), composed onto the output brightness
+    // so the user's level stays pristine across a toggle. powerOffWhenFadeSettles_
+    // flips `power` false once a fade-out envelope reaches zero.
+    EasedU8 powerFade_;
+    bool powerOffWhenFadeSettles_;
     
     // Protocol handling
     static constexpr uint8_t MAX_PROTOCOLS = 4;

@@ -86,7 +86,7 @@ hard-code a fixed control set per the old model.
 then write to the device fire-and-forget; the WS reconciles)
 
 ```
-setPower(bool)
+setPower(bool, transitionMs?)         // transitionMs>0 = eased on/off fade (level preserved)
 setBrightness(0-255, transitionMs?)   // transitionMs>0 = premium eased fade on-device
                                       // (sent as Matter tenths-of-a-second `transition`)
 selectSegment(id)                     // client-only selection

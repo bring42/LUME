@@ -25,6 +25,7 @@ LumeController::LumeController()
     , power(true)
     , globalBrightness(255)
     , powerOffWhenSettled_(false)
+    , powerOffWhenFadeSettles_(false)
     , protocolCount_(0)
     , protocolActive_(false)
     , activeProtocol_(nullptr)
@@ -60,6 +61,8 @@ void LumeController::begin(uint16_t count) {
     // Seed the easing engine with the current brightness so the first eased
     // change starts from the real value, not zero.
     brightnessTransition_.snap(globalBrightness);
+    // Seed the power envelope to match the initial power state.
+    powerFade_.snap(power ? 255 : 0);
 
     lastFrameTime = millis();
     fpsUpdateTime = millis();
@@ -86,15 +89,12 @@ void LumeController::update() {
         fpsUpdateTime = now;
     }
 
-    // Advance the premium easing engine (eased global brightness). When a
-    // transition is active the loop is the single writer that steps it toward
-    // its target and pushes each interpolated value to the output; when idle
-    // it is a cheap no-op. Runs before the power/protocol branches so the
-    // brightness is correct on every render path this frame.
+    // Advance the premium easing engine (eased global brightness — the user's
+    // level). Single-writer: the loop steps it toward its target; idle is a
+    // cheap no-op. Output brightness is applied below, composed with the power
+    // envelope, so this only updates the stored level.
     if (brightnessTransition_.isActive()) {
-        uint8_t bri = brightnessTransition_.advance(now);
-        globalBrightness = bri;
-        output_->setBrightness(bri);
+        globalBrightness = brightnessTransition_.advance(now);
     }
 
     // Power-off rider: when a brightness fade carrying the "power off at zero"
@@ -105,6 +105,23 @@ void LumeController::update() {
         powerOffWhenSettled_ = false;
         setPower(false);
         LOG_INFO(LogTag::LED, "Brightness fade settled -> power off");
+    }
+
+    // Advance the power on/off envelope and apply the composed output brightness:
+    // the user's level scaled by the fade envelope (255 = fully on, 0 = off). The
+    // level stays pristine, so a power toggle never loses the set brightness.
+    uint8_t powerEnv = powerFade_.advance(now);
+    // At full envelope the output is exactly the level (no scale8 rounding, and
+    // identical to the pre-envelope behaviour); only compose during a fade.
+    output_->setBrightness(powerEnv == 255 ? globalBrightness
+                                           : scale8(globalBrightness, powerEnv));
+
+    // Flip logical power off once a fade-out envelope reaches zero — this is
+    // when we stop rendering (below) instead of burning cycles on a black frame.
+    if (powerOffWhenFadeSettles_ && !powerFade_.isActive()) {
+        powerOffWhenFadeSettles_ = false;
+        power = false;
+        LOG_INFO(LogTag::LED, "Power fade settled -> off");
     }
 
     // Clear or handle power off
@@ -227,8 +244,11 @@ void LumeController::executeCommand(const Command& cmd) {
             break;
             
         case CommandType::SetPower:
-            setPower(cmd.data.power);
-            LOG_INFO(LogTag::LED, "Power -> %s", cmd.data.power ? "ON" : "OFF");
+            // Eased when the command carries a transition window, instant
+            // otherwise (setPowerEased falls back to setPower at 0).
+            setPowerEased(cmd.data.power, cmd.transitionMs);
+            LOG_INFO(LogTag::LED, "Power -> %s%s", cmd.data.power ? "ON" : "OFF",
+                     cmd.transitionMs ? " (fade)" : "");
             break;
             
         case CommandType::SetGlobalBrightness:

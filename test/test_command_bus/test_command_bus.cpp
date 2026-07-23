@@ -161,6 +161,37 @@ void test_fade_to_zero_rider_powers_off() {
     TEST_ASSERT_FALSE(c.getPower());            // powered off once settled
 }
 
+// Eased power-off keeps the strip logically on (rendering, dimming) until the
+// fade envelope settles, then flips it off. The brightness level is preserved.
+void test_power_off_fade_defers_then_settles() {
+    LumeController c;
+    c.begin(60);
+    TEST_ASSERT_TRUE(c.getPower());
+
+    c.enqueueCommand(Command::setPower(false).withTransition(3000));
+    c.update();
+    TEST_ASSERT_TRUE(c.isPowerFading());       // envelope animating
+    TEST_ASSERT_TRUE(c.getPower());            // still logically on mid-fade
+
+    for (int i = 0; i < 50 && c.isPowerFading(); i++) c.update();
+    TEST_ASSERT_FALSE(c.getPower());           // flipped off once settled
+    TEST_ASSERT_EQUAL_UINT8(255, c.getBrightness());  // level preserved across toggle
+}
+
+// Eased power-on flips the strip logically on immediately (so it renders while
+// fading up from black) rather than deferring like power-off.
+void test_power_on_fade_is_immediate_logical() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::setPower(false));   // start off (instant)
+    c.update();
+    TEST_ASSERT_FALSE(c.getPower());
+
+    c.enqueueCommand(Command::setPower(true).withTransition(3000));
+    c.update();
+    TEST_ASSERT_TRUE(c.getPower());            // on immediately, envelope rising
+}
+
 // A fade to a dim, non-zero target is an ordinary eased change: it must land on
 // the target and leave the strip on (no rider).
 void test_fade_to_dim_stays_on() {
@@ -421,6 +452,8 @@ int main(int, char**) {
     RUN_TEST(test_remove_is_deferred_then_applied);
     RUN_TEST(test_power_and_brightness_via_bus);
     RUN_TEST(test_fade_to_zero_rider_powers_off);
+    RUN_TEST(test_power_off_fade_defers_then_settles);
+    RUN_TEST(test_power_on_fade_is_immediate_logical);
     RUN_TEST(test_fade_to_dim_stays_on);
     RUN_TEST(test_manual_set_clears_power_off_rider);
     RUN_TEST(test_param_transition_eases_then_lands);
