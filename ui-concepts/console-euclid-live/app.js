@@ -910,6 +910,11 @@ function renderTuningFromState() {
   const gs = $("#tuneGamma"), gl = $("#tuneGammaVal");
   if (gs && document.activeElement !== gs) gs.value = g;
   if (gl) gl.textContent = Number(g).toFixed(1);
+
+  const w = engine.getWarmth();
+  const ws = $("#tuneWarmth"), wl = $("#tuneWarmthVal");
+  if (ws && document.activeElement !== ws) ws.value = w;
+  if (wl) wl.textContent = Math.round(Number(w) * 100) + "%";
 }
 
 $("#ledCount").addEventListener("change", (e) => {
@@ -1094,6 +1099,20 @@ $("#sacnUniverse").addEventListener("change", (e) => {
       const v = Number(e.target.value);
       engine.setGamma(v).then((res) => {
         showToast(res && res.ok ? `Gamma → ${v.toFixed(1)}` : "Failed to save gamma");
+      });
+    });
+  }
+
+  // --- dim-to-warm: preview % while dragging, commit (device write) on release ---
+  const wEl = $("#tuneWarmth");
+  if (wEl) {
+    wEl.addEventListener("input", (e) => {
+      $("#tuneWarmthVal").textContent = Math.round(Number(e.target.value) * 100) + "%";
+    });
+    wEl.addEventListener("change", (e) => {
+      const v = Number(e.target.value);
+      engine.setWarmth(v).then((res) => {
+        showToast(res && res.ok ? `Dim-to-warm → ${Math.round(v * 100)}%` : "Failed to save warmth");
       });
     });
   }

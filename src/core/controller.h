@@ -172,6 +172,17 @@ public:
     }
     float getGamma() const { return ledGamma_; }
 
+    // Dim-to-warm strength [0..1] (0 = neutral/off). Runtime-adjustable, clamped
+    // to [LED_WARMTH_MIN, LED_WARMTH_MAX]; the render loop blends the output
+    // color temperature toward the warm target as the level drops. Single-writer:
+    // drive via Command::setWarmth so it lands on the loop.
+    void setWarmth(float warmth) {
+        if (warmth < LED_WARMTH_MIN) warmth = LED_WARMTH_MIN;
+        if (warmth > LED_WARMTH_MAX) warmth = LED_WARMTH_MAX;
+        warmth_ = warmth;
+    }
+    float getWarmth() const { return warmth_; }
+
     // --- Brightness-fade status (what "nightlight" reporting reduces to) ---
 
     // True while an eased brightness fade is in progress (a nightlight is just
@@ -271,6 +282,11 @@ private:
     // eased level to PWM. Seeded from the LED_GAMMA compile constant in the ctor;
     // updated live via setGamma() (single-writer, on the loop). See constants.h.
     float ledGamma_;
+
+    // Dim-to-warm strength [0..1]; blended into the output color temperature as
+    // the level drops (see update()). Runtime-tunable via setWarmth(). Seeded
+    // from LED_WARMTH_DEFAULT in the ctor.
+    float warmth_;
 
     // Premium easing engine for global brightness. Owned + advanced only on the
     // render loop; snapped whenever brightness is hard-set so the two never

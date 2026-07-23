@@ -26,6 +26,7 @@ public:
     }
     void show() override { FastLED.show(); }
     void setBrightness(uint8_t brightness) override { FastLED.setBrightness(brightness); }
+    void setTemperature(CRGB temp) override { FastLED.setTemperature(temp); }
     void clear() override { FastLED.clear(); }
 };
 

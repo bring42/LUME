@@ -684,6 +684,22 @@
       return saveConfig({ gamma: v });
     }
 
+    // Dim-to-warm strength [0..1] — device state, same flow as gamma (/api/config,
+    // applied live on the render loop). 0 = neutral/off.
+    var WARMTH_MIN = 0.0, WARMTH_MAX = 1.0, WARMTH_DEFAULT = 0.6;
+    function getWarmth() {
+      var w = state.config && state.config.warmth;
+      return (typeof w === "number" && isFinite(w)) ? w : WARMTH_DEFAULT;
+    }
+    function setWarmth(v) {
+      v = Number(v);
+      if (!isFinite(v)) v = WARMTH_DEFAULT;
+      if (v < WARMTH_MIN) v = WARMTH_MIN;
+      if (v > WARMTH_MAX) v = WARMTH_MAX;
+      v = Math.round(v * 20) / 20; // 0.05 steps
+      return saveConfig({ warmth: v });
+    }
+
     /* ---- firmware auto-update (pull-based OTA) ---- */
     // The device does check/apply asynchronously (a worker runs the blocking
     // HTTPS transfer), so the flow is: trigger, then poll /api/firmware/status.
@@ -784,6 +800,8 @@
       saveConfig: saveConfig,
       getGamma: getGamma,
       setGamma: setGamma,
+      getWarmth: getWarmth,
+      setWarmth: setWarmth,
       checkFirmware: checkFirmware,
       updateFirmware: updateFirmware,
       updateWebUi: updateWebUi,

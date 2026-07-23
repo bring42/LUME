@@ -133,6 +133,7 @@ public:
     template <typename T> void setCorrection(T) {}  // accepts CRGB or a correction enum
     void setMaxPowerInVoltsAndMilliamps(uint8_t, uint32_t) {}
     void setDither(uint8_t) {}
+    void setTemperature(const CRGB&) {}
     void clear(bool = false) {}
     void show() {}
 };

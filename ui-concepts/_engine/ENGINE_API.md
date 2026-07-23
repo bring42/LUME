@@ -111,6 +111,9 @@ saveConfig(body) → Promise<{ok}>      // POST /api/config (see safety note)
 getGamma() → number                   // current dimming gamma (device config)
 setGamma(v) → Promise<{ok}>           // clamp to [1.0,3.5], persist via /api/config;
                                       // device re-applies live on the render loop
+getWarmth() → number                  // dim-to-warm strength [0..1] (device config)
+setWarmth(v) → Promise<{ok}>          // clamp to [0,1], persist via /api/config;
+                                      // 0 = neutral; device applies live like gamma
 setTransition(key, ms)                // live-tune a TRANSITION duration ("DRAG"|
                                       // "SETTLE"|"POWER"); updates engine.TRANSITION
                                       // in place + persists to localStorage

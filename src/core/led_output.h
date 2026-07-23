@@ -27,6 +27,10 @@ public:
     // Set the global output brightness (0-255).
     virtual void setBrightness(uint8_t brightness) = 0;
 
+    // Set a global color-temperature tint (CRGB scalar, 0xFFFFFF = neutral).
+    // Used by dim-to-warm. Default no-op so alternate/mock outputs need not care.
+    virtual void setTemperature(CRGB /*temp*/) {}
+
     // Blank the output.
     virtual void clear() = 0;
 };

@@ -52,6 +52,21 @@ constexpr float    LED_GAMMA                = 2.2f;
 constexpr float    LED_GAMMA_MIN            = 1.0f;
 constexpr float    LED_GAMMA_MAX            = 3.5f;
 
+// Dim-to-warm. As the perceptual level drops, the output color temperature is
+// blended from neutral white toward a warm target — mimicking how incandescent
+// sources warm as they dim (premium-lighting-criteria.md). The blend follows a
+// quadratic-in-(1-level) curve so the upper range stays neutral and only the
+// low end glides warm (a smooth amber, not the accidental red PWM floor). Warmth
+// is the *strength* [0..1] of the effect at the very bottom (0 = disabled) and
+// is runtime-tunable via config, like gamma. The warm endpoint is Tungsten40W
+// (2600 K, 255/197/143) — a cozy warm-white, not an orange.
+constexpr float    LED_WARMTH_DEFAULT       = 0.6f;
+constexpr float    LED_WARMTH_MIN           = 0.0f;
+constexpr float    LED_WARMTH_MAX           = 1.0f;
+constexpr uint8_t  LED_WARM_TARGET_R        = 255;   // Tungsten40W (2600 K)
+constexpr uint8_t  LED_WARM_TARGET_G        = 197;
+constexpr uint8_t  LED_WARM_TARGET_B        = 143;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // NETWORK CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════

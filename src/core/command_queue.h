@@ -41,6 +41,7 @@ enum class CommandType : uint8_t {
                         // powerOffAtZero rider makes it a "nightlight")
     SetGamma,           // Runtime perceptual-dimming gamma (see LED_GAMMA); applied
                         // on the loop so the output stage never reads a torn value
+    SetWarmth,          // Runtime dim-to-warm strength [0..1] (see LED_WARMTH_*)
 
     // Advanced
     ApplyEffectSpec,    // Apply AI-generated effect spec
@@ -237,6 +238,16 @@ struct Command {
         cmd.type = CommandType::SetGamma;
         cmd.segmentId = 255;  // Global
         cmd.data.valueFloat = gamma;
+        return cmd;
+    }
+
+    // Runtime dim-to-warm strength [0..1] (0 = off). Clamped on apply; see
+    // LED_WARMTH_MIN/MAX. Global (segment 255). Reuses the float union member.
+    static Command setWarmth(float warmth) {
+        Command cmd;
+        cmd.type = CommandType::SetWarmth;
+        cmd.segmentId = 255;  // Global
+        cmd.data.valueFloat = warmth;
         return cmd;
     }
     

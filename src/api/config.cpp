@@ -80,6 +80,8 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
             // through the bus so the render loop (single writer) adopts the value
             // just persisted above — never mutate controller state from this task.
             lume::controller.enqueueCommand(lume::Command::setGamma(config.gamma));
+            // Same story for dim-to-warm strength: live, via the bus.
+            lume::controller.enqueueCommand(lume::Command::setWarmth(config.warmth));
 
             request->send(200, "application/json", "{\"success\":true}");
         } else {

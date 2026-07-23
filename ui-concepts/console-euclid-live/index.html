@@ -344,7 +344,7 @@
         <span class="rack-led on"></span>
       </div>
       <div class="rack-unit-body">
-        <div class="helptext">Shape how the light moves. The durations are the eased <b>follow</b> while you drag a control, the graceful <b>settle</b> on release, and the deliberate <b>power</b> fade. <b>Gamma</b> bends the dimming curve so equal fader steps read as equal <em>perceived</em> steps.</div>
+        <div class="helptext">Shape how the light moves. The durations are the eased <b>follow</b> while you drag a control, the graceful <b>settle</b> on release, and the deliberate <b>power</b> fade. <b>Gamma</b> bends the dimming curve so equal fader steps read as equal <em>perceived</em> steps. <b>Dim-to-Warm</b> glides the color toward a warm amber as it dims, like incandescent — 0% is neutral.</div>
 
         <div class="tune-field">
           <span class="jack-label">Transition · Follow (drag)</span>
@@ -365,6 +365,11 @@
           <span class="jack-label">Gamma · Dimming Curve</span>
           <input type="range" class="mini-slider" id="tuneGamma" min="1.0" max="3.5" step="0.1" value="2.2" />
           <span class="tune-val" id="tuneGammaVal">2.2</span>
+        </div>
+        <div class="tune-field">
+          <span class="jack-label">Dim-to-Warm</span>
+          <input type="range" class="mini-slider" id="tuneWarmth" min="0" max="1" step="0.05" value="0.6" />
+          <span class="tune-val" id="tuneWarmthVal">60%</span>
         </div>
 
         <div class="tune-live">

@@ -25,6 +25,7 @@ LumeController::LumeController()
     , power(true)
     , globalBrightness(255)
     , ledGamma_(LED_GAMMA)          // runtime gamma, seeded from the compile default
+    , warmth_(LED_WARMTH_DEFAULT)   // dim-to-warm strength, seeded from the default
 
     , powerOffWhenSettled_(false)
     , powerOffWhenFadeSettles_(false)
@@ -118,6 +119,18 @@ void LumeController::update() {
         uint8_t perceptual = (powerEnv == 255) ? globalBrightness
                                                : scale8(globalBrightness, powerEnv);
         output_->setBrightness(applyGamma_video(perceptual, ledGamma_));
+
+        // Dim-to-warm: blend the output color temperature from neutral white
+        // toward the warm target as the perceptual level drops, so the low end
+        // glides to a designed amber instead of the accidental red PWM floor.
+        // Quadratic in (1 - level): near-neutral through the upper range, warm
+        // only down low. `t` in [0,1] scaled by the runtime warmth_ strength;
+        // warmth_ == 0 yields neutral (0xFFFFFF), i.e. no tint.
+        float dim = 1.0f - (float)perceptual / 255.0f;
+        float t = warmth_ * dim * dim;
+        output_->setTemperature(CRGB(lerpU8(255, LED_WARM_TARGET_R, t),
+                                     lerpU8(255, LED_WARM_TARGET_G, t),
+                                     lerpU8(255, LED_WARM_TARGET_B, t)));
 
         // Flip logical power off once a fade-out envelope reaches zero.
         if (powerOffWhenFadeSettles_ && !powerFade_.isActive()) {
@@ -253,6 +266,13 @@ void LumeController::executeCommand(const Command& cmd) {
             // setGamma() clamps to [LED_GAMMA_MIN, LED_GAMMA_MAX].
             setGamma(cmd.data.valueFloat);
             LOG_INFO(LogTag::LED, "Gamma -> %.2f", ledGamma_);
+            break;
+
+        case CommandType::SetWarmth:
+            // Runtime dim-to-warm strength. Applied on the loop; setWarmth()
+            // clamps to [LED_WARMTH_MIN, LED_WARMTH_MAX].
+            setWarmth(cmd.data.valueFloat);
+            LOG_INFO(LogTag::LED, "Warmth -> %.2f", warmth_);
             break;
 
         case CommandType::ApplyEffectSpec: {

@@ -479,10 +479,31 @@ void test_gamma_via_bus_and_clamps() {
     TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_GAMMA_MIN, c.getGamma());
 }
 
+// Dim-to-warm strength rides the bus like gamma: deferred to the loop, clamped
+// to [LED_WARMTH_MIN, LED_WARMTH_MAX], seeded from the default.
+void test_warmth_via_bus_and_clamps() {
+    LumeController c;
+    c.begin(60);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_WARMTH_DEFAULT, c.getWarmth());  // seeded
+
+    c.enqueueCommand(Command::setWarmth(0.9f));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_WARMTH_DEFAULT, c.getWarmth());  // deferred
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.9f, c.getWarmth());               // applied on loop
+
+    c.enqueueCommand(Command::setWarmth(5.0f));   // above range
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_WARMTH_MAX, c.getWarmth());
+    c.enqueueCommand(Command::setWarmth(-1.0f));  // below range
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_WARMTH_MIN, c.getWarmth());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_led_output_is_pluggable);
     RUN_TEST(test_gamma_via_bus_and_clamps);
+    RUN_TEST(test_warmth_via_bus_and_clamps);
     RUN_TEST(test_serialize_segment_canonical_shape);
     RUN_TEST(test_create_is_deferred_then_applied);
     RUN_TEST(test_update_changes_params);

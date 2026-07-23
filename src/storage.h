@@ -34,6 +34,7 @@ struct Config {
     uint16_t ledCount;
     uint8_t defaultBrightness;
     float gamma;                  // Perceptual-dimming exponent (see LED_GAMMA)
+    float warmth;                 // Dim-to-warm strength [0..1] (see LED_WARMTH_*)
     // sACN (E1.31) settings
     bool sacnEnabled;
     uint16_t sacnUniverse;        // Starting universe
@@ -58,6 +59,7 @@ struct Config {
         ledCount(160),
         defaultBrightness(128),
         gamma(LED_GAMMA),
+        warmth(LED_WARMTH_DEFAULT),
         sacnEnabled(false),
         sacnUniverse(1),
         sacnUniverseCount(1),
