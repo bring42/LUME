@@ -1361,7 +1361,9 @@ function initModules() {
 
   const modules = () => $$("#viewMain > [data-module]");
 
-  // Restore saved order (unknown/new modules keep their markup order at the end).
+  // Restore saved order. Saved modules are re-appended in order; any module
+  // not in the saved list (e.g. one added in a future version) is left where
+  // it is and so surfaces ahead of the restored ones until reordered.
   const savedOrder = store.get(KEY_ORDER);
   if (Array.isArray(savedOrder)) {
     const byId = new Map(modules().map((m) => [m.dataset.module, m]));
@@ -1370,7 +1372,8 @@ function initModules() {
   const saveOrder = () => store.set(KEY_ORDER, modules().map((m) => m.dataset.module));
 
   // Restore + wire collapse state.
-  const collapsed = new Set(store.get(KEY_COLLAPSED) || []);
+  const savedCollapsed = store.get(KEY_COLLAPSED);
+  const collapsed = new Set(Array.isArray(savedCollapsed) ? savedCollapsed : []);
   const saveCollapsed = () => store.set(KEY_COLLAPSED, Array.from(collapsed));
 
   let dragEl = null;
