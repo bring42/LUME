@@ -315,6 +315,21 @@ input, button, textarea{ font-family: inherit; color: inherit; }
   box-shadow: none;
 }
 
+/* Keep the CONSOLE/SETTINGS toggle on-screen on narrow viewports: the rail is
+   otherwise all flex-shrink:0 and overflows off the right edge. Shed the
+   decorative model number + divider first, then tighten spacing on the
+   smallest screens so the wordmark + toggle always fit. */
+@media (max-width: 620px){
+  .brand-model{ display: none; }
+  .brand-plate{ padding-right: 0; border-right: none; }
+}
+@media (max-width: 440px){
+  .top-rail{ padding: 12px 12px; gap: 8px; }
+  .brand{ gap: 9px; }
+  .brand-plate .mark{ font-size: 18px; letter-spacing: 0.2em; }
+  .nav-toggle button{ padding: 7px 11px; }
+}
+
 /* ==========================================================================
    Views
    ========================================================================== */
