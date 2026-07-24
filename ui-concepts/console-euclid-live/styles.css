@@ -57,6 +57,40 @@
   --font-ui: "Source Serif 4", Georgia, serif;
   --font-mono: "Space Mono", ui-monospace, monospace;
   --font-display: "Fraunces", "Source Serif 4", Georgia, serif;
+  /* wordmark only — a clean grotesque that pairs with the Space Mono labels */
+  --font-brand: "Space Grotesk", "Space Mono", ui-sans-serif, system-ui, sans-serif;
+
+  color-scheme: dark;
+}
+
+/* ==========================================================================
+   Light "paper" theme — the lit-instrument identity inverts to ink-on-paper
+   rather than going generic-white. app.js resolves the Auto / Light / Dark
+   preference to a concrete data-theme on <html>; only the grounds, ink and
+   hairlines flip here — the three flat accents (amber / red / blue / green)
+   are shared across both themes, and the many `background: var(--c-text)`
+   fills invert cream→ink automatically, staying high-contrast either way.
+   ========================================================================== */
+:root[data-theme="light"]{
+  color-scheme: light;
+
+  --c-void:        #EBE2CE;
+  --c-chassis:     #E4DAC2;
+  --c-chassis-hi:  #F0E8D7;
+  --c-panel:       #E4DAC2;
+  --c-panel-hi:    #F0E8D7;
+  --c-panel-in:    #DBCFB4;
+  --c-line:        #23201750;
+  --c-line-soft:   #23201730;
+  --c-line-hair:   #2320171c;
+
+  --c-text:        #201C13;
+  --c-text-dim:    #201C13ad;
+  --c-text-faint:  #201C1370;
+
+  --c-paper:       #F2ECDC;
+  --c-paper-dim:   #E4DAC2;
+  --c-on-ink:      #F2ECDC;
 }
 
 *{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -165,10 +199,10 @@ input, button, textarea{ font-family: inherit; color: inherit; }
 }
 
 .brand-plate .mark{
-  font-family: var(--font-display);
+  font-family: var(--font-brand);
   font-weight: 600;
-  font-size: 21px;
-  letter-spacing: 0.16em;
+  font-size: 20px;
+  letter-spacing: 0.28em;
   color: var(--c-text);
   position: relative;
   padding-left: 1px;
@@ -340,6 +374,58 @@ input, button, textarea{ font-family: inherit; color: inherit; }
   background: var(--c-red);
   box-shadow: none;
 }
+
+/* ==========================================================================
+   Modules — collapsible + drag-reorderable panels
+   Every main-view block is a self-contained `.module` with a `.module-head`
+   that doubles as the drag handle and hosts the collapse chevron.
+   ========================================================================== */
+
+.module{
+  transition: box-shadow var(--t-fast) var(--ease), opacity var(--t-fast) var(--ease);
+}
+
+.module-head{
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.module-head:active{ cursor: grabbing; }
+
+.module-tools{
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.module-collapse{
+  width: 22px; height: 22px;
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--c-text-faint);
+  cursor: pointer;
+  border-radius: var(--radius-panel);
+  transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.module-collapse:hover{ color: var(--c-text); background: var(--c-line-soft); }
+.module-collapse .chevron{
+  width: 15px; height: 15px;
+  transition: transform var(--t-med) var(--ease);
+}
+.module.is-collapsed .module-collapse .chevron{ transform: rotate(-90deg); }
+
+/* Collapsed: keep only the head, hide the body */
+.module.is-collapsed > :not(.module-head){ display: none !important; }
+.module.is-collapsed .module-head{ margin-bottom: 0; }
+
+/* Drag feedback */
+.module.is-dragging{ opacity: 0.5; }
+.modules-dragging .module-head{ cursor: grabbing; }
+.module.drop-before{ box-shadow: inset 0 2px 0 0 var(--c-red); }
+.module.drop-after{ box-shadow: inset 0 -2px 0 0 var(--c-red); }
 
 /* ==========================================================================
    Master rail: power, brightness fader, nightlight, AI prompt
@@ -1419,6 +1505,34 @@ input, button, textarea{ font-family: inherit; color: inherit; }
 .toggle-field-text{ display:flex; flex-direction:column; gap:2px; }
 .toggle-field-title{ font-size: 13px; color: var(--c-text); }
 .toggle-field-sub{ font-family: var(--font-mono); font-size: 9.5px; color: var(--c-text-faint); }
+
+/* Theme segmented control (Auto / Light / Dark) — mirrors the top-rail nav */
+.theme-seg{
+  display: inline-flex;
+  border: var(--hair) solid var(--c-line);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.theme-seg-btn{
+  border: none;
+  background: transparent;
+  color: var(--c-text-faint);
+  padding: 7px 13px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color var(--t-med) var(--ease), background var(--t-med) var(--ease);
+}
+.theme-seg-btn + .theme-seg-btn{ border-left: var(--hair) solid var(--c-line); }
+.theme-seg-btn:hover{ color: var(--c-text-dim); }
+.theme-seg-btn.active{
+  color: var(--c-void);
+  background: var(--c-text);
+}
 
 .sub-body{
   display: grid;
