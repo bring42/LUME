@@ -1062,18 +1062,18 @@ $("#sacnUniverse").addEventListener("change", (e) => {
   });
 });
 
-// OTA: real pull-based update, with the firmware and the web UI (filesystem) as
-// two INDEPENDENT actions (mirroring `pio run -t upload` vs `-t uploadfs`). One
-// unified check reveals what's available; each action then runs its own
-// confirm → progress → reboot. The device does the work asynchronously (engine
-// polls /api/firmware/status); this just drives the buttons/status/progress.
+// OTA: real pull-based update. Firmware and web UI (filesystem) are one
+// versioned release and update ATOMICALLY — a single check reveals whether
+// anything is behind, and one "Install Update" flashes whatever's stale (fs +
+// app) and reboots once. No half-updates. The device does the work
+// asynchronously (engine polls /api/firmware/status); this drives the button,
+// status text, and progress bar.
 (function wireOta() {
   const btn = $("#otaBtn");
   if (!btn) return;
   const statusEl = $("#otaStatus");
   const actions = $("#otaActions");
-  const btnApp = $("#otaBtnApp");
-  const btnFs = $("#otaBtnFs");
+  const btnUpdate = $("#otaBtnUpdate");
   const wrap = $("#otaProgressWrap");
   const fill = $("#otaProgressFill");
   let busy = false;
@@ -1085,29 +1085,7 @@ $("#sacnUniverse").addEventListener("change", (e) => {
   function showActions(show) { if (actions) actions.style.display = show ? "flex" : "none"; }
   function setBusy(on) {
     busy = on;
-    btn.disabled = on; if (btnApp) btnApp.disabled = on; if (btnFs) btnFs.disabled = on;
-  }
-
-  // Run one independent apply action (app or fs). `apply` is the engine method.
-  function runApply(kind, apply, label) {
-    setBusy(true);
-    if (statusEl) statusEl.textContent = "Installing " + label + "…";
-    setProgress(0);
-    apply((st) => {
-      if (!st) return;
-      if (st.percent != null) setProgress(st.percent);
-      if (statusEl) statusEl.textContent = "Installing " + label +
-        (st.stage ? " (" + st.stage + ")" : "") + "… " + (st.percent || 0) + "%";
-    }).then((final) => {
-      if (!final || final.phase === "rebooting") {
-        if (statusEl) statusEl.textContent = label + " installed — device rebooting. Reload in ~30 s.";
-        setProgress(100);
-        showToast(label + " updated — rebooting");
-      } else {
-        if (statusEl) statusEl.textContent = label + " update failed" + (final.error ? ": " + final.error : "");
-        setProgress(null); setBusy(false);
-      }
-    });
+    btn.disabled = on; if (btnUpdate) btnUpdate.disabled = on;
   }
 
   btn.addEventListener("click", () => {
@@ -1123,32 +1101,40 @@ $("#sacnUniverse").addEventListener("change", (e) => {
         if (statusEl) statusEl.textContent = "Check failed" + (s && s.error ? ": " + s.error : "");
         return;
       }
-      if (!s.appAvailable && !s.fsAvailable) {
+      if (!s.updateAvailable) {
         if (statusEl) statusEl.textContent = "Up to date (v" + (s.current || "?") + "). Last checked just now.";
         return;
       }
       if (statusEl) statusEl.textContent = "Update available: v" + s.latest +
-        (s.notes ? " — " + s.notes : "") + ". Choose what to install.";
-      if (btnApp) btnApp.disabled = !s.appAvailable;
-      if (btnFs) btnFs.disabled = !s.fsAvailable;
+        (s.notes ? " — " + s.notes : "") + ".";
       showActions(true);
     });
   });
 
-  if (btnApp) btnApp.addEventListener("click", () => {
-    if (busy || btnApp.disabled) return;
-    if (!window.confirm("Update the device FIRMWARE now?\n\nThe device will reboot and be " +
-      "briefly offline. Firmware updates are A/B-protected — a failed download can't brick it. " +
-      "Do NOT power it off during the update.")) return;
-    runApply("app", engine.updateFirmware, "Firmware");
-  });
+  if (btnUpdate) btnUpdate.addEventListener("click", () => {
+    if (busy || btnUpdate.disabled) return;
+    if (!window.confirm("Install the update now?\n\nThis flashes the firmware and web UI together, then " +
+      "the device reboots and is briefly offline. Firmware is A/B-protected — a failed download can't " +
+      "brick it. Do NOT power it off during the update.")) return;
 
-  if (btnFs) btnFs.addEventListener("click", () => {
-    if (busy || btnFs.disabled) return;
-    if (!window.confirm("Update the WEB UI (filesystem) now?\n\nThe device will reboot and be " +
-      "briefly offline. If interrupted, the UI may need re-flashing (recoverable). " +
-      "Do NOT power it off during the update.")) return;
-    runApply("fs", engine.updateWebUi, "Web UI");
+    setBusy(true);
+    if (statusEl) statusEl.textContent = "Installing update…";
+    setProgress(0);
+    engine.applyUpdate((st) => {
+      if (!st) return;
+      if (st.percent != null) setProgress(st.percent);
+      if (statusEl) statusEl.textContent = "Installing update" +
+        (st.stage ? " (" + st.stage + ")" : "") + "… " + (st.percent || 0) + "%";
+    }).then((final) => {
+      if (!final || final.phase === "rebooting") {
+        if (statusEl) statusEl.textContent = "Update installed — device rebooting. Reload in ~30 s.";
+        setProgress(100);
+        showToast("Update installed — rebooting");
+      } else {
+        if (statusEl) statusEl.textContent = "Update failed" + (final.error ? ": " + final.error : "");
+        setProgress(null); setBusy(false);
+      }
+    });
   });
 })();
 

@@ -18,8 +18,9 @@ static void serializeStatus(const lume::UpdateStatus& s, String& out) {
     JsonDocument doc;
     doc["phase"]           = lume::updatePhaseName(s.phase);
     doc["current"]         = s.current;
+    doc["fsVersion"]       = s.fsVersion[0] ? s.fsVersion : (const char*)nullptr;
     doc["latest"]          = s.latest[0] ? s.latest : (const char*)nullptr;
-    doc["updateAvailable"] = s.updateAvailable;   // == appAvailable (compat)
+    doc["updateAvailable"] = s.updateAvailable;   // app OR fs behind
     doc["appAvailable"]    = s.appAvailable;
     doc["fsAvailable"]     = s.fsAvailable;
     doc["notes"]           = s.notes[0] ? s.notes : (const char*)nullptr;
@@ -44,6 +45,21 @@ void handleApiFirmwareStatus(AsyncWebServerRequest* request) {
     String out;
     serializeStatus(lume::updaterStatus(), out);
     request->send(200, "application/json", out);
+}
+
+void handleApiFirmwareUpdate(AsyncWebServerRequest* request) {
+    if (!checkAuth(request)) { sendUnauthorized(request); return; }
+    lume::UpdateStatus s = lume::updaterStatus();
+    if (!s.updateAvailable) {
+        request->send(400, "application/json",
+                      "{\"error\":\"No update available; run /api/firmware/check first\"}");
+        return;
+    }
+    if (!lume::requestUpdate()) {
+        request->send(409, "application/json", "{\"error\":\"Updater busy\"}");
+        return;
+    }
+    request->send(202, "application/json", "{\"status\":\"updating\",\"target\":\"both\"}");
 }
 
 void handleApiFirmwareUpdateApp(AsyncWebServerRequest* request) {

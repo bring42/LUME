@@ -883,7 +883,10 @@
       });
     }
 
-    // Two independent apply actions (mirror `pio run -t upload` / `-t uploadfs`).
+    // The normal path: one atomic update that flashes whatever is behind
+    // (filesystem + firmware) and reboots once — the device can't half-update.
+    function applyUpdate(onProgress)    { return applyTarget("/api/firmware/update", onProgress); }
+    // Low-level per-image applies, kept for recovery/debug.
     function updateFirmware(onProgress) { return applyTarget("/api/firmware/update/app", onProgress); }
     function updateWebUi(onProgress)    { return applyTarget("/api/firmware/update/fs", onProgress); }
 
@@ -921,6 +924,7 @@
       getWarmth: getWarmth,
       setWarmth: setWarmth,
       checkFirmware: checkFirmware,
+      applyUpdate: applyUpdate,
       updateFirmware: updateFirmware,
       updateWebUi: updateWebUi,
       firmwareStatus: firmwareStatus,
