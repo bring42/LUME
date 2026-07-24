@@ -493,17 +493,34 @@ void doApplyBoth() {
              g_target.appBehind ? "yes" : "no");
 
     String err;
+    bool fsFlashed = false;
     if (g_target.fsBehind && g_target.hasFs) {
         if (!downloadVerifyFlash(g_target.fsUrl, g_target.fsSha, g_target.fsSize,
                                  U_SPIFFS, "fs", err)) {
+            // fs partition may be partially written; stay up (no reboot) so the
+            // user can retry, matching doApplyFs's documented behavior.
             setError(err);
             return;
         }
+        fsFlashed = true;
     }
     if (g_target.appBehind) {
         if (!downloadVerifyFlash(g_target.appUrl, g_target.appSha, g_target.appSize,
                                  U_FLASH, "app", err)) {
             setError(err);
+            // If the fs was already flashed, the new UI is committed and live
+            // under a now-stale mount — we MUST reboot so it mounts cleanly. We
+            // come back on the OLD app (its boot slot was never switched) serving
+            // the NEW UI, which is the tolerated direction; the next check sees
+            // appBehind and re-offers the firmware (self-heal). Without the fs
+            // flash there's nothing destructive to recover from — just report.
+            if (fsFlashed) {
+                LOG_INFO(LogTag::OTA,
+                         "Updater: app flash failed after fs; rebooting to mount new fs (firmware re-offered next check)");
+                setPhase(UpdatePhase::Rebooting, "", 100);
+                delay(1500);
+                ESP.restart();
+            }
             return;
         }
     }
