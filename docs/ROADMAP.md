@@ -39,9 +39,11 @@ transport HAL + normalized-coordinate canvas), `docs/rfcs/0001-command-bus.md`,
 ## What's left (no P0s remain)
 
 - **P1.6 Scenes** — dead backend + a UI that 404s; decide implement-or-remove.
-- **P2/P3 cleanups** — `removeSegment` copy-by-value scratchpad aliasing (make
-  `Segment` non-copyable/handle-based; the P1.5 borrow model sidesteps but doesn't fix
-  it); effect LED-caps; `clearUncoveredLeds` O(n·segs).
+- **P2/P3 cleanups** — `removeSegment` copy-by-value scratchpad aliasing is now
+  defused in place (each shifted survivor re-binds its view to its own inline pad via
+  `Segment::rebindScratchpad`, regression-tested in `test_command_bus`); making
+  `Segment` non-copyable/handle-based remains an optional deeper cleanup. Still open:
+  effect LED-caps; `clearUncoveredLeds` O(n·segs).
 - **Matter** stays bridge-first (MQTT→Home Assistant, $0, Arduino); native on-device
   Matter deferred. A WIP HA branch is parked.
 

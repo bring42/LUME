@@ -413,6 +413,49 @@ void test_enumeration_survives_middle_delete() {
     TEST_ASSERT_NULL(c.getSegmentByIndex(2));     // out of range
 }
 
+// P2 (scratchpad aliasing): removeSegment shifts survivors down with copy-
+// assignment. That duplicates each Segment's inline scratchpad bytes correctly,
+// but used to leave a shifted survivor's SegmentView.scratchpad pointing at the
+// REMOVED neighbor's inline pad — two segments then rendered through one physical
+// pad and stateful effects (fire heat, rain drops) bled across channels. After a
+// mid-array delete, every survivor's view must point back at its OWN inline pad.
+void test_scratchpad_rebinds_to_own_pad_after_middle_delete() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::applyEffectSpec(255, makeCreateSpec(0,  20, 100)));  // id 0
+    c.enqueueCommand(Command::applyEffectSpec(255, makeCreateSpec(20, 20, 100)));  // id 1
+    c.enqueueCommand(Command::applyEffectSpec(255, makeCreateSpec(40, 20, 100)));  // id 2
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(3, c.getSegmentCount());
+
+    c.enqueueCommand(Command::removeSegment(1));   // delete the MIDDLE segment
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(2, c.getSegmentCount());
+
+    Segment* s0 = c.getSegmentByIndex(0);          // id 0, slot untouched by the shift
+    Segment* s1 = c.getSegmentByIndex(1);          // id 2, shifted down one slot
+    TEST_ASSERT_NOT_NULL(s0);
+    TEST_ASSERT_NOT_NULL(s1);
+    TEST_ASSERT_EQUAL_UINT8(0, s0->getId());
+    TEST_ASSERT_EQUAL_UINT8(2, s1->getId());
+
+    // getScratchpad<>() returns the address of a segment's OWN inline pad. Each
+    // survivor's view must point there; pre-fix, s1's view aliased the removed
+    // neighbor's pad, so this pointer would differ.
+    TEST_ASSERT_EQUAL_PTR(s0->getScratchpad<uint8_t>(), s0->getView().scratchpad);
+    TEST_ASSERT_EQUAL_PTR(s1->getScratchpad<uint8_t>(), s1->getView().scratchpad);
+
+    // ...and the two survivors must not share one physical pad.
+    TEST_ASSERT_TRUE(s0->getView().scratchpad != s1->getView().scratchpad);
+
+    // Behavioral proof of isolation: state written through one view's pad must not
+    // appear in the other's — the exact cross-segment bleed the aliasing caused.
+    s0->getView().scratchpad[0] = 0xAA;
+    s1->getView().scratchpad[0] = 0x55;
+    TEST_ASSERT_EQUAL_UINT8(0xAA, s0->getView().scratchpad[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x55, s1->getView().scratchpad[0]);
+}
+
 // P0.8: the ReconfigureProtocols command runs the registered hook on the loop.
 static int g_reconfigCalls = 0;
 static void fakeReconfig() { g_reconfigCalls++; }
@@ -671,6 +714,7 @@ int main(int, char**) {
     RUN_TEST(test_ai_semantic_params_via_bus);
     RUN_TEST(test_setcolor_maps_index_to_ordered_color_slot);
     RUN_TEST(test_enumeration_survives_middle_delete);
+    RUN_TEST(test_scratchpad_rebinds_to_own_pad_after_middle_delete);
     RUN_TEST(test_reconfigure_protocols_runs_hook_on_loop);
     RUN_TEST(test_direct_pixels_are_deferred_then_applied);
     return UNITY_END();
