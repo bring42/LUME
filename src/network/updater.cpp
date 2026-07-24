@@ -40,6 +40,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Update.h>
+#include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -80,9 +81,9 @@ const char* updatePhaseName(UpdatePhase p) {
 namespace {
 
 // ── Worker plumbing ──────────────────────────────────────────────────────────
-// ApplyApp and ApplyFs are fully independent operations — neither triggers the
-// other. This mirrors the dev flow (`pio run -t upload` vs `-t uploadfs`).
-enum class Cmd : uint8_t { Check, ApplyApp, ApplyFs };
+// ApplyBoth is the normal atomic path (flash whichever images are behind, one
+// reboot). ApplyApp/ApplyFs remain as low-level recovery/debug operations.
+enum class Cmd : uint8_t { Check, ApplyBoth, ApplyApp, ApplyFs };
 
 QueueHandle_t     g_cmdQueue = nullptr;
 TaskHandle_t      g_task     = nullptr;
@@ -102,7 +103,9 @@ struct Target {
     String  appUrl, appSha;  size_t appSize = 0;
     String  fsUrl,  fsSha;   size_t fsSize  = 0;
     bool    hasFs = false;
-    bool    available = false;
+    bool    available = false;   // appBehind || fsBehind
+    bool    appBehind = false;   // running firmware older than latest
+    bool    fsBehind  = false;   // installed filesystem older than latest (or unstamped)
 } g_target;
 
 // ── Status helpers (locked) ──────────────────────────────────────────────────
@@ -304,6 +307,19 @@ bool downloadVerifyFlash(const String& url, const String& expectedSha,
     return true;
 }
 
+// Read the filesystem's own version stamp, written into the LittleFS image at
+// build time (scripts/version.py -> data/fsver). Returns "" if the file is
+// absent — which is the case for any image built before the stamp existed, so
+// the caller treats "" as "older than any release" and self-heals it.
+String readInstalledFsVersion() {
+    File f = LittleFS.open("/fsver", "r");
+    if (!f) return String();
+    String v = f.readStringUntil('\n');
+    f.close();
+    v.trim();
+    return v;
+}
+
 // ── Check ────────────────────────────────────────────────────────────────────
 bool doCheck(String& err) {
     setPhase(UpdatePhase::Checking);
@@ -371,30 +387,40 @@ bool doCheck(String& err) {
         return false;
     }
 
-    bool avail = isNewer(g_target.latest, String(FIRMWARE_VERSION));
-    g_target.available = avail;
+    // Compare BOTH installed images to the latest release independently. The app
+    // version is baked in (FIRMWARE_VERSION); the fs version is read from the
+    // running LittleFS image's /fsver stamp. An unstamped fs (legacy image) reads
+    // as "" and is treated as behind, so a device that only ever got a firmware
+    // update — the classic footgun — still self-heals its stale UI on next check.
+    const String fsInstalled = readInstalledFsVersion();
 
-    // App and FS are versioned together (one release), so both become available
-    // when a newer version is published — but only the app is guaranteed to
-    // exist; the FS image is offered only when the manifest actually carries it.
-    bool appAvail = avail;
-    bool fsAvail  = avail && g_target.hasFs;
+    bool appBehind = isNewer(g_target.latest, String(FIRMWARE_VERSION));
+    bool fsBehind;
+    if (!g_target.hasFs)                fsBehind = false;              // no fs image published
+    else if (fsInstalled.length() == 0) fsBehind = true;              // unstamped legacy fs -> stale
+    else                                fsBehind = isNewer(g_target.latest, fsInstalled);
+
+    bool avail = appBehind || fsBehind;
+    g_target.appBehind = appBehind;
+    g_target.fsBehind  = fsBehind;
+    g_target.available = avail;
 
     const char* notes = doc["notes"] | "";
 
     lock();
     copyStr(g_status.latest, sizeof(g_status.latest), g_target.latest.c_str());
+    copyStr(g_status.fsVersion, sizeof(g_status.fsVersion), fsInstalled.c_str());
     copyStr(g_status.notes, sizeof(g_status.notes), notes);
-    g_status.updateAvailable = appAvail;
-    g_status.appAvailable = appAvail;
-    g_status.fsAvailable = fsAvail;
+    g_status.updateAvailable = avail;
+    g_status.appAvailable = appBehind;
+    g_status.fsAvailable = fsBehind;
     g_status.phase = avail ? UpdatePhase::Available : UpdatePhase::UpToDate;
     unlock();
 
-    LOG_INFO(LogTag::OTA, "Updater: current=%s latest=%s -> %s (fs=%s)",
-             FIRMWARE_VERSION, g_target.latest.c_str(),
-             avail ? "UPDATE AVAILABLE" : "up to date",
-             fsAvail ? "yes" : "no");
+    LOG_INFO(LogTag::OTA, "Updater: app=%s fs=%s latest=%s -> %s (app=%s fs=%s)",
+             FIRMWARE_VERSION, fsInstalled.length() ? fsInstalled.c_str() : "(unstamped)",
+             g_target.latest.c_str(), avail ? "UPDATE AVAILABLE" : "up to date",
+             appBehind ? "yes" : "no", fsBehind ? "yes" : "no");
     return true;
 }
 
@@ -447,6 +473,47 @@ void doApplyFs() {
     ESP.restart();
 }
 
+// ── Apply: atomic (filesystem + firmware) ────────────────────────────────────
+// The normal update path. Flashes only the images that are actually behind —
+// filesystem first (single partition, in-place), then firmware (inactive A/B
+// slot) — and reboots ONCE at the end so the two images move together. On any
+// failure it stops and reports; a later check re-detects whatever is still
+// behind (the fs stamp makes a half-finished update self-healing), so the user
+// just retries. Order matters: if the app flash fails after the fs succeeded,
+// we boot the old app on the new UI (tolerated); we never boot a new app on an
+// old UI.
+void doApplyBoth() {
+    if (!g_target.available) {
+        setError("No update available (run check first)");
+        return;
+    }
+    LOG_INFO(LogTag::OTA, "Updater: applying update %s (fs=%s app=%s)",
+             g_target.latest.c_str(),
+             (g_target.fsBehind && g_target.hasFs) ? "yes" : "no",
+             g_target.appBehind ? "yes" : "no");
+
+    String err;
+    if (g_target.fsBehind && g_target.hasFs) {
+        if (!downloadVerifyFlash(g_target.fsUrl, g_target.fsSha, g_target.fsSize,
+                                 U_SPIFFS, "fs", err)) {
+            setError(err);
+            return;
+        }
+    }
+    if (g_target.appBehind) {
+        if (!downloadVerifyFlash(g_target.appUrl, g_target.appSha, g_target.appSize,
+                                 U_FLASH, "app", err)) {
+            setError(err);
+            return;
+        }
+    }
+
+    setPhase(UpdatePhase::Rebooting, "", 100);
+    LOG_INFO(LogTag::OTA, "Updater: update complete, rebooting");
+    delay(1500);          // let the polling UI observe the "rebooting" status
+    ESP.restart();
+}
+
 void workerTask(void*) {
     Cmd cmd;
     for (;;) {
@@ -454,9 +521,10 @@ void workerTask(void*) {
 
         String err;
         switch (cmd) {
-            case Cmd::Check:    if (!doCheck(err)) setError(err); break;
-            case Cmd::ApplyApp: doApplyApp(); break;  // sets its own error / reboots
-            case Cmd::ApplyFs:  doApplyFs();  break;  // sets its own error / reboots
+            case Cmd::Check:     if (!doCheck(err)) setError(err); break;
+            case Cmd::ApplyBoth: doApplyBoth(); break;  // sets its own error / reboots
+            case Cmd::ApplyApp:  doApplyApp();  break;  // sets its own error / reboots
+            case Cmd::ApplyFs:   doApplyFs();   break;  // sets its own error / reboots
         }
         g_busy.store(false);
     }
@@ -484,6 +552,16 @@ bool requestUpdateCheck() {
     bool expected = false;
     if (!g_busy.compare_exchange_strong(expected, true)) return false;
     Cmd c = Cmd::Check;
+    if (xQueueSend(g_cmdQueue, &c, 0) != pdTRUE) { g_busy.store(false); return false; }
+    return true;
+}
+
+bool requestUpdate() {
+    if (!g_cmdQueue) return false;
+    if (!g_target.available) return false;
+    bool expected = false;
+    if (!g_busy.compare_exchange_strong(expected, true)) return false;
+    Cmd c = Cmd::ApplyBoth;
     if (xQueueSend(g_cmdQueue, &c, 0) != pdTRUE) { g_busy.store(false); return false; }
     return true;
 }

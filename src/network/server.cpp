@@ -291,8 +291,9 @@ void setupServer() {
     // triggers the other.
     server.on("/api/firmware/check", HTTP_POST, handleApiFirmwareCheck);
     server.on("/api/firmware/status", HTTP_GET, handleApiFirmwareStatus);
-    server.on("/api/firmware/update/app", HTTP_POST, handleApiFirmwareUpdateApp);
-    server.on("/api/firmware/update/fs", HTTP_POST, handleApiFirmwareUpdateFs);
+    server.on("/api/firmware/update", HTTP_POST, handleApiFirmwareUpdate);        // atomic (UI)
+    server.on("/api/firmware/update/app", HTTP_POST, handleApiFirmwareUpdateApp); // recovery
+    server.on("/api/firmware/update/fs", HTTP_POST, handleApiFirmwareUpdateFs);   // recovery
 
     // ===========================================================================
     

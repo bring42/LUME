@@ -29,13 +29,16 @@ const char* updatePhaseName(UpdatePhase p);
 // worker's mutation of the live struct.
 struct UpdateStatus {
     UpdatePhase phase = UpdatePhase::Idle;
-    char    current[24]   = {0};   // running firmware version
+    char    current[24]   = {0};   // running firmware (app) version
+    char    fsVersion[24] = {0};   // installed filesystem version (from /fsver; "" if unstamped)
     char    latest[24]    = {0};   // latest published version (after a check)
-    // A single check reports availability for BOTH images from one manifest.
-    // The apply step, by contrast, is split into two independent operations.
-    bool    updateAvailable = false; // == appAvailable (kept for compatibility)
-    bool    appAvailable    = false; // newer firmware image is published
-    bool    fsAvailable     = false; // newer filesystem image is published
+    // A single check reports whether EITHER image is behind the latest release.
+    // updateAvailable is true if the app OR the filesystem needs updating, so a
+    // device whose two images have drifted (e.g. an interrupted update, or a
+    // legacy filesystem with no version stamp) still self-heals on the next check.
+    bool    updateAvailable = false; // app OR fs behind
+    bool    appAvailable    = false; // running firmware is behind the latest
+    bool    fsAvailable     = false; // installed filesystem is behind the latest
     char    notes[192]    = {0};   // release notes (truncated)
     uint8_t percent       = 0;     // 0..100 within the active phase
     char    stage[8]      = {0};   // which target is in progress: "app"|"fs"|""
@@ -50,14 +53,21 @@ void initUpdater();
 // One check populates both appAvailable and fsAvailable from the manifest.
 bool requestUpdateCheck();
 
+// Apply the update ATOMICALLY: flash whichever images are behind (filesystem
+// first, then firmware) and reboot ONCE. This is the normal update path — the
+// two images are versioned together as one release, so they're always updated
+// together and can never drift into a half-updated state. Returns false if the
+// worker is busy or nothing is available.
+bool requestUpdate();
+
 // Apply the firmware (app-slot) image ONLY: download → verify → flash the
-// inactive OTA slot → reboot. A/B protected; a failure never bricks. Returns
-// false if the worker is busy or no firmware update is available.
+// inactive OTA slot → reboot. Low-level recovery/debug path; the UI uses the
+// atomic requestUpdate() instead. A/B protected; a failure never bricks.
 bool requestAppUpdate();
 
 // Apply the filesystem (LittleFS) image ONLY: download → verify → flash the FS
-// partition → reboot. Independent of the firmware update — flashing one never
-// triggers the other. Returns false if busy or no FS update is available.
+// partition → reboot. Low-level recovery/debug path; the UI uses the atomic
+// requestUpdate() instead. Returns false if busy or no FS update is available.
 bool requestFsUpdate();
 
 // Thread-safe snapshot of the current updater status.

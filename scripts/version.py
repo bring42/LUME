@@ -67,6 +67,21 @@ if board_id:
 
 env.Append(CPPDEFINES=defines)
 
+# Stamp the filesystem with its version so the running device can tell whether
+# its UI (LittleFS image) is up to date INDEPENDENTLY of the firmware — the
+# updater reads /fsver and compares it to the release manifest. Written for
+# device builds only (native/host builds have no board_id). The value matches
+# the firmware version above; the "1.0.0" fallback matches constants.h so an
+# untagged local build stays self-consistent. data/fsver is a build artifact
+# (gitignored); buildfs packs it into littlefs.bin (it is not gzipped).
+if board_id:
+    project_dir = env.subst("$PROJECT_DIR")
+    data_dir = os.path.join(project_dir, "data")
+    if os.path.isdir(data_dir):
+        fs_version = version or "1.0.0"
+        with open(os.path.join(data_dir, "fsver"), "w") as fsver_file:
+            fsver_file.write(fs_version + "\n")
+
 print(
     "🔖 version.py: env=%s version=%s hash=%s board_id=%s"
     % (pioenv, version or "(fallback)", build_hash, board_id or "(fallback)")
