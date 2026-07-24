@@ -485,10 +485,12 @@ struct MockOutput : ILedOutput {
     int begins = 0, shows = 0, clears = 0;
     uint8_t lastBrightness = 0;
     CRGB lastCorrection = CRGB(255, 255, 255);
+    CRGB lastTemperature = CRGB(255, 255, 255);
     void begin(CRGB*, uint16_t) override { begins++; }
     void show() override { shows++; }
     void setBrightness(uint8_t b) override { lastBrightness = b; }
     void setCorrection(CRGB c) override { lastCorrection = c; }
+    void setTemperature(CRGB t) override { lastTemperature = t; }
     void clear() override { clears++; }
 };
 
@@ -620,6 +622,30 @@ void test_warmth_via_bus_and_clamps() {
     TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_WARMTH_MIN, c.getWarmth());
 }
 
+// Dim-to-warm actually reaches the driver: at full brightness the temperature
+// is neutral (no tint); at a low level it warms — red held, green/blue pulled
+// down, and blue pulled *more* than green (toward the Tungsten40W target). This
+// guards the color-temp math, which previously fell through MockOutput's no-op.
+void test_dim_to_warm_tints_the_low_end() {
+    LumeController c;
+    MockOutput mock;
+    c.setLedOutput(&mock);
+    c.begin(60);
+    c.setWarmth(0.6f);
+
+    c.setBrightness(255);   // full → neutral temperature
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.r);
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.g);
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.b);
+
+    c.setBrightness(20);    // low → warm tint
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.r);          // red held
+    TEST_ASSERT_TRUE(mock.lastTemperature.g < 255);                // green pulled down
+    TEST_ASSERT_TRUE(mock.lastTemperature.b < mock.lastTemperature.g);  // blue pulled more
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_led_output_is_pluggable);
@@ -627,6 +653,7 @@ int main(int, char**) {
     RUN_TEST(test_low_end_correction_ramp);
     RUN_TEST(test_gamma_via_bus_and_clamps);
     RUN_TEST(test_warmth_via_bus_and_clamps);
+    RUN_TEST(test_dim_to_warm_tints_the_low_end);
     RUN_TEST(test_serialize_segment_canonical_shape);
     RUN_TEST(test_create_is_deferred_then_applied);
     RUN_TEST(test_update_changes_params);

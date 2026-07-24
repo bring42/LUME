@@ -16,9 +16,14 @@ void handleApiNightlightGet(AsyncWebServerRequest* request) {
     // "Nightlight" is a name that lives here, at the API boundary. In the core
     // it is just an eased brightness fade, so its status maps onto the generic
     // brightness-fade state.
+    // Report a real nightlight (a fade *to off*), not any eased brightness
+    // change — otherwise a plain fader release (a short eased fade) would read
+    // as active:true. Post-dissolve, a dim-to-a-nonzero-target request is
+    // indistinguishable from a manual dim by design, so "nightlight" == fade-off.
     JsonDocument doc;
-    doc["active"] = lume::controller.isBrightnessFading();
-    doc["progress"] = lume::controller.brightnessFadeProgress();
+    bool active = lume::controller.isFadingToOff();
+    doc["active"] = active;
+    doc["progress"] = active ? lume::controller.brightnessFadeProgress() : 0.0f;
 
     String response;
     serializeJson(doc, response);

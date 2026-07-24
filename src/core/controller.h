@@ -205,6 +205,11 @@ public:
     bool isBrightnessFading() const { return brightnessTransition_.isActive(); }
     // Linear fraction of the fade's time window elapsed, for a UI countdown.
     float brightnessFadeProgress() const { return brightnessTransition_.progress(millis()); }
+    // True only while a fade *to off* (the power-off-at-zero rider — i.e. a
+    // nightlight wind-down) is running, as opposed to any eased brightness
+    // change. /api/nightlight reports on THIS so a plain fader release isn't
+    // mistaken for an active nightlight.
+    bool isFadingToOff() const { return powerOffWhenSettled_; }
 
     // --- Protocol management ---
 

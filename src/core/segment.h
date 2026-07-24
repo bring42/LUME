@@ -50,6 +50,12 @@ public:
         externalScratchpad_ = false;
         view = SegmentView(leds, start, length, reversed, scratchpad, SCRATCHPAD_SIZE);
         active = true;
+        // A range change (esp. a live resize) re-points the view at the inline
+        // pad; reset effect state so the effect re-inits for the new pixel span
+        // instead of rendering stale per-pixel history (fire heat, rain drops)
+        // on newly-covered LEDs. firstFrame fires next update via the version bump.
+        scratchpadVersion++;
+        resetScratchpad();
     }
     
     // Set effect by EffectInfo pointer (preferred)

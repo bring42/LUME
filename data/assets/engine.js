@@ -638,6 +638,12 @@
         var maxLen = Math.max(1, ledCount - seg.start);
         seg.length = clampInt(geom.length, 1, maxLen);
         body.length = seg.length;
+      } else if (geom.start != null) {
+        // Start moved without an explicit length: re-clamp the existing length so
+        // the segment can't optimistically run off the end (stop > strip). Send
+        // the corrected length too, matching the device's own clamp.
+        var maxLenS = Math.max(1, ledCount - seg.start);
+        if (seg.length > maxLenS) { seg.length = maxLenS; body.length = seg.length; }
       }
       if (geom.reverse != null) {
         seg.reverse = !!geom.reverse;
