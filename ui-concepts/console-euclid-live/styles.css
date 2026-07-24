@@ -1633,6 +1633,69 @@ input, button, textarea{ font-family: inherit; color: inherit; }
   transform: scale(1) translateY(0);
   pointer-events: auto;
 }
+
+/* ── Per-channel ⋯ button + settings popover ───────────────────────────── */
+.tab-cog{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px; height: 16px;
+  margin: -3px -4px -3px 6px;
+  border-radius: 3px;
+  color: var(--c-text-faint);
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.tab-cog:hover{ color: var(--c-text); background: var(--c-line-soft); }
+.tab-cog svg{ width: 15px; height: 15px; }
+.strip-tab.active .tab-cog{ color: var(--c-text-dim); }
+
+.seg-popover{
+  position: fixed;
+  z-index: 51;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -48%) scale(0.98);
+  width: min(320px, calc(100vw - 32px));
+  background: var(--c-chassis);
+  border: var(--hair) solid var(--c-text);
+  border-radius: var(--radius-panel);
+  padding: 16px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-med) var(--ease), transform var(--t-med) var(--ease);
+}
+.seg-popover.show{
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  pointer-events: auto;
+}
+.seg-pop-head{
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.seg-pop-title{
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 16px;
+  color: var(--c-text);
+}
+.seg-pop-sub{
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c-text-faint);
+}
+.seg-pop-actions{
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: var(--hair) solid var(--c-line-soft);
+}
+.seg-pop-actions .seg-remove{ width: 100%; }
+.seg-remove:hover{ color: var(--c-red); border-color: var(--c-red); }
 .cp-preview{
   height: 38px;
   border-radius: var(--radius-ctl);

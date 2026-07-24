@@ -264,11 +264,21 @@ function renderTabs() {
     tab.className = "strip-tab" + (seg.id === engine.state.selectedId ? " active" : "");
     tab.type = "button";
     tab.innerHTML = `
-      <div class="tab-id"><span>CH ${seg.id + 1}</span><span>${seg.length}px</span></div>
+      <div class="tab-id">
+        <span>CH ${seg.id + 1} · ${seg.length}px</span>
+        <span class="tab-cog" role="button" tabindex="-1" aria-label="Channel settings">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+        </span>
+      </div>
       <div class="tab-name">${eff ? eff.name : seg.effect}</div>
       <div class="tab-bar"><i style="background:${segSwatchCss(seg)}"></i></div>
     `;
     tab.addEventListener("click", () => engine.selectSegment(seg.id));
+    tab.querySelector(".tab-cog").addEventListener("click", (e) => {
+      e.stopPropagation();
+      engine.selectSegment(seg.id);
+      openSegPopover(seg.id);
+    });
     wrap.appendChild(tab);
   });
 
@@ -329,9 +339,30 @@ function deleteActiveChannel() {
   const seg = engine.selectedSegment();
   if (!seg) return;
   engine.deleteSegment(seg.id);
+  closeSegPopover();
   showToast(`CH ${seg.id + 1} removed`);
 }
 $("#deleteChannelBtn").addEventListener("click", deleteActiveChannel);
+
+/* Per-channel settings popover — opened by the ⋯ on a tab. Holds the channel's
+   range editor + remove (moved out of the Controls card). The inputs keep their
+   ids, so the range/delete wiring below is unchanged; the popover always targets
+   the selected channel (the ⋯ selects it before opening). */
+function openSegPopover(segId) {
+  const seg = engine.segmentById(segId);
+  if (!seg) return;
+  const eff = engine.effectById(seg.effect);
+  $("#segPopTitle").textContent = "CH " + (seg.id + 1);
+  $("#segPopSub").textContent = eff ? eff.name : String(seg.effect);
+  $("#segPopBackdrop").classList.add("show");
+  $("#segPopover").classList.add("show");
+}
+function closeSegPopover() {
+  $("#segPopBackdrop").classList.remove("show");
+  $("#segPopover").classList.remove("show");
+}
+$("#segPopBackdrop").addEventListener("click", closeSegPopover);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSegPopover(); });
 
 // Editable segment boundaries. Commit on change (blur / Enter); the engine
 // clamps to the strip and PUTs {start}/{length}. Enter blurs to commit.

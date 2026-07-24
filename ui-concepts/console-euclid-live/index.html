@@ -173,34 +173,12 @@
       </div>
 
       <div class="field-block">
-        <span class="field-label">Segment Range</span>
-        <div class="range-edit">
-          <label class="range-field">
-            <span class="jack-label">Start</span>
-            <input type="number" class="jack-input" id="rangeStartInput" min="0" step="1" />
-          </label>
-          <label class="range-field">
-            <span class="jack-label">Length</span>
-            <input type="number" class="jack-input" id="rangeLengthInput" min="1" step="1" />
-          </label>
-          <div class="range-field range-end">
-            <span class="jack-label">End</span>
-            <b id="rangeEnd">—</b>
-          </div>
-        </div>
-      </div>
-
-      <div class="field-block">
         <span class="field-label">Effect</span>
         <div class="effect-grid" id="effectGrid"></div>
       </div>
 
       <div class="field-block" id="dynamicControlsBlock">
         <div id="dynamicControls"></div>
-      </div>
-
-      <div class="field-block strip-actions">
-        <button class="rack-add" id="deleteChannelBtn" type="button">Remove Channel</button>
       </div>
 
     </div>
@@ -514,6 +492,35 @@
   <div class="cp-swatches" id="cpSwatches"></div>
   <div class="cp-hexrow">
     <input type="text" id="cpHexInput" maxlength="7" value="#FF9D3D" />
+  </div>
+</div>
+
+<!-- Per-channel settings popover (opened by the ⋯ on a tab) -->
+<div class="popover-backdrop" id="segPopBackdrop"></div>
+<div class="seg-popover" id="segPopover" role="dialog" aria-label="Channel settings">
+  <div class="seg-pop-head">
+    <span class="seg-pop-title" id="segPopTitle">CH 1</span>
+    <span class="seg-pop-sub" id="segPopSub">—</span>
+  </div>
+  <div class="field-block">
+    <span class="field-label">Segment Range</span>
+    <div class="range-edit">
+      <label class="range-field">
+        <span class="jack-label">Start</span>
+        <input type="number" class="jack-input" id="rangeStartInput" min="0" step="1" />
+      </label>
+      <label class="range-field">
+        <span class="jack-label">Length</span>
+        <input type="number" class="jack-input" id="rangeLengthInput" min="1" step="1" />
+      </label>
+      <div class="range-field range-end">
+        <span class="jack-label">End</span>
+        <b id="rangeEnd">—</b>
+      </div>
+    </div>
+  </div>
+  <div class="seg-pop-actions">
+    <button class="rack-add seg-remove" id="deleteChannelBtn" type="button">Remove Channel</button>
   </div>
 </div>
 
