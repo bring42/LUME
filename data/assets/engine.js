@@ -64,7 +64,6 @@
     fx("candle", "Candle", "Animated", [C("color", "Color", "#ff8c28"), I("speed", "Flicker Speed", 128, 1, 255), I("intensity", "Flicker Intensity", 128, 1, 255)]),
     fx("colorwaves", "Color Waves", "Animated", [P("palette", "Palette"), I("speed", "Speed", 128, 1, 255)]),
     fx("comet", "Comet", "Moving", [C("colorHead", "Head Color", "#ffffff"), C("colorTail", "Tail Color", "#0000ff"), I("speed", "Speed", 128, 1, 255), I("intensity", "Tail Length", 120, 1, 255), E("direction", "Direction", "Up|Down", 0)]),
-    fx("confetti", "Confetti", "Animated", [P("palette", "Palette"), I("speed", "Spawn Rate", 128, 1, 255)]),
     fx("fire", "Fire", "Animated", [I("cooling", "Cooling", 55, 20, 100), I("sparking", "Sparking", 120, 50, 200), B("reversed", "Reversed", false)]),
     fx("fireup", "Fire Up", "Animated", [I("speed", "Sparking", 120, 1, 255), I("intensity", "Cooling", 55, 1, 255)]),
     fx("meteor", "Meteor", "Moving", [C("color", "Meteor Color", "#ffffff"), I("speed", "Fall Speed", 128, 1, 255)]),
@@ -77,8 +76,6 @@
     fx("scanner", "Scanner", "Moving", [C("color", "Color", "#ff0000"), I("speed", "Speed", 128, 1, 255), I("intensity", "Tail Length", 80, 1, 255)]),
     fx("sinelon", "Sinelon", "Moving", [P("palette", "Palette"), I("speed", "Speed", 128, 1, 255)]),
     fx("sparkle", "Sparkle", "Animated", [C("color", "Background Color", "#0000ff"), I("speed", "Sparkle Density", 128, 1, 255)]),
-    fx("strobe", "Strobe", "Animated", [C("color", "Strobe Color", "#ffffff"), I("speed", "Flash Rate", 128, 1, 255)]),
-    fx("theater", "Theater Chase", "Moving", [P("palette", "Palette"), I("speed", "Speed", 128, 1, 255)]),
     fx("twinkle", "Twinkle", "Animated", [C("color", "Color", "#ffffff"), I("speed", "Twinkle Rate", 128, 1, 255)]),
     fx("wave", "Wave", "Moving", [C("color", "Wave Color", "#0000ff"), I("speed", "Wave Speed", 128, 1, 255), I("intensity", "Wave Width", 160, 1, 255), E("direction", "Direction", "Up|Down|Center", 0)])
   ];
@@ -147,6 +144,31 @@
     var refreshTimer = null;
     var nightlightTimer = null;
 
+    /* ---- optimistic lock (kills the "slider jumps back for a frame" flicker) --
+       Writes are async + fire-and-forget; the ~1 Hz WebSocket push lags, so a
+       state snapshot taken *before* a local change arrives afterward and would
+       overwrite the value the user just set — for one frame, until the next push
+       corrects it. A debounce only makes that race rarer. The real fix: while a
+       field has a pending local write, ignore incoming reconciles for it until
+       the device echoes our value back (device caught up) or a timeout elapses
+       (so external changes — MQTT, another client — still win eventually). */
+    var LOCK_MS = 1500;
+    var pending = {};  // field -> { value, until }  (fields: "brightness","power")
+    var segmentsDirtyUntil = 0;  // array-wide time lock after a local segment edit
+    function lockSegments() { segmentsDirtyUntil = nowMs() + LOCK_MS; }
+    function lockField(field, value) {
+      pending[field] = { value: value, until: nowMs() + LOCK_MS };
+    }
+    // True if the incoming reconciled value should be applied for `field`.
+    function acceptField(field, incoming) {
+      var p = pending[field];
+      if (!p) return true;                                   // not locked
+      if (nowMs() >= p.until) { delete pending[field]; return true; }  // expired → external wins
+      if (incoming === p.value) { delete pending[field]; return true; } // device confirmed us
+      return false;                                          // stale/mid-fade → keep optimistic
+    }
+    function nowMs() { return (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now(); }
+
     /* ---- events ---- */
     function on(evt, fn) {
       if (!listeners[evt]) listeners[evt] = [];
@@ -187,6 +209,17 @@
     }
     function selectedSegment() {
       return segmentById(state.selectedId);
+    }
+    // Mirror the firmware's id assignment (src/core/controller.cpp): the lowest
+    // unused slot, NOT max+1. Matching its scheme for the optimistic temp id
+    // means the device usually hands back the SAME id on reconcile, so the
+    // freshly-selected new channel keeps its selection across the id swap.
+    function nextSegmentId() {
+      var used = {};
+      for (var i = 0; i < state.segments.length; i++) used[state.segments[i].id] = true;
+      var id = 0;
+      while (used[id]) id++;
+      return id;
     }
     // Build a complete, schema-valid params object for an effect from its
     // defaults, optionally overlaying known values. Palette-type params are
@@ -292,19 +325,41 @@
       refreshTimer = setTimeout(function () { refreshSegments(); }, REFRESH_AFTER_WRITE_MS);
     }
 
+    // For structural changes (create/delete) we hold an optimistic segments lock
+    // so a lagging reconcile can't drop the just-added/removed channel for a
+    // frame. That means a GET fired at REFRESH_AFTER_WRITE_MS would be skipped by
+    // the lock — so schedule the reconcile to land JUST AFTER the lock releases.
+    // This guarantees device truth (real IDs) replaces the optimistic structure
+    // even when the WS feed is down (offline-but-not-demo).
+    function scheduleRefreshAfterLock() {
+      if (state.demo) return;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      var delay = Math.max(REFRESH_AFTER_WRITE_MS, (segmentsDirtyUntil - nowMs()) + 50);
+      refreshTimer = setTimeout(function () { refreshSegments(); }, delay);
+    }
+
     function applyControllerAndSegments(payload) {
       if (!payload) return;
-      if (payload.controller) {
-        state.controller.power = !!payload.controller.power;
-        state.controller.brightness = clampInt(payload.controller.brightness, 0, 255);
-        state.controller.ledCount = Number(payload.controller.ledCount) || state.controller.ledCount;
-      } else {
-        // GET /api/v2/segments returns power/brightness/ledCount at top level
-        if (typeof payload.power === "boolean") state.controller.power = payload.power;
-        if (payload.brightness != null) state.controller.brightness = clampInt(payload.brightness, 0, 255);
-        if (payload.ledCount != null) state.controller.ledCount = Number(payload.ledCount);
+      // Both shapes carry power/brightness/ledCount: WS nests under .controller,
+      // GET /api/v2/segments has them at the top level. Apply through the
+      // optimistic lock so a lagging snapshot can't clobber a value we just set.
+      var cs = payload.controller ? payload.controller : payload;
+      if (typeof cs.power === "boolean" && acceptField("power", cs.power)) {
+        state.controller.power = cs.power;
       }
-      if (Array.isArray(payload.segments)) {
+      if (cs.brightness != null) {
+        var b = clampInt(cs.brightness, 0, 255);
+        if (acceptField("brightness", b)) state.controller.brightness = b;
+      }
+      if (cs.ledCount != null) state.controller.ledCount = Number(cs.ledCount) || state.controller.ledCount;
+      // Segment optimistic lock: after a local field edit (effect/param/palette/
+      // brightness/range — all applied in place on state.segments), skip the
+      // segments reconcile until the device catches up, so a lagging snapshot
+      // can't revert the edit for a frame (same flicker as brightness, on
+      // effects). Structural changes (create/delete) hold the lock too so their
+      // optimistic add/remove survives a lagging snapshot; scheduleRefreshAfterLock
+      // (or WS) reconciles device truth once the lock releases.
+      if (Array.isArray(payload.segments) && nowMs() >= segmentsDirtyUntil) {
         state.segments = payload.segments.map(function (s) {
           var prev = segmentById(s.id);
           var seg = {
@@ -419,18 +474,73 @@
        Public mutations — optimistic local update + fire-and-forget write.
        ================================================================= */
 
-    function setPower(on) {
-      on = !!on;
-      state.controller.power = on;
-      notify();
-      fireWrite("/api/v2/controller", "PUT", { power: on });
+    // Premium easing durations (ms). Nothing in the UI should hard-snap:
+    //   DRAG   — short follow while a control is being dragged; because the
+    //            device re-eases from its current value, rapid re-targets read
+    //            as the light chasing your finger with a little inertia.
+    //   SETTLE — graceful ease when a control is released / a value committed.
+    //   POWER  — a touch heavier for on/off, so it feels deliberate.
+    // Tunable in one place; skins reference engine.TRANSITION. These are the
+    // "feel" of the whole UI — the Tuning settings section lets the user adjust
+    // them live via setTransition() below, persisted client-side (localStorage,
+    // per-browser: they shape interaction feel, not device state, so they belong
+    // with the client, not in NVS).
+    var TRANSITION = { DRAG: 150, SETTLE: 300, POWER: 400 };
+    var TRANSITION_LS_KEY = "lume.transition";
+    var TRANSITION_MAX_MS = 5000; // sane upper bound so a fat-fingered value can't wedge the UI
+
+    // Restore any saved duration overrides (best-effort; ignore malformed/absent).
+    (function loadTransitionOverrides() {
+      try {
+        var raw = global.localStorage && global.localStorage.getItem(TRANSITION_LS_KEY);
+        if (!raw) return;
+        var saved = JSON.parse(raw);
+        ["DRAG", "SETTLE", "POWER"].forEach(function (k) {
+          if (saved && typeof saved[k] === "number" && isFinite(saved[k])) {
+            TRANSITION[k] = clampInt(saved[k], 0, TRANSITION_MAX_MS);
+          }
+        });
+      } catch (e) { /* corrupt/blocked storage → keep defaults */ }
+    })();
+
+    // Live-tune a transition duration (ms). Updates engine.TRANSITION in place so
+    // every subsequent interaction uses the new feel immediately, and persists the
+    // set to localStorage. `key` is "DRAG" | "SETTLE" | "POWER".
+    function setTransition(key, ms) {
+      if (!TRANSITION.hasOwnProperty(key)) return;
+      TRANSITION[key] = clampInt(ms, 0, TRANSITION_MAX_MS);
+      try {
+        if (global.localStorage) {
+          global.localStorage.setItem(TRANSITION_LS_KEY, JSON.stringify(TRANSITION));
+        }
+      } catch (e) { /* storage blocked → in-memory only, still applies this session */ }
     }
 
-    function setBrightness(v) {
+    // Optional transitionMs eases the strip on/off on-device (premium fade); the
+    // brightness level is preserved across the toggle. Sent as Matter tenths.
+    // Defaults to a weighted power fade so a bare setPower() still eases; pass 0
+    // to force an instant snap.
+    function setPower(on, transitionMs) {
+      on = !!on;
+      if (transitionMs === undefined) transitionMs = TRANSITION.POWER;
+      state.controller.power = on;
+      lockField("power", on);   // hold our value until the device confirms it
+      notify();
+      var body = { power: on };
+      if (transitionMs > 0) body.transition = Math.round(transitionMs / 100);
+      fireWrite("/api/v2/controller", "PUT", body);
+    }
+
+    // Optional transitionMs eases the change on-device (premium fade) instead of
+    // snapping. The device speaks Matter-shaped tenths-of-a-second, so convert.
+    function setBrightness(v, transitionMs) {
       v = clampInt(v, 0, 255);
       state.controller.brightness = v;
+      lockField("brightness", v);   // hold our value until the device confirms it
       notify();
-      fireWrite("/api/v2/controller", "PUT", { brightness: v });
+      var body = { brightness: v };
+      if (transitionMs > 0) body.transition = Math.round(transitionMs / 100);
+      fireWrite("/api/v2/controller", "PUT", body);
     }
 
     function selectSegment(id) {
@@ -449,6 +559,7 @@
       var eff = effectById(effectId);
       seg.effect = effectId;
       seg.params = defaultParamsFor(effectId);
+      lockSegments();
       notify();
       var body = { effect: effectId, params: seg.params };
       if (eff.usesPalette && seg._paletteIndex != null) body.palette = seg._paletteIndex;
@@ -456,8 +567,10 @@
     }
 
     // Change ONE param. We send the COMPLETE params object (whole-object
-    // semantics) so no sibling param is reset to its default.
-    function setParam(id, key, value) {
+    // semantics) so no sibling param is reset to its default. Optional
+    // transitionMs eases continuous params/colors on-device (skins opt in, e.g.
+    // on slider release; discrete params snap regardless).
+    function setParam(id, key, value, transitionMs) {
       var seg = segmentById(id);
       if (!seg) return;
       var eff = effectById(seg.effect);
@@ -477,8 +590,11 @@
       for (var k in seg.params) if (Object.prototype.hasOwnProperty.call(seg.params, k)) params[k] = seg.params[k];
       params[key] = value;
       seg.params = params;
+      lockSegments();
       notify();
-      fireWrite("/api/v2/segments/" + id, "PUT", { params: params });
+      var body = { params: params };
+      if (transitionMs > 0) body.transition = Math.round(transitionMs / 100);
+      fireWrite("/api/v2/segments/" + id, "PUT", body);
     }
 
     // Palette is a top-level integer, tracked client-side (device never echoes).
@@ -487,6 +603,7 @@
       if (!seg) return;
       index = clampInt(index, 0, Math.max(0, state.palettes.length - 1));
       seg._paletteIndex = index;
+      lockSegments();
       notify();
       fireWrite("/api/v2/segments/" + id, "PUT", { palette: index });
     }
@@ -496,8 +613,47 @@
       if (!seg) return;
       v = clampInt(v, 0, 255);
       seg.brightness = v;
+      lockSegments();
       notify();
       fireWrite("/api/v2/segments/" + id, "PUT", { brightness: v });
+    }
+
+    // Resize a segment's boundaries (editable zones). Sends {start,length,reverse}
+    // to PUT /api/v2/segments/{id}; the device resizes on its render loop and
+    // clamps to the strip, so we clamp locally to match (start in [0,ledCount-1],
+    // length in [1, ledCount-start]). Overlaps are allowed on-device. Optimistic
+    // local update + fire-and-forget, like the other setters. Only the fields
+    // present in `geom` are changed; the others keep the segment's current value.
+    function setSegmentRange(id, geom) {
+      var seg = segmentById(id);
+      if (!seg) return;
+      geom = geom || {};
+      var ledCount = Number(state.controller.ledCount) || 1;
+      var body = {};
+      if (geom.start != null) {
+        seg.start = clampInt(geom.start, 0, Math.max(0, ledCount - 1));
+        body.start = seg.start;
+      }
+      if (geom.length != null) {
+        var maxLen = Math.max(1, ledCount - seg.start);
+        seg.length = clampInt(geom.length, 1, maxLen);
+        body.length = seg.length;
+      } else if (geom.start != null) {
+        // Start moved without an explicit length: re-clamp the existing length so
+        // the segment can't optimistically run off the end (stop > strip). Send
+        // the corrected length too, matching the device's own clamp.
+        var maxLenS = Math.max(1, ledCount - seg.start);
+        if (seg.length > maxLenS) { seg.length = maxLenS; body.length = seg.length; }
+      }
+      if (geom.reverse != null) {
+        seg.reverse = !!geom.reverse;
+        body.reverse = seg.reverse;
+      }
+      // Keep `stop` consistent so range readouts stay correct without a refetch.
+      seg.stop = seg.start + seg.length - 1;
+      lockSegments();
+      notify();
+      fireWrite("/api/v2/segments/" + id, "PUT", body);
     }
 
     function createSegment(cfg) {
@@ -509,29 +665,44 @@
       if (cfg.reverse != null) body.reverse = !!cfg.reverse;
       if (cfg.effect) { body.effect = cfg.effect; body.params = defaultParamsFor(cfg.effect); }
       if (cfg.palette != null) body.palette = clampInt(cfg.palette, 0, Math.max(0, state.palettes.length - 1));
-      if (state.demo) {
-        var nid = state.segments.reduce(function (m, s) { return Math.max(m, s.id); }, -1) + 1;
-        state.segments.push(normalizeSegment({
-          id: nid, start: body.start, stop: body.start + body.length - 1, length: body.length,
-          reverse: !!cfg.reverse, brightness: 255, effect: cfg.effect || "solid",
-          params: body.params || defaultParamsFor(cfg.effect || "solid"),
-          _paletteIndex: cfg.palette != null ? cfg.palette : null
-        }));
-        state.selectedId = nid;
-        notify();
-        return Promise.resolve();
-      }
-      return writeJson("/api/v2/segments", "POST", body).then(scheduleRefresh, scheduleRefresh);
+
+      // Optimistic add (both demo AND live device): push a normalized segment so
+      // the new channel appears in the UI INSTANTLY, then select it. Previously
+      // the live path only fired the POST and waited on the ~350 ms GET / ~1 Hz
+      // WS reconcile, so an add could appear to "do nothing" until reconcile
+      // caught up. The temp id mirrors the device's assignment (lowest unused
+      // slot); the real device-assigned id lands on reconcile.
+      var nid = nextSegmentId();
+      state.segments.push(normalizeSegment({
+        id: nid, start: body.start, stop: body.start + body.length - 1, length: body.length,
+        reverse: !!cfg.reverse, brightness: 255, effect: cfg.effect || "solid",
+        params: body.params || defaultParamsFor(cfg.effect || "solid"),
+        _paletteIndex: cfg.palette != null ? cfg.palette : null
+      }));
+      state.selectedId = nid;
+      // Hold the optimistic structure until the device catches up, so a reconcile
+      // snapshot taken BEFORE the device applied the create (WS push / GET in
+      // flight) can't drop the just-added channel for a frame. Device truth
+      // replaces it after the lock (scheduleRefreshAfterLock / WS). This is the
+      // same mechanism the field-edit setters use — create/delete used to clear
+      // the lock, which left the add at the mercy of reconcile timing.
+      lockSegments();
+      notify();
+      if (state.demo) return Promise.resolve();
+      return writeJson("/api/v2/segments", "POST", body).then(scheduleRefreshAfterLock, scheduleRefreshAfterLock);
     }
 
     function deleteSegment(id) {
-      if (state.demo) {
-        state.segments = state.segments.filter(function (s) { return s.id !== id; });
-        if (state.selectedId === id) state.selectedId = state.segments.length ? state.segments[0].id : null;
-        notify();
-        return Promise.resolve();
-      }
-      return writeJson("/api/v2/segments/" + id, "DELETE", undefined).then(scheduleRefresh, scheduleRefresh);
+      // Optimistic delete (both demo AND live device): drop it locally and fix
+      // the selection immediately, so the removal shows at once instead of
+      // waiting on reconcile. Lock held like create so a lagging snapshot can't
+      // resurrect the segment for a frame; device truth reconciles after.
+      state.segments = state.segments.filter(function (s) { return s.id !== id; });
+      if (state.selectedId === id) state.selectedId = state.segments.length ? state.segments[0].id : null;
+      lockSegments();
+      notify();
+      if (state.demo) return Promise.resolve();
+      return writeJson("/api/v2/segments/" + id, "DELETE", undefined).then(scheduleRefreshAfterLock, scheduleRefreshAfterLock);
     }
 
     /* ---- nightlight ---- */
@@ -605,6 +776,45 @@
       if (state.demo) return Promise.resolve({ ok: true, demo: true });
       return writeJson("/api/config", "POST", body).then(function () { return { ok: true }; },
         function (err) { return { ok: false, status: err.status }; });
+    }
+
+    /* ---- gamma (perceptual dimming curve) ---- */
+    // Gamma is device state (persisted in NVS, applied on the render loop), so
+    // unlike the client-side TRANSITION durations it flows through /api/config.
+    // The one source of truth is state.config.gamma, populated by getConfig().
+    var GAMMA_MIN = 1.0, GAMMA_MAX = 3.5, GAMMA_DEFAULT = 2.2;
+
+    // Current gamma from device config, or the firmware default if unknown yet.
+    function getGamma() {
+      var g = state.config && state.config.gamma;
+      return (typeof g === "number" && isFinite(g)) ? g : GAMMA_DEFAULT;
+    }
+    // Set gamma: clamp to the firmware's sane range and persist via /api/config.
+    // The device re-applies it live on the render loop (single-writer command
+    // bus); resolves with { ok } like saveConfig. Snaps local state immediately.
+    function setGamma(v) {
+      v = Number(v);
+      if (!isFinite(v)) v = GAMMA_DEFAULT;
+      if (v < GAMMA_MIN) v = GAMMA_MIN;
+      if (v > GAMMA_MAX) v = GAMMA_MAX;
+      v = Math.round(v * 10) / 10; // 0.1 steps
+      return saveConfig({ gamma: v });
+    }
+
+    // Dim-to-warm strength [0..1] — device state, same flow as gamma (/api/config,
+    // applied live on the render loop). 0 = neutral/off.
+    var WARMTH_MIN = 0.0, WARMTH_MAX = 1.0, WARMTH_DEFAULT = 0.6;
+    function getWarmth() {
+      var w = state.config && state.config.warmth;
+      return (typeof w === "number" && isFinite(w)) ? w : WARMTH_DEFAULT;
+    }
+    function setWarmth(v) {
+      v = Number(v);
+      if (!isFinite(v)) v = WARMTH_DEFAULT;
+      if (v < WARMTH_MIN) v = WARMTH_MIN;
+      if (v > WARMTH_MAX) v = WARMTH_MAX;
+      v = Math.round(v * 20) / 20; // 0.05 steps
+      return saveConfig({ warmth: v });
     }
 
     /* ---- firmware auto-update (pull-based OTA) ---- */
@@ -681,6 +891,9 @@
       state: state,
       on: on,
       start: start,
+      TRANSITION: TRANSITION,   // premium easing durations (ms); tune here
+      setTransition: setTransition,  // live-tune + persist a TRANSITION duration
+      GAMMA: { MIN: GAMMA_MIN, MAX: GAMMA_MAX, DEFAULT: GAMMA_DEFAULT }, // gamma bounds for UI
       // catalogue helpers
       effectById: effectById,
       paletteName: paletteName,
@@ -695,6 +908,7 @@
       setParam: setParam,
       setPalette: setPalette,
       setSegmentBrightness: setSegmentBrightness,
+      setSegmentRange: setSegmentRange,
       createSegment: createSegment,
       deleteSegment: deleteSegment,
       startNightlight: startNightlight,
@@ -702,6 +916,10 @@
       sendPrompt: sendPrompt,
       getConfig: getConfig,
       saveConfig: saveConfig,
+      getGamma: getGamma,
+      setGamma: setGamma,
+      getWarmth: getWarmth,
+      setWarmth: setWarmth,
       checkFirmware: checkFirmware,
       updateFirmware: updateFirmware,
       updateWebUi: updateWebUi,

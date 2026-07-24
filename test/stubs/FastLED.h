@@ -91,10 +91,22 @@ inline uint16_t scale16by8(uint16_t i, uint8_t scale) {
     return (uint16_t)(((uint32_t)i * scale) >> 8);
 }
 inline uint8_t scale8(uint8_t i, uint8_t scale) {
-    return (uint8_t)(((uint16_t)i * scale) >> 8);
+    // Match real FastLED's default (SCALE8_FIXED): the (scale + 1) term makes
+    // scale8(i, 255) == i exactly, so this fake never disagrees with on-device
+    // math by one. Without it, scale8(42, 255) would be 41.
+    return (uint8_t)(((uint16_t)i * (uint16_t)(scale + 1)) >> 8);
 }
 inline uint8_t map8(uint8_t in, uint8_t rangeStart, uint8_t rangeEnd) {
     return rangeStart + scale8(in, rangeEnd - rangeStart);
+}
+
+// Perceptual gamma encode, matching FastLED's colorutils applyGamma_video:
+// (b/255)^gamma * 255, never dropping a positive input to zero.
+inline uint8_t applyGamma_video(uint8_t brightness, float gamma) {
+    float adj = powf((float)brightness / 255.0f, gamma) * 255.0f;
+    uint8_t result = (uint8_t)adj;
+    if (brightness > 0 && result == 0) result = 1;
+    return result;
 }
 
 // --- Driver: chipset templates, color correction, and the CFastLED object. ---
@@ -107,6 +119,9 @@ enum LEDColorCorrection : uint32_t {
 
 template <uint8_t DATA_PIN, EOrder RGB_ORDER = GRB> class WS2812B {};
 
+// Temporal dither modes (mirror FastLED's EDitherMode).
+enum EDitherMode { DISABLE_DITHER = 0x00, BINARY_DITHER = 0x01 };
+
 class CLEDController {};
 
 class CFastLED {
@@ -117,6 +132,8 @@ public:
     void setBrightness(uint8_t) {}
     template <typename T> void setCorrection(T) {}  // accepts CRGB or a correction enum
     void setMaxPowerInVoltsAndMilliamps(uint8_t, uint32_t) {}
+    void setDither(uint8_t) {}
+    void setTemperature(const CRGB&) {}
     void clear(bool = false) {}
     void show() {}
 };

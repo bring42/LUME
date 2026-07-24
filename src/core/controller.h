@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include "segment.h"
 #include "command_queue.h"
+#include "transition.h"              // premium easing engine (eased brightness)
 #include "led_output.h"              // ILedOutput HAL seam (RFC 0001 §6)
 #include "../protocols/protocol.h"   // ProtocolBuffer (direct-pixel staging)
 #include "../constants.h"
@@ -102,22 +103,114 @@ public:
     
     // --- Global controls ---
     
-    void setPower(bool on) { power = on; }
+    // Instant power (transitionTime == 0). Snaps the on/off envelope so the
+    // output matches immediately and any in-flight power fade is cancelled.
+    void setPower(bool on) {
+        power = on;
+        powerOffWhenFadeSettles_ = false;
+        powerFade_.snap(on ? 255 : 0);
+    }
     bool getPower() const { return power; }
+
+    // Reported ("target") power for the UI / WS: during a fade-out the strip is
+    // still logically on (rendering, dimming) but heading to off — report the
+    // intent so the power toggle doesn't bounce back ON mid-fade.
+    bool getTargetPower() const { return powerOffWhenFadeSettles_ ? false : power; }
+
+    // Eased power on/off (the premium path). Fade-on flips the strip logically
+    // on and eases the envelope 0 -> full; fade-off eases full -> 0 and flips
+    // off once it settles (so it keeps rendering, dimming, until dark). The
+    // brightness level is untouched, so toggling never loses it. durationMs == 0
+    // falls back to instant. Single-writer: call on the loop.
+    void setPowerEased(bool on, uint32_t durationMs) {
+        if (durationMs == 0) { setPower(on); return; }
+        if (on) {
+            power = true;                 // render while we fade up from black
+            powerOffWhenFadeSettles_ = false;
+            powerFade_.start(255, durationMs, millis());
+        } else {
+            powerOffWhenFadeSettles_ = true;  // stay on until the fade reaches 0
+            powerFade_.start(0, durationMs, millis());
+        }
+    }
+    // True while an on/off power fade is animating (for UI, mirrors brightness).
+    bool isPowerFading() const { return powerFade_.isActive(); }
     
+    // Hard-set global brightness (transitionTime == 0). Keeps the easing engine
+    // in sync by snapping it, so a subsequent eased change starts from here and
+    // an in-flight fade is cancelled cleanly. A manual set also clears any
+    // pending power-off rider, so the strip never switches off behind the user.
     void setBrightness(uint8_t bri) {
+        powerOffWhenSettled_ = false;
         globalBrightness = bri;
         output_->setBrightness(bri);
+        brightnessTransition_.snap(bri);
     }
     uint8_t getBrightness() const { return globalBrightness; }
-    
-    // --- Nightlight ---
-    
-    void startNightlight(uint16_t durationSeconds, uint8_t targetBrightness);
-    void stopNightlight();
-    bool isNightlightActive() const { return nightlightActive; }
-    float getNightlightProgress() const;
-    
+
+    // Reported ("target") brightness for the UI / WS state push: the value the
+    // user set / is heading to, NOT the mid-fade interpolated globalBrightness.
+    // Reporting the live value made the ~1Hz reconcile snap a just-moved slider
+    // back to a transient mid-fade level for a frame, then correct — a flicker.
+    // The committed target matches the client's optimistic value, so no bounce.
+    uint8_t getTargetBrightness() const {
+        return brightnessTransition_.isActive() ? brightnessTransition_.target()
+                                                : globalBrightness;
+    }
+
+    // Ease global brightness toward `target` over `durationMs` (the premium
+    // path). `powerOffAtZero` powers the strip off once the fade settles — the
+    // one bit that turns a plain fade into a "nightlight". The render loop
+    // advances the interpolation each frame; a zero duration falls back to an
+    // immediate set. Single-writer: call on the loop.
+    void setBrightnessEased(uint8_t target, uint32_t durationMs,
+                            bool powerOffAtZero = false) {
+        if (durationMs == 0) {
+            setBrightness(target);                 // snaps, clears the rider
+            if (powerOffAtZero && target == 0) setPower(false);
+            return;
+        }
+        powerOffWhenSettled_ = powerOffAtZero;
+        brightnessTransition_.start(target, durationMs, millis());
+    }
+
+    // --- Runtime perceptual-dimming gamma ---
+
+    // Set the gamma exponent applied when encoding the eased perceptual level to
+    // PWM (see update()). Runtime-adjustable so it can be tuned live; clamped to
+    // [LED_GAMMA_MIN, LED_GAMMA_MAX] so the output stage never reads a wild
+    // value. Single-writer: drive via Command::setGamma so it lands on the loop.
+    void setGamma(float gamma) {
+        if (gamma < LED_GAMMA_MIN) gamma = LED_GAMMA_MIN;
+        if (gamma > LED_GAMMA_MAX) gamma = LED_GAMMA_MAX;
+        ledGamma_ = gamma;
+    }
+    float getGamma() const { return ledGamma_; }
+
+    // Dim-to-warm strength [0..1] (0 = neutral/off). Runtime-adjustable, clamped
+    // to [LED_WARMTH_MIN, LED_WARMTH_MAX]; the render loop blends the output
+    // color temperature toward the warm target as the level drops. Single-writer:
+    // drive via Command::setWarmth so it lands on the loop.
+    void setWarmth(float warmth) {
+        if (warmth < LED_WARMTH_MIN) warmth = LED_WARMTH_MIN;
+        if (warmth > LED_WARMTH_MAX) warmth = LED_WARMTH_MAX;
+        warmth_ = warmth;
+    }
+    float getWarmth() const { return warmth_; }
+
+    // --- Brightness-fade status (what "nightlight" reporting reduces to) ---
+
+    // True while an eased brightness fade is in progress (a nightlight is just
+    // a long one). The UI shows a countdown/cancel while this holds.
+    bool isBrightnessFading() const { return brightnessTransition_.isActive(); }
+    // Linear fraction of the fade's time window elapsed, for a UI countdown.
+    float brightnessFadeProgress() const { return brightnessTransition_.progress(millis()); }
+    // True only while a fade *to off* (the power-off-at-zero rider — i.e. a
+    // nightlight wind-down) is running, as opposed to any eased brightness
+    // change. /api/nightlight reports on THIS so a plain fader release isn't
+    // mistaken for an active nightlight.
+    bool isFadingToOff() const { return powerOffWhenSettled_; }
+
     // --- Protocol management ---
 
     // Register a protocol (called at startup)
@@ -204,13 +297,34 @@ private:
     // State
     bool power;
     uint8_t globalBrightness;
+
+    // Runtime perceptual-dimming exponent, applied in update() when encoding the
+    // eased level to PWM. Seeded from the LED_GAMMA compile constant in the ctor;
+    // updated live via setGamma() (single-writer, on the loop). See constants.h.
+    float ledGamma_;
+
+    // Dim-to-warm strength [0..1]; blended into the output color temperature as
+    // the level drops (see update()). Runtime-tunable via setWarmth(). Seeded
+    // from LED_WARMTH_DEFAULT in the ctor.
+    float warmth_;
+
+    // Premium easing engine for global brightness. Owned + advanced only on the
+    // render loop; snapped whenever brightness is hard-set so the two never
+    // disagree. See core/transition.h.
+    EasedU8 brightnessTransition_;
     
-    // Nightlight state
-    bool nightlightActive;
-    uint32_t nightlightStartTime;
-    uint16_t nightlightDuration;  // in seconds
-    uint8_t nightlightStartBrightness;
-    uint8_t nightlightTargetBrightness;
+    // The only nightlight-specific state left in the core: when a brightness
+    // fade carrying the power-off rider settles, the loop switches the strip
+    // off. Everything else about "nightlight" (its name, trigger, duration,
+    // progress reporting) lives at the API boundary or falls out of the shared
+    // brightnessTransition_. Cleared by any manual brightness set.
+    bool powerOffWhenSettled_;
+
+    // Power on/off fade envelope (0..255), composed onto the output brightness
+    // so the user's level stays pristine across a toggle. powerOffWhenFadeSettles_
+    // flips `power` false once a fade-out envelope reaches zero.
+    EasedU8 powerFade_;
+    bool powerOffWhenFadeSettles_;
     
     // Protocol handling
     static constexpr uint8_t MAX_PROTOCOLS = 4;

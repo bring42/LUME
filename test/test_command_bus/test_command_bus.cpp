@@ -51,6 +51,21 @@ static EffectSpec makeCreateSpec(uint16_t start, uint16_t length, uint8_t speed)
     return spec;
 }
 
+// A recording effect: captures the param values it is actually rendered with,
+// so a test can prove the loop feeds it *interpolated* params during a
+// transition (slot 0 = Int level, slot 1 = Color).
+static uint8_t g_recInt = 0;
+static CRGB    g_recColor;
+static void recfx(SegmentView&, const ParamValues& p, uint32_t, bool) {
+    g_recInt = p.getInt(0);
+    g_recColor = p.getColor(1);
+}
+DEFINE_EFFECT_SCHEMA(kRecSchema,
+    ParamDesc::Int("level", "Level", 0, 0, 255),
+    ParamDesc::Color("color", "Color", CRGB(0, 0, 0))
+);
+REGISTER_EFFECT_SCHEMA(recfx, "recfx", "Rec FX", Animated, kRecSchema, 0);
+
 void setUp() {}
 void tearDown() {}
 
@@ -95,6 +110,48 @@ void test_update_changes_params() {
     TEST_ASSERT_EQUAL_UINT8(222, c.getSegment(0)->getParamValues().getInt(0));
 }
 
+// Editable boundaries: a non-create update carrying geometry resizes the target
+// segment in place (start/length change), and out-of-range geometry is clamped
+// to the strip. This is the single-writer resize path behind carving zones.
+void test_update_resizes_segment_geometry() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::applyEffectSpec(255, makeCreateSpec(0, 60, 128)));  // full strip
+    c.update();
+    TEST_ASSERT_EQUAL_UINT16(0,  c.getSegment(0)->getStart());
+    TEST_ASSERT_EQUAL_UINT16(60, c.getSegment(0)->getLength());
+
+    // Plain resize: start 0->10, length 60->20.
+    EffectSpec resize = {};
+    resize.hasGeometry = true;
+    resize.start = 10;
+    resize.length = 20;
+    c.enqueueCommand(Command::applyEffectSpec(0, resize));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT16(10, c.getSegment(0)->getStart());
+    TEST_ASSERT_EQUAL_UINT16(20, c.getSegment(0)->getLength());
+
+    // Length running off the end is clamped to ledCount - start (55 -> 5 left).
+    EffectSpec oob = {};
+    oob.hasGeometry = true;
+    oob.start = 55;
+    oob.length = 999;
+    c.enqueueCommand(Command::applyEffectSpec(0, oob));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT16(55, c.getSegment(0)->getStart());
+    TEST_ASSERT_EQUAL_UINT16(5,  c.getSegment(0)->getLength());   // 60 - 55
+
+    // Start past the end clamps to the last pixel, length floors at 1.
+    EffectSpec past = {};
+    past.hasGeometry = true;
+    past.start = 200;
+    past.length = 10;
+    c.enqueueCommand(Command::applyEffectSpec(0, past));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT16(59, c.getSegment(0)->getStart());    // ledCount - 1
+    TEST_ASSERT_EQUAL_UINT16(1,  c.getSegment(0)->getLength());
+}
+
 // A queued remove is likewise deferred to the loop (the P0.1 array-shift race
 // only ever happens on the single writer now).
 void test_remove_is_deferred_then_applied() {
@@ -127,19 +184,162 @@ void test_power_and_brightness_via_bus() {
     TEST_ASSERT_EQUAL_UINT8(40, c.getBrightness());
 }
 
-// Nightlight start/stop route through the bus and toggle the active flag.
-void test_nightlight_start_stop_via_bus() {
+// "Nightlight" is no longer a bus command or controller state — it decomposes
+// into an eased brightness fade plus a power-off-at-zero rider. A fade to zero
+// carrying the rider powers the strip off once it settles.
+void test_fade_to_zero_rider_powers_off() {
     LumeController c;
     c.begin(60);
-    TEST_ASSERT_FALSE(c.isNightlightActive());
+    TEST_ASSERT_TRUE(c.getPower());
 
-    c.enqueueCommand(Command::startNightlight(/*durationSec=*/900, /*target=*/0));
+    c.enqueueCommand(Command::setGlobalBrightness(0)
+                         .withTransition(3000).withPowerOffAtZero(true));
     c.update();
-    TEST_ASSERT_TRUE(c.isNightlightActive());
+    TEST_ASSERT_TRUE(c.isBrightnessFading());   // fading, not yet settled
+    TEST_ASSERT_TRUE(c.getPower());             // still on mid-fade
 
-    c.enqueueCommand(Command::stopNightlight());
+    for (int i = 0; i < 50 && c.isBrightnessFading(); i++) c.update();
+    TEST_ASSERT_FALSE(c.isBrightnessFading());
+    TEST_ASSERT_FALSE(c.getPower());            // powered off once settled
+}
+
+// Reported ("target") state is what a fade is heading to, not the mid-fade
+// value — this is what stops the WS reconcile from bouncing a just-moved slider.
+void test_reported_state_is_target_not_midfade() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::setGlobalBrightness(200));   // start at a known level
     c.update();
-    TEST_ASSERT_FALSE(c.isNightlightActive());
+    // Eased change to 20: the live value walks down, but the reported target is
+    // 20 immediately (from the frame the transition starts).
+    c.enqueueCommand(Command::setGlobalBrightness(20).withTransition(5000));
+    c.update();
+    TEST_ASSERT_TRUE(c.isBrightnessFading());
+    TEST_ASSERT_EQUAL_UINT8(20, c.getTargetBrightness());  // heading to 20
+    TEST_ASSERT_TRUE(c.getBrightness() > 20);              // live value still mid-fade
+
+    // Power fade-out: still logically on mid-fade, but target power is already off.
+    c.enqueueCommand(Command::setPower(false).withTransition(5000));
+    c.update();
+    TEST_ASSERT_TRUE(c.getPower());          // live: still on (rendering, dimming)
+    TEST_ASSERT_FALSE(c.getTargetPower());   // reported: heading off
+}
+
+// Eased power-off keeps the strip logically on (rendering, dimming) until the
+// fade envelope settles, then flips it off. The brightness level is preserved.
+void test_power_off_fade_defers_then_settles() {
+    LumeController c;
+    c.begin(60);
+    TEST_ASSERT_TRUE(c.getPower());
+
+    c.enqueueCommand(Command::setPower(false).withTransition(3000));
+    c.update();
+    TEST_ASSERT_TRUE(c.isPowerFading());       // envelope animating
+    TEST_ASSERT_TRUE(c.getPower());            // still logically on mid-fade
+
+    for (int i = 0; i < 50 && c.isPowerFading(); i++) c.update();
+    TEST_ASSERT_FALSE(c.getPower());           // flipped off once settled
+    TEST_ASSERT_EQUAL_UINT8(255, c.getBrightness());  // level preserved across toggle
+}
+
+// Eased power-on flips the strip logically on immediately (so it renders while
+// fading up from black) rather than deferring like power-off.
+void test_power_on_fade_is_immediate_logical() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::setPower(false));   // start off (instant)
+    c.update();
+    TEST_ASSERT_FALSE(c.getPower());
+
+    c.enqueueCommand(Command::setPower(true).withTransition(3000));
+    c.update();
+    TEST_ASSERT_TRUE(c.getPower());            // on immediately, envelope rising
+}
+
+// A fade to a dim, non-zero target is an ordinary eased change: it must land on
+// the target and leave the strip on (no rider).
+void test_fade_to_dim_stays_on() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::setGlobalBrightness(50)
+                         .withTransition(3000).withPowerOffAtZero(false));
+    c.update();                                  // apply the command -> fade starts
+    TEST_ASSERT_TRUE(c.isBrightnessFading());
+    for (int i = 0; i < 50 && c.isBrightnessFading(); i++) c.update();
+    TEST_ASSERT_FALSE(c.isBrightnessFading());
+    TEST_ASSERT_TRUE(c.getPower());
+    TEST_ASSERT_EQUAL_UINT8(50, c.getBrightness());
+}
+
+// A manual brightness set mid-fade overrides the fade AND clears the pending
+// power-off rider — the strip must not switch off behind the user.
+void test_manual_set_clears_power_off_rider() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::setGlobalBrightness(0)
+                         .withTransition(5000).withPowerOffAtZero(true));
+    c.update();
+    TEST_ASSERT_TRUE(c.isBrightnessFading());
+
+    c.enqueueCommand(Command::setGlobalBrightness(200));  // instant manual set
+    for (int i = 0; i < 50 && c.isBrightnessFading(); i++) c.update();
+    TEST_ASSERT_TRUE(c.getPower());             // never powered off
+    TEST_ASSERT_EQUAL_UINT8(200, c.getBrightness());
+}
+
+// An eased ApplyEffectSpec update interpolates continuous params/colors over the
+// transition window rather than snapping — the effect is rendered with values
+// strictly between old and new before landing exactly on the target.
+void test_param_transition_eases_then_lands() {
+    LumeController c;
+    c.begin(60);
+
+    // Create a full-strip segment running recfx (level defaults to 0, black).
+    EffectSpec create = {};
+    create.create = true; create.start = 0; create.length = 60;
+    create.hasEffect = true; std::strcpy(create.effectId, "recfx");
+    c.enqueueCommand(Command::applyEffectSpec(255, create));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(0, g_recInt);   // starts at the default
+
+    // Eased update: level 0 -> 200, color black -> red, over 4s.
+    EffectSpec upd = {};
+    upd.hasParams = true;
+    upd.slots[0].intVal = 200;
+    upd.slots[1].colorVal = CRGB(255, 0, 0);
+    c.enqueueCommand(Command::applyEffectSpec(0, upd).withTransition(4000));
+    c.update();  // apply the command -> transition starts
+    TEST_ASSERT_TRUE(c.getSegment(0)->isParamsTransitioning());
+
+    bool sawIntermediate = false;
+    for (int i = 0; i < 80 && c.getSegment(0)->isParamsTransitioning(); i++) {
+        c.update();
+        if (g_recInt > 0 && g_recInt < 200) sawIntermediate = true;
+    }
+
+    TEST_ASSERT_TRUE(sawIntermediate);          // eased, did not snap
+    TEST_ASSERT_EQUAL_UINT8(200, g_recInt);     // landed exactly
+    TEST_ASSERT_EQUAL_UINT8(255, g_recColor.r); // color reached red
+    TEST_ASSERT_EQUAL_UINT8(0,   g_recColor.g);
+    TEST_ASSERT_EQUAL_UINT8(0,   g_recColor.b);
+}
+
+// An eased spec that also *changes the effect* must snap (new schema / defaults
+// — nothing coherent to ease from), never leaving a transition running.
+void test_effect_change_ignores_transition() {
+    LumeController c;
+    c.begin(60);
+    EffectSpec create = {};
+    create.create = true; create.start = 0; create.length = 60;
+    create.hasEffect = true; std::strcpy(create.effectId, "recfx");
+    c.enqueueCommand(Command::applyEffectSpec(255, create));
+    c.update();
+
+    EffectSpec chg = {};
+    chg.hasEffect = true; std::strcpy(chg.effectId, "testfx");
+    c.enqueueCommand(Command::applyEffectSpec(0, chg).withTransition(4000));
+    c.update();
+    TEST_ASSERT_FALSE(c.getSegment(0)->isParamsTransitioning());
 }
 
 // The AI path carries semantic params (speed/color) that resolve to schema slots
@@ -327,9 +527,13 @@ void test_serialize_segment_canonical_shape() {
 struct MockOutput : ILedOutput {
     int begins = 0, shows = 0, clears = 0;
     uint8_t lastBrightness = 0;
+    CRGB lastCorrection = CRGB(255, 255, 255);
+    CRGB lastTemperature = CRGB(255, 255, 255);
     void begin(CRGB*, uint16_t) override { begins++; }
     void show() override { shows++; }
     void setBrightness(uint8_t b) override { lastBrightness = b; }
+    void setCorrection(CRGB c) override { lastCorrection = c; }
+    void setTemperature(CRGB t) override { lastTemperature = t; }
     void clear() override { clears++; }
 };
 
@@ -345,20 +549,168 @@ void test_led_output_is_pluggable() {
     c.update();                                    // a render frame -> show() on the driver
     TEST_ASSERT_TRUE(mock.shows > showsBefore);
 
+    // Brightness reaches the driver gamma-encoded (perceptual dimming): full
+    // stays full, but a mid/low level is pulled down along the gamma curve.
+    c.enqueueCommand(Command::setGlobalBrightness(255));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastBrightness);              // full = full
     c.enqueueCommand(Command::setGlobalBrightness(42));
     c.update();
-    TEST_ASSERT_EQUAL_UINT8(42, mock.lastBrightness);  // brightness routed to the driver
+    // Gamma-encoded, then clamped up to the low-end floor (they coincide at 42).
+    uint8_t expected42 = applyGamma_video(42, LED_GAMMA);
+    if (expected42 < LED_MIN_OUTPUT) expected42 = LED_MIN_OUTPUT;
+    TEST_ASSERT_EQUAL_UINT8(expected42, mock.lastBrightness);
+    TEST_ASSERT_TRUE(mock.lastBrightness < 42);                     // gamma pulled it down
+}
+
+// The low-end color floor (LED_MIN_OUTPUT): a very low but non-zero perceptual
+// level must never reach the driver inside the broken sub-floor PWM zone where
+// dim white collapses to red — it is held at the floor. A true zero still cuts
+// to black. This is the deterministic white→red→black fix.
+void test_low_end_output_floor() {
+    LumeController c;
+    MockOutput mock;
+    c.setLedOutput(&mock);
+    c.begin(60);
+
+    // A tiny level gamma-encodes below the floor; the output must be clamped up.
+    c.enqueueCommand(Command::setGlobalBrightness(5));
+    c.update();
+    TEST_ASSERT_TRUE(applyGamma_video(5, LED_GAMMA) < LED_MIN_OUTPUT); // would be red zone
+    TEST_ASSERT_EQUAL_UINT8(LED_MIN_OUTPUT, mock.lastBrightness);       // held at floor
+    TEST_ASSERT_TRUE(mock.lastBrightness > 0);                         // not black
+
+    // Brightness 0 is a true off: the floor does NOT light the strip.
+    c.enqueueCommand(Command::setGlobalBrightness(0));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(0, mock.lastBrightness);
+
+    // A high level is well above the floor and passes through untouched.
+    c.enqueueCommand(Command::setGlobalBrightness(255));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastBrightness);
+}
+
+// Correction ramp: near the floor the applied correction relaxes toward
+// uncorrected white (green/blue restored) so dim white reads white, not red;
+// at a high level the strip's full TypicalLEDStrip white balance is applied.
+void test_low_end_correction_ramp() {
+    LumeController c;
+    MockOutput mock;
+    c.setLedOutput(&mock);
+    c.begin(60);
+
+    // At full brightness (output >= LED_CORRECTION_FULL_AT): full correction.
+    c.enqueueCommand(Command::setGlobalBrightness(255));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(LED_CORRECTION_G, mock.lastCorrection.g);   // 176
+    TEST_ASSERT_EQUAL_UINT8(LED_CORRECTION_B, mock.lastCorrection.b);   // 240
+
+    // At the floor: correction relaxed toward uncorrected white — green/blue are
+    // pulled back up above their fully-corrected values (no red collapse).
+    c.enqueueCommand(Command::setGlobalBrightness(5));
+    c.update();
+    TEST_ASSERT_TRUE(mock.lastCorrection.g > LED_CORRECTION_G);
+    TEST_ASSERT_TRUE(mock.lastCorrection.b > LED_CORRECTION_B);
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastCorrection.r);               // red never scaled
+}
+
+// Runtime gamma flows through the single-writer bus: an enqueued value is
+// applied only when the loop drains the queue in update(), and out-of-range
+// values are clamped to [LED_GAMMA_MIN, LED_GAMMA_MAX]. A higher gamma must also
+// reach the output stage, pulling a mid level further down the curve.
+void test_gamma_via_bus_and_clamps() {
+    LumeController c;
+    MockOutput mock;
+    c.setLedOutput(&mock);
+    c.begin(60);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_GAMMA, c.getGamma());   // seeded from the compile default
+
+    c.enqueueCommand(Command::setGamma(2.8f));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_GAMMA, c.getGamma());   // deferred (single writer)
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.8f, c.getGamma());        // applied on the loop
+
+    // A mid level is encoded with the *runtime* gamma now (2.8, deeper than 2.2).
+    c.enqueueCommand(Command::setGlobalBrightness(128));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(applyGamma_video(128, 2.8f), mock.lastBrightness);
+
+    // Above range -> clamped to max; below range -> clamped to min.
+    c.enqueueCommand(Command::setGamma(9.0f));
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_GAMMA_MAX, c.getGamma());
+    c.enqueueCommand(Command::setGamma(0.1f));
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_GAMMA_MIN, c.getGamma());
+}
+
+// Dim-to-warm strength rides the bus like gamma: deferred to the loop, clamped
+// to [LED_WARMTH_MIN, LED_WARMTH_MAX], seeded from the default.
+void test_warmth_via_bus_and_clamps() {
+    LumeController c;
+    c.begin(60);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_WARMTH_DEFAULT, c.getWarmth());  // seeded
+
+    c.enqueueCommand(Command::setWarmth(0.9f));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_WARMTH_DEFAULT, c.getWarmth());  // deferred
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.9f, c.getWarmth());               // applied on loop
+
+    c.enqueueCommand(Command::setWarmth(5.0f));   // above range
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_WARMTH_MAX, c.getWarmth());
+    c.enqueueCommand(Command::setWarmth(-1.0f));  // below range
+    c.update();
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_WARMTH_MIN, c.getWarmth());
+}
+
+// Dim-to-warm actually reaches the driver: at full brightness the temperature
+// is neutral (no tint); at a low level it warms — red held, green/blue pulled
+// down, and blue pulled *more* than green (toward the Tungsten40W target). This
+// guards the color-temp math, which previously fell through MockOutput's no-op.
+void test_dim_to_warm_tints_the_low_end() {
+    LumeController c;
+    MockOutput mock;
+    c.setLedOutput(&mock);
+    c.begin(60);
+    c.setWarmth(0.6f);
+
+    c.setBrightness(255);   // full → neutral temperature
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.r);
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.g);
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.b);
+
+    c.setBrightness(20);    // low → warm tint
+    c.update();
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.r);          // red held
+    TEST_ASSERT_TRUE(mock.lastTemperature.g < 255);                // green pulled down
+    TEST_ASSERT_TRUE(mock.lastTemperature.b < mock.lastTemperature.g);  // blue pulled more
 }
 
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_led_output_is_pluggable);
+    RUN_TEST(test_low_end_output_floor);
+    RUN_TEST(test_low_end_correction_ramp);
+    RUN_TEST(test_gamma_via_bus_and_clamps);
+    RUN_TEST(test_warmth_via_bus_and_clamps);
+    RUN_TEST(test_dim_to_warm_tints_the_low_end);
     RUN_TEST(test_serialize_segment_canonical_shape);
     RUN_TEST(test_create_is_deferred_then_applied);
     RUN_TEST(test_update_changes_params);
+    RUN_TEST(test_update_resizes_segment_geometry);
     RUN_TEST(test_remove_is_deferred_then_applied);
     RUN_TEST(test_power_and_brightness_via_bus);
-    RUN_TEST(test_nightlight_start_stop_via_bus);
+    RUN_TEST(test_fade_to_zero_rider_powers_off);
+    RUN_TEST(test_reported_state_is_target_not_midfade);
+    RUN_TEST(test_power_off_fade_defers_then_settles);
+    RUN_TEST(test_power_on_fade_is_immediate_logical);
+    RUN_TEST(test_fade_to_dim_stays_on);
+    RUN_TEST(test_manual_set_clears_power_off_rider);
+    RUN_TEST(test_param_transition_eases_then_lands);
+    RUN_TEST(test_effect_change_ignores_transition);
     RUN_TEST(test_ai_semantic_params_via_bus);
     RUN_TEST(test_setcolor_maps_index_to_ordered_color_slot);
     RUN_TEST(test_enumeration_survives_middle_delete);

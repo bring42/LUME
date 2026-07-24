@@ -141,11 +141,23 @@ function renderFader(animate) {
 }
 
 let faderDragging = false;
-function setFaderFromClientX(clientX) {
+let lastFaderClientX = null;
+let faderWriteAt = 0;
+const FADER_WRITE_MS = 60;   // throttle mid-drag PUTs; release sends the exact final
+function faderValueFromClientX(clientX) {
   const rect = faderEl.getBoundingClientRect();
   const pad = 9;
   const pct = clamp((clientX - rect.left - pad) / (rect.width - pad * 2), 0, 1);
-  engine.setBrightness(Math.round(pct * 255));
+  return Math.round(pct * 255);
+}
+function setFaderFromClientX(clientX) {
+  lastFaderClientX = clientX;   // remembered so release can settle to the exact spot
+  const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+  if (now - faderWriteAt < FADER_WRITE_MS) return;   // throttled: fewer PUTs, no flood
+  faderWriteAt = now;
+  // Short follow while dragging: the light chases the fader with a little
+  // inertia (device re-eases from its current value) instead of snapping.
+  engine.setBrightness(faderValueFromClientX(clientX), engine.TRANSITION.DRAG);
 }
 faderEl.addEventListener("pointerdown", (e) => {
   faderDragging = true;
@@ -161,6 +173,14 @@ function endFaderDrag() {
   if (!faderDragging) return;
   faderDragging = false;
   faderEl.classList.remove("dragging");
+  // Settle to the EXACT release position over the longer window. Use the last
+  // pointer position (a mid-drag write may have been throttled out, so
+  // engine.state could be one step stale).
+  const finalV = lastFaderClientX != null
+    ? faderValueFromClientX(lastFaderClientX)
+    : engine.state.controller.brightness;
+  lastFaderClientX = null;
+  engine.setBrightness(finalV, engine.TRANSITION.SETTLE);
 }
 faderEl.addEventListener("pointerup", endFaderDrag);
 faderEl.addEventListener("pointercancel", endFaderDrag);
@@ -230,6 +250,14 @@ function segSwatchCss(seg) {
 function renderTabs() {
   const wrap = $("#segTabs");
   wrap.innerHTML = "";
+  // Empty-state hint so a stripped-bare rack never looks broken — the "+ Channel"
+  // button below is still the way back in.
+  if (engine.state.segments.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "rack-empty";
+    empty.textContent = "No channels — add one to light the strip";
+    wrap.appendChild(empty);
+  }
   engine.state.segments.forEach((seg) => {
     const eff = engine.effectById(seg.effect);
     const tab = document.createElement("button");
@@ -255,31 +283,74 @@ function renderTabs() {
   $("#segCountChip").textContent = engine.state.segments.length + " CH";
 }
 
+// Add a channel into the largest free gap on the strip. If the strip is full
+// (segments already cover everything — e.g. the default one full-strip segment),
+// drop a small channel at 0 that overlaps; the user then drags its boundaries.
+// Overlap is legal on-device (segments composite in order), so we never
+// dead-end — the "+ Channel" button always produces a channel to edit.
 function addChannel() {
   const segs = engine.state.segments;
   const ledCount = engine.state.controller.ledCount || 300;
-  const lastEnd = segs.reduce((m, s) => Math.max(m, s.stop != null ? s.stop : (s.start + s.length - 1)), -1);
-  const start = lastEnd + 1;
-  if (start >= ledCount) {
-    showToast("No room left — increase LED count in Settings");
-    return;
+  const DEFAULT_LEN = 10;
+
+  // Find the largest gap not covered by any segment.
+  const covered = new Array(ledCount).fill(false);
+  segs.forEach((s) => {
+    const a = s.start;
+    const b = s.stop != null ? s.stop : (s.start + s.length - 1);
+    for (let i = Math.max(0, a); i <= Math.min(ledCount - 1, b); i++) covered[i] = true;
+  });
+  let bestStart = -1, bestLen = 0, runStart = -1;
+  for (let i = 0; i <= ledCount; i++) {
+    const free = i < ledCount && !covered[i];
+    if (free && runStart < 0) runStart = i;
+    if (!free && runStart >= 0) {
+      const len = i - runStart;
+      if (len > bestLen) { bestLen = len; bestStart = runStart; }
+      runStart = -1;
+    }
   }
-  const length = Math.max(1, Math.min(50, ledCount - start));
-  engine.createSegment({ start: start, length: length, effect: "solid" });
-  showToast("Channel added");
+
+  if (bestLen > 0) {
+    const length = Math.min(DEFAULT_LEN, bestLen);
+    engine.createSegment({ start: bestStart, length: length, effect: "solid" });
+    showToast("Channel added");
+  } else {
+    // Strip is fully covered — add an overlapping channel to edit.
+    const length = Math.min(DEFAULT_LEN, ledCount);
+    engine.createSegment({ start: 0, length: length, effect: "solid" });
+    showToast("Channel added (overlaps — drag its Start/Length to place it)");
+  }
 }
 
+// Any channel can be removed now, including the last — the strip may then render
+// nothing until a channel is added back. The firmware handles an empty layout.
 function deleteActiveChannel() {
   const seg = engine.selectedSegment();
   if (!seg) return;
-  if (engine.state.segments.length <= 1) {
-    showToast("At least one channel is required");
-    return;
-  }
   engine.deleteSegment(seg.id);
   showToast(`CH ${seg.id + 1} removed`);
 }
 $("#deleteChannelBtn").addEventListener("click", deleteActiveChannel);
+
+// Editable segment boundaries. Commit on change (blur / Enter); the engine
+// clamps to the strip and PUTs {start}/{length}. Enter blurs to commit.
+function commitRange(field) {
+  const seg = engine.selectedSegment();
+  if (!seg) return;
+  const startInput = $("#rangeStartInput");
+  const lengthInput = $("#rangeLengthInput");
+  const raw = parseInt(field === "start" ? startInput.value : lengthInput.value, 10);
+  if (!Number.isFinite(raw)) { renderVisualizer(); return; }  // restore on garbage
+  engine.setSegmentRange(seg.id, field === "start" ? { start: raw } : { length: raw });
+  showToast(`CH ${seg.id + 1} range updated`);
+}
+["rangeStartInput", "rangeLengthInput"].forEach((id) => {
+  const el = $("#" + id);
+  const field = id === "rangeStartInput" ? "start" : "length";
+  el.addEventListener("change", () => commitRange(field));
+  el.addEventListener("keydown", (e) => { if (e.key === "Enter") el.blur(); });
+});
 
 /* ---------------------------------------------------------------------
    Visualizer — literal LED bar rendering an approximation of live color
@@ -347,15 +418,36 @@ function colorForPixel(seg, eff, i, n, t) {
 
 function renderVisualizer() {
   const seg = engine.selectedSegment();
-  if (!seg) return;
+  const startInput = $("#rangeStartInput");
+  const lengthInput = $("#rangeLengthInput");
+  // No selected segment (e.g. all channels deleted): blank the range editor and
+  // readouts instead of leaving stale values (the old hard-coded End 99 / prior
+  // channel's Start/Length) sitting there. The channel panels are hidden by
+  // renderChannelPanels(); this also guards the DOM in case they aren't.
+  if (!seg) {
+    $("#vizLabel").textContent = "No channel selected";
+    $("#vizPixels").textContent = "—";
+    $("#vizLength").textContent = "—";
+    $("#rangeEnd").textContent = "—";
+    startInput.value = ""; startInput.disabled = true;
+    lengthInput.value = ""; lengthInput.disabled = true;
+    return;
+  }
+  startInput.disabled = false;
+  lengthInput.disabled = false;
   const eff = engine.effectById(seg.effect);
   const name = eff ? eff.name : seg.effect;
   $("#vizLabel").textContent = `CH ${seg.id + 1} — ${name}`;
   const start = seg.start, end = seg.stop != null ? seg.stop : (seg.start + seg.length - 1);
   $("#vizPixels").textContent = `${start}–${end}`;
   $("#vizLength").textContent = seg.length;
-  $("#rangeStart").textContent = start;
-  $("#rangeLength").textContent = seg.length;
+  // Editable Start/Length. Don't clobber a field the user is actively editing;
+  // the max attrs guide (the engine also clamps) against the current LED count.
+  const ledCount = engine.state.controller.ledCount || 300;
+  startInput.max = Math.max(0, ledCount - 1);
+  lengthInput.max = Math.max(1, ledCount - start);
+  if (document.activeElement !== startInput) startInput.value = start;
+  if (document.activeElement !== lengthInput) lengthInput.value = seg.length;
   $("#rangeEnd").textContent = end;
 
   const count = clamp(Math.round(seg.length / 1.4), 40, 140);
@@ -584,7 +676,7 @@ function buildColorUnit(seg, p) {
     hexLabel.textContent = e.target.value.toUpperCase();
   });
   native.addEventListener("change", (e) => {
-    engine.setParam(seg.id, p.id, e.target.value);
+    engine.setParam(seg.id, p.id, e.target.value, engine.TRANSITION.SETTLE);
   });
   return unit;
 }
@@ -657,7 +749,7 @@ function buildKnobUnit(seg, p) {
     unit._dragging = false;
     knobEl.style.cursor = "grab";
     if (unit._pendingVal != null) {
-      engine.setParam(seg.id, p.id, unit._pendingVal);
+      engine.setParam(seg.id, p.id, unit._pendingVal, engine.TRANSITION.SETTLE);
       unit._pendingVal = null;
     }
   }
@@ -675,7 +767,7 @@ function buildKnobUnit(seg, p) {
     clearTimeout(wheelCommitTimer);
     wheelCommitTimer = setTimeout(() => {
       if (unit._pendingVal != null) {
-        engine.setParam(seg.id, p.id, unit._pendingVal);
+        engine.setParam(seg.id, p.id, unit._pendingVal, engine.TRANSITION.SETTLE);
         unit._pendingVal = null;
       }
     }, 300);
@@ -879,6 +971,37 @@ function renderSettingsFromState() {
     }
     if (config.sacnUniverse) $("#sacnUniverse").value = config.sacnUniverse;
   }
+
+  renderTuningFromState();
+}
+
+/* ---------------------------------------------------------------------
+   Feel / Tuning — reflects the current durations (engine.TRANSITION,
+   client-side + persisted) and gamma (device config). Populated whenever
+   the settings view renders; committed live by the handlers below.
+   -------------------------------------------------------------------- */
+
+function renderTuningFromState() {
+  const T = engine.TRANSITION;
+  const set = (slider, label, val, suffix) => {
+    const s = $(slider), l = $(label);
+    // Don't fight the user mid-drag.
+    if (s && document.activeElement !== s) s.value = val;
+    if (l) l.textContent = val + suffix;
+  };
+  set("#tuneDrag", "#tuneDragVal", T.DRAG, " ms");
+  set("#tuneSettle", "#tuneSettleVal", T.SETTLE, " ms");
+  set("#tunePower", "#tunePowerVal", T.POWER, " ms");
+
+  const g = engine.getGamma();
+  const gs = $("#tuneGamma"), gl = $("#tuneGammaVal");
+  if (gs && document.activeElement !== gs) gs.value = g;
+  if (gl) gl.textContent = Number(g).toFixed(1);
+
+  const w = engine.getWarmth();
+  const ws = $("#tuneWarmth"), wl = $("#tuneWarmthVal");
+  if (ws && document.activeElement !== ws) ws.value = w;
+  if (wl) wl.textContent = Math.round(Number(w) * 100) + "%";
 }
 
 $("#ledCount").addEventListener("change", (e) => {
@@ -1030,6 +1153,156 @@ $("#sacnUniverse").addEventListener("change", (e) => {
 })();
 
 /* ---------------------------------------------------------------------
+   Feel / Tuning handlers — durations tune engine.TRANSITION live (and
+   persist via the engine); gamma persists to device config (applied live
+   on the render loop). The "feel it" triggers drive the REAL strip through
+   engine.* so the user can judge the settings on the hardware as they tune.
+   -------------------------------------------------------------------- */
+
+(function wireTuning() {
+  // --- duration sliders: apply on input so the very next interaction uses it ---
+  const durMap = [
+    ["#tuneDrag", "#tuneDragVal", "DRAG"],
+    ["#tuneSettle", "#tuneSettleVal", "SETTLE"],
+    ["#tunePower", "#tunePowerVal", "POWER"],
+  ];
+  durMap.forEach(([slider, label, key]) => {
+    const s = $(slider);
+    if (!s) return;
+    s.addEventListener("input", (e) => {
+      const v = +e.target.value;
+      $(label).textContent = v + " ms";
+      engine.setTransition(key, v);
+    });
+  });
+
+  // --- gamma: preview readout while dragging, commit (device write) on release ---
+  const gEl = $("#tuneGamma");
+  if (gEl) {
+    gEl.addEventListener("input", (e) => {
+      $("#tuneGammaVal").textContent = Number(e.target.value).toFixed(1);
+    });
+    gEl.addEventListener("change", (e) => {
+      const v = Number(e.target.value);
+      engine.setGamma(v).then((res) => {
+        showToast(res && res.ok ? `Gamma → ${v.toFixed(1)}` : "Failed to save gamma");
+      });
+    });
+  }
+
+  // --- dim-to-warm: preview % while dragging, commit (device write) on release ---
+  const wEl = $("#tuneWarmth");
+  if (wEl) {
+    wEl.addEventListener("input", (e) => {
+      $("#tuneWarmthVal").textContent = Math.round(Number(e.target.value) * 100) + "%";
+    });
+    wEl.addEventListener("change", (e) => {
+      const v = Number(e.target.value);
+      engine.setWarmth(v).then((res) => {
+        showToast(res && res.ok ? `Dim-to-warm → ${Math.round(v * 100)}%` : "Failed to save warmth");
+      });
+    });
+  }
+
+  // --- scratch brightness: exactly the master fader's feel (DRAG follow, SETTLE release) ---
+  const scratch = $("#tuneScratch");
+  if (scratch) {
+    scratch.addEventListener("input", (e) => {
+      const v = +e.target.value;
+      $("#tuneScratchVal").textContent = v;
+      engine.setBrightness(v, engine.TRANSITION.DRAG);
+    });
+    scratch.addEventListener("change", () => {
+      engine.setBrightness(engine.state.controller.brightness, engine.TRANSITION.SETTLE);
+    });
+    // Keep the scratch slider in sync when brightness changes elsewhere.
+    engine.on("change", () => {
+      if (document.activeElement !== scratch) {
+        scratch.value = engine.state.controller.brightness;
+        $("#tuneScratchVal").textContent = engine.state.controller.brightness;
+      }
+    });
+  }
+
+  // --- sequenced live tests. A single guard stops overlapping runs. ---
+  let testBusy = false;
+  const btns = ["#tuneSampleFade", "#tunePowerBlink", "#tuneColorSweep"].map($);
+  function lockTests(on) {
+    testBusy = on;
+    btns.forEach((b) => { if (b) b.disabled = on; });
+  }
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Full → dim → back, each leg using the current SETTLE duration, so the user
+  // watches a full-scale eased brightness move on the strip.
+  $("#tuneSampleFade") && $("#tuneSampleFade").addEventListener("click", async () => {
+    if (testBusy) return;
+    lockTests(true);
+    const start = engine.state.controller.brightness;
+    const S = engine.TRANSITION.SETTLE;
+    const leg = Math.max(S, 200) + 120;
+    try {
+      engine.setBrightness(255, S); await wait(leg);
+      engine.setBrightness(30, S);  await wait(leg);
+      engine.setBrightness(start, S);
+      showToast("Sample fade");
+    } finally { await wait(leg); lockTests(false); }
+  });
+
+  // Off then back on, using the current POWER fade both ways.
+  $("#tunePowerBlink") && $("#tunePowerBlink").addEventListener("click", async () => {
+    if (testBusy) return;
+    lockTests(true);
+    const wasOn = engine.state.controller.power;
+    const P = engine.TRANSITION.POWER;
+    const leg = Math.max(P, 200) + 150;
+    try {
+      engine.setPower(false, P); await wait(leg);
+      engine.setPower(true, P);  await wait(leg);
+      if (!wasOn) { await wait(80); engine.setPower(false, P); } // restore prior state
+      showToast("Power blink");
+    } finally { lockTests(false); }
+  });
+
+  // Crossfade the selected channel through a few hues (eased on-device via
+  // setParam transition), then restore. Falls back to cycling palette presets
+  // for palette-driven effects; no-op with a nudge if the effect has neither.
+  const SWEEP_HUES = ["#ff3b3b", "#ffb23b", "#3bff6a", "#3bd0ff", "#7a3bff"];
+  $("#tuneColorSweep") && $("#tuneColorSweep").addEventListener("click", async () => {
+    if (testBusy) return;
+    const seg = engine.selectedSegment();
+    const eff = seg && engine.effectById(seg.effect);
+    if (!seg || !eff) return;
+    const colorParam = eff.params.find((p) => p.type === "color");
+    const S = engine.TRANSITION.SETTLE;
+    const leg = Math.max(S, 200) + 150;
+    lockTests(true);
+    try {
+      if (colorParam) {
+        const original = seg.params[colorParam.id];
+        for (const hue of SWEEP_HUES) {
+          engine.setParam(seg.id, colorParam.id, hue, S);
+          await wait(leg);
+        }
+        engine.setParam(seg.id, colorParam.id, original, S);
+        showToast(`Color sweep · CH ${seg.id + 1}`);
+      } else if (eff.usesPalette) {
+        const original = seg._paletteIndex != null ? seg._paletteIndex : 0;
+        const n = engine.state.palettes.length;
+        for (let i = 0; i < Math.min(5, n); i++) {
+          engine.setPalette(seg.id, i % n);
+          await wait(leg);
+        }
+        engine.setPalette(seg.id, original);
+        showToast(`Palette sweep · CH ${seg.id + 1}`);
+      } else {
+        showToast("This channel has no color to sweep");
+      }
+    } finally { await wait(leg); lockTests(false); }
+  });
+})();
+
+/* ---------------------------------------------------------------------
    Master render
    -------------------------------------------------------------------- */
 
@@ -1038,12 +1311,24 @@ function renderLedTotal() {
   if (el) el.textContent = `${engine.state.controller.ledCount} LEDs total`;
 }
 
+// Hide the visualizer + channel-strip editor when there's no selected segment
+// (0 channels) so a bare rack reads as intentionally empty — the "+ Channel"
+// button and the .rack-empty hint in the tab row are the way back in.
+function renderChannelPanels() {
+  const has = !!engine.selectedSegment();
+  const vizPanel = $("#vizPanel");
+  const stripPanel = $("#stripPanel");
+  if (vizPanel) vizPanel.style.display = has ? "" : "none";
+  if (stripPanel) stripPanel.style.display = has ? "" : "none";
+}
+
 function renderAll() {
   renderLinkStatus();
   renderPower();
   renderFader(false);
   renderNightlight();
   renderTabs();
+  renderChannelPanels();
   renderVisualizer();
   renderEffectGrid();
   renderControls(false);

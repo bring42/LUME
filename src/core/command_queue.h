@@ -37,11 +37,11 @@ enum class CommandType : uint8_t {
     
     // Global control
     SetPower,           // Power on/off
-    SetGlobalBrightness,// Global brightness
-
-    // Nightlight
-    StartNightlight,    // Begin a timed fade
-    StopNightlight,     // Cancel an active nightlight
+    SetGlobalBrightness,// Global brightness (eased when transitionMs > 0; the
+                        // powerOffAtZero rider makes it a "nightlight")
+    SetGamma,           // Runtime perceptual-dimming gamma (see LED_GAMMA); applied
+                        // on the loop so the output stage never reads a torn value
+    SetWarmth,          // Runtime dim-to-warm strength [0..1] (see LED_WARMTH_*)
 
     // Advanced
     ApplyEffectSpec,    // Apply AI-generated effect spec
@@ -70,14 +70,6 @@ struct SegmentData {
 };
 
 /**
- * Nightlight start data
- */
-struct NightlightData {
-    uint16_t durationSec;
-    uint8_t  targetBrightness;
-};
-
-/**
  * EffectSpec - a bounded, self-contained "make this segment look like X".
  *
  * This is the payload that lets handlers stop mutating segments directly
@@ -89,8 +81,12 @@ struct NightlightData {
 // Trivial aggregate (no in-class initializers) so it stays usable as a union
 // member — producers zero-init with `EffectSpec spec = {};` then set fields.
 struct EffectSpec {
-    // Geometry — only used when `create` is true (segmentId is then 255).
+    // Geometry. On create (`create` true, segmentId 255) start/length/reversed
+    // seed the new segment. On a NON-create update, `hasGeometry` true means the
+    // producer wants the target segment RESIZED to start/length/reversed (the
+    // editable-boundaries path); the loop clamps to the strip and allows overlap.
     bool     create;
+    bool     hasGeometry;
     uint16_t start;
     uint16_t length;
     bool     reversed;
@@ -133,6 +129,21 @@ struct Command {
     CommandType type;
     uint8_t segmentId;      // Target segment (255 = all/global)
 
+    // Premium easing (Matter/Zigbee-shaped): how long the render loop should
+    // interpolate this change over, in milliseconds. 0 = apply instantly (the
+    // historical behaviour). uint32 so it also covers long fades — a "nightlight"
+    // is just a brightness fade with a large transition (up to an hour). Producers
+    // set it via withTransition(); the factory methods below leave it 0. A default
+    // member initializer keeps every `Command cmd;` path zeroed even though
+    // Command is built field-by-field.
+    uint32_t transitionMs = 0;
+
+    // Rider for eased brightness fades: power the strip off once the fade
+    // settles at zero. This is the *only* thing "nightlight" adds over a plain
+    // eased brightness change — so nightlight no longer needs its own command or
+    // controller state; the API composes it from setGlobalBrightness + this.
+    bool powerOffAtZero = false;
+
     union {
         // SetEffect
         const char* effectId;
@@ -152,8 +163,8 @@ struct Command {
         // Generic 32-bit value
         uint32_t value32;
 
-        // StartNightlight
-        NightlightData nightlight;
+        // SetGamma — runtime perceptual-dimming exponent
+        float valueFloat;
 
         // ApplyEffectSpec — the compound segment mutation (create/update)
         EffectSpec spec;
@@ -223,6 +234,26 @@ struct Command {
         cmd.data.value8 = brightness;
         return cmd;
     }
+
+    // Runtime gamma (perceptual-dimming exponent). Clamped on apply; see
+    // LED_GAMMA / LED_GAMMA_MIN / LED_GAMMA_MAX. Global (segment 255).
+    static Command setGamma(float gamma) {
+        Command cmd;
+        cmd.type = CommandType::SetGamma;
+        cmd.segmentId = 255;  // Global
+        cmd.data.valueFloat = gamma;
+        return cmd;
+    }
+
+    // Runtime dim-to-warm strength [0..1] (0 = off). Clamped on apply; see
+    // LED_WARMTH_MIN/MAX. Global (segment 255). Reuses the float union member.
+    static Command setWarmth(float warmth) {
+        Command cmd;
+        cmd.type = CommandType::SetWarmth;
+        cmd.segmentId = 255;  // Global
+        cmd.data.valueFloat = warmth;
+        return cmd;
+    }
     
     static Command createSegment(uint16_t start, uint16_t length, bool reversed = false) {
         Command cmd;
@@ -249,26 +280,26 @@ struct Command {
         return cmd;
     }
 
-    static Command startNightlight(uint16_t durationSec, uint8_t targetBrightness) {
-        Command cmd;
-        cmd.type = CommandType::StartNightlight;
-        cmd.segmentId = 255;
-        cmd.data.nightlight = { durationSec, targetBrightness };
-        return cmd;
-    }
-
-    static Command stopNightlight() {
-        Command cmd;
-        cmd.type = CommandType::StopNightlight;
-        cmd.segmentId = 255;
-        return cmd;
-    }
-
     static Command reconfigureProtocols() {
         Command cmd;
         cmd.type = CommandType::ReconfigureProtocols;
         cmd.segmentId = 255;
         return cmd;
+    }
+
+    // Attach an eased transition window (milliseconds) to a command. Chains off
+    // any factory, e.g. Command::setGlobalBrightness(200).withTransition(300).
+    // The render loop interpolates over this window; 0 means apply instantly.
+    Command& withTransition(uint32_t ms) {
+        transitionMs = ms;
+        return *this;
+    }
+
+    // Attach the power-off-at-zero rider to an eased brightness fade — the
+    // building block a "nightlight" is composed from at the API boundary.
+    Command& withPowerOffAtZero(bool on) {
+        powerOffAtZero = on;
+        return *this;
     }
 };
 

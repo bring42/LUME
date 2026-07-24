@@ -5,6 +5,7 @@
 #include "effect_params.h"
 #include "effect_registry.h"
 #include "param_schema.h"
+#include "transition.h"   // per-segment param/color easing
 
 namespace lume {
 
@@ -49,6 +50,12 @@ public:
         externalScratchpad_ = false;
         view = SegmentView(leds, start, length, reversed, scratchpad, SCRATCHPAD_SIZE);
         active = true;
+        // A range change (esp. a live resize) re-points the view at the inline
+        // pad; reset effect state so the effect re-inits for the new pixel span
+        // instead of rendering stale per-pixel history (fire heat, rain drops)
+        // on newly-covered LEDs. firstFrame fires next update via the version bump.
+        scratchpadVersion++;
+        resetScratchpad();
     }
     
     // Set effect by EffectInfo pointer (preferred)
@@ -64,6 +71,10 @@ public:
         effect = info;
         scratchpadVersion++;      // Signal scratchpad reset
         resetScratchpad();        // Clears the active pad (inline or borrowed)
+
+        // An effect change means a new schema and freshly-defaulted params —
+        // there is nothing to ease *from*, so cancel any param transition.
+        paramTransition_.stop();
 
         // Initialize ParamValues with defaults if effect has schema
         if (info->hasSchema()) {
@@ -164,6 +175,33 @@ public:
     }
     
     void setBrightness(uint8_t bri) { brightness = bri; }
+
+    // --- Param/color easing ---
+    //
+    // Usage from the loop (single writer): snapshotParamsForTransition(now)
+    // BEFORE mutating params, then apply the new values, then
+    // startParamTransition(durMs, now). update() then renders an interpolated
+    // ParamValues until the window elapses. durMs == 0 (or snapParams())
+    // applies instantly. Continuous slots (Int/Float/Color) ease; discrete
+    // ones (Bool/Enum/Palette) and the palette itself snap to the target.
+
+    // Capture the current *effective* slots as the "from" of a transition. If a
+    // transition is already running, this captures the interpolated mid-flight
+    // values so a re-target never jumps.
+    void snapshotParamsForTransition(uint32_t nowMs) {
+        if (paramTransition_.isActive()) {
+            fillInterpolatedSlots(paramFrom_, paramTransition_.eased(nowMs));
+        } else {
+            for (uint8_t i = 0; i < MAX_EFFECT_PARAMS; i++) {
+                paramFrom_[i] = paramValues.slots[i];
+            }
+        }
+    }
+    void startParamTransition(uint32_t durationMs, uint32_t nowMs) {
+        paramTransition_.start(durationMs, nowMs);
+    }
+    void snapParams() { paramTransition_.stop(); }
+    bool isParamsTransitioning() const { return paramTransition_.isActive(); }
     uint8_t getBrightness() const { return brightness; }
 
     // --- State ---
@@ -207,21 +245,32 @@ public:
     
     // --- Update ---
     
-    // Run the effect for this frame
-    void update(uint32_t frame) {
+    // Run the effect for this frame. `nowMs` drives param/color easing (the
+    // effect's own animation still uses `frame`).
+    void update(uint32_t frame, uint32_t nowMs) {
         if (!active || !view.valid() || !effect || !effect->fn) {
             return;
         }
-        
+
         // Derive firstFrame from version mismatch (no desync possible)
         bool firstFrame = (lastSeenVersion != scratchpadVersion);
         if (firstFrame) {
             lastSeenVersion = scratchpadVersion;
         }
-        
-        // Call the effect function
-        effect->fn(view, paramValues, frame, firstFrame);
-        
+
+        // While a param/color transition is running, render the effect against
+        // an interpolated snapshot instead of the committed values. `eff` starts
+        // as the target (so palette + discrete params are already correct), then
+        // its continuous slots are eased from paramFrom_ toward the target.
+        if (paramTransition_.isActive()) {
+            float t = paramTransition_.eased(nowMs);   // auto-deactivates at end
+            ParamValues eff = paramValues;
+            fillInterpolatedSlots(eff.slots, t);
+            effect->fn(view, eff, frame, firstFrame);
+        } else {
+            effect->fn(view, paramValues, frame, firstFrame);
+        }
+
         // Apply segment brightness if not 255. Through operator[] so it stays
         // remap-safe (P1.4) — the same reason effects never touch a raw pointer.
         if (brightness < 255) {
@@ -236,8 +285,43 @@ private:
     
     SegmentView view;
     const EffectInfo* effect;
-    ParamValues paramValues;  // Schema-aware parameter values
-    
+    ParamValues paramValues;  // Schema-aware parameter values (the target)
+
+    // Param/color easing: the "from" slots captured at transition start, and the
+    // timer. Only the slots are snapshotted (palette + discrete params snap), so
+    // this is cheap. See snapshotParamsForTransition()/update().
+    ParamValues::Slot paramFrom_[MAX_EFFECT_PARAMS];
+    Transition paramTransition_;
+
+    // Write per-slot interpolation between paramFrom_ (t=0) and the committed
+    // paramValues (t=1) into `dst`. Eases continuous slots only; discrete slots
+    // (Bool/Enum/Palette selector) take the target. In-place safe (dst may be
+    // paramFrom_): each slot depends only on its own from/target.
+    void fillInterpolatedSlots(ParamValues::Slot* dst, float t) {
+        const ParamSchema* sch = effect ? effect->schema : nullptr;
+        for (uint8_t i = 0; i < MAX_EFFECT_PARAMS; i++) {
+            ParamType type = (sch && i < sch->count) ? sch->params[i].type : ParamType::Int;
+            switch (type) {
+                case ParamType::Int:
+                    dst[i].intVal = lerpU8(paramFrom_[i].intVal, paramValues.slots[i].intVal, t);
+                    break;
+                case ParamType::Float:
+                    dst[i].floatVal = lerpF32(paramFrom_[i].floatVal, paramValues.slots[i].floatVal, t);
+                    break;
+                case ParamType::Color: {
+                    CRGB a = paramFrom_[i].colorVal, b = paramValues.slots[i].colorVal;
+                    dst[i].colorVal = CRGB(lerpU8(a.r, b.r, t),
+                                           lerpU8(a.g, b.g, t),
+                                           lerpU8(a.b, b.b, t));
+                    break;
+                }
+                default:  // Palette selector / Bool / Enum: discrete, snap to target
+                    dst[i] = paramValues.slots[i];
+                    break;
+            }
+        }
+    }
+
     uint8_t brightness;
     bool active;
     uint8_t id;

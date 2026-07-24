@@ -60,8 +60,11 @@ static void buildControllerState(JsonDocument& doc) {
     doc["type"] = "state";
 
     JsonObject controllerJson = doc["controller"].to<JsonObject>();
-    controllerJson["power"] = lume::controller.getPower();
-    controllerJson["brightness"] = lume::controller.getBrightness();
+    // Report the *target* power/brightness (where a fade is heading), not the
+    // mid-fade values — otherwise this ~1Hz push snaps a just-moved slider/toggle
+    // back to a transient level, then corrects (the flicker). See controller.h.
+    controllerJson["power"] = lume::controller.getTargetPower();
+    controllerJson["brightness"] = lume::controller.getTargetBrightness();
     controllerJson["ledCount"] = lume::controller.getLedCount();
 
     JsonArray segmentsArr = doc["segments"].to<JsonArray>();
@@ -204,7 +207,11 @@ void setupServer() {
             sendUnauthorized(request);
             return;
         }
-        lume::controller.enqueueCommand(lume::Command::stopNightlight());
+        // Stop = freeze the fade where it is: snap brightness to its current
+        // (reconciled) value with no transition, which also clears the pending
+        // power-off rider. "Nightlight" needs no dedicated command anymore.
+        lume::controller.enqueueCommand(
+            lume::Command::setGlobalBrightness(lume::controller.getBrightness()));
         request->send(202, "application/json", "{\"status\":\"accepted\"}");
     });
     

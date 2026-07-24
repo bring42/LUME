@@ -75,6 +75,14 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
             // `config` persisted above) on its own task — single writer.
             lume::controller.enqueueCommand(lume::Command::reconfigureProtocols());
 
+            // Gamma IS applied live: unlike ledCount it doesn't touch FastLED
+            // bindings, just the output-encode exponent read every frame. Push it
+            // through the bus so the render loop (single writer) adopts the value
+            // just persisted above — never mutate controller state from this task.
+            lume::controller.enqueueCommand(lume::Command::setGamma(config.gamma));
+            // Same story for dim-to-warm strength: live, via the bus.
+            lume::controller.enqueueCommand(lume::Command::setWarmth(config.warmth));
+
             request->send(200, "application/json", "{\"success\":true}");
         } else {
             request->send(500, "application/json", "{\"error\":\"Failed to save\"}");

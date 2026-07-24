@@ -35,6 +35,73 @@ constexpr uint16_t MAX_LED_COUNT            = 1000;
 constexpr uint8_t  LED_VOLTAGE              = 5;     // LED strip voltage
 constexpr uint16_t LED_MAX_MILLIAMPS        = 2000;  // Max current (adjust for PSU)
 
+// Perceptual dimming. Global brightness is treated as a *perceptual* level and
+// eased linearly; the output is gamma-encoded (output = (level/255)^GAMMA) just
+// before FastLED so equal steps in the fade produce equal *perceived* steps.
+// Human brightness perception is ~logarithmic, so without this a value-linear
+// fade looks dead at the top and rushes at the bottom. ~2.2 = sRGB/eye-ish;
+// 2.6–2.8 dims "deeper". Tune on hardware.
+//
+// This is the compile-time DEFAULT (seed). Gamma is runtime-adjustable: the
+// persisted config carries a `gamma` value, seeded from this at first boot, and
+// the render loop applies the controller's runtime member (LumeController::
+// setGamma) — so it can be tuned live from the web UI without a reflash.
+constexpr float    LED_GAMMA                = 2.2f;
+// Sane runtime range for live gamma tuning; clamped on both the API and the
+// controller so an out-of-range value can never reach the output stage.
+constexpr float    LED_GAMMA_MIN            = 1.0f;
+constexpr float    LED_GAMMA_MAX            = 3.5f;
+
+// Dim-to-warm. As the perceptual level drops, the output color temperature is
+// blended from neutral white toward a warm target — mimicking how incandescent
+// sources warm as they dim (premium-lighting-criteria.md). The blend follows a
+// quadratic-in-(1-level) curve so the upper range stays neutral and only the
+// low end glides warm (a smooth amber, not the accidental red PWM floor). Warmth
+// is the *strength* [0..1] of the effect at the very bottom (0 = disabled) and
+// is runtime-tunable via config, like gamma. The warm endpoint is Tungsten40W
+// (2600 K, 255/197/143) — a cozy warm-white, not an orange.
+constexpr float    LED_WARMTH_DEFAULT       = 0.6f;
+constexpr float    LED_WARMTH_MIN           = 0.0f;
+constexpr float    LED_WARMTH_MAX           = 1.0f;
+constexpr uint8_t  LED_WARM_TARGET_R        = 255;   // Tungsten40W (2600 K)
+constexpr uint8_t  LED_WARM_TARGET_G        = 197;
+constexpr uint8_t  LED_WARM_TARGET_B        = 143;
+
+// Low-end color floor. WS2812B is 8-bit-per-channel with no low-end headroom,
+// and FastLED's output scale is per-channel (brightness × color-correction ×
+// temperature, all multiplied in CRGB::computeAdjustment). At a FastLED output
+// brightness of 1-3 the green/blue channels of a white pixel round to 0 *before*
+// red does (correction/warmth scale them down more), so "dim white" collapses to
+// pure (1,0,0) RED — the ugly white→red→black seen when fading out. Temporal
+// dithering does NOT rescue this: the dither offset is added to the *source*
+// byte before scaling (qadd8(b, d)), and a white source byte is 255 — it
+// saturates, so no channel of a white pixel gains any dither headroom. The floor
+// is therefore the deterministic fix.
+//
+// LED_MIN_OUTPUT is the lowest FastLED brightness we will ever emit for a
+// non-zero level. applyGamma_video(perceptual) is clamped up to this floor for
+// any perceptual > 0; a true zero (off / a settled fade-out) still emits 0. This
+// is what physical dimmers do — hold a lowest clean level, then cut to black,
+// never dwelling in the sub-usable PWM zone. At 4/255 every channel of the
+// warmest tinted white is still ≥ 1 (no collapse to red); the trade is a small
+// dead band at the very bottom of the range (perceptual ~1..38 at gamma 2.2 all
+// render at the floor) instead of a red-tinted fade into that zone.
+constexpr uint8_t  LED_MIN_OUTPUT            = 4;
+
+// Color-correction is itself the source of the red bias: TypicalLEDStrip
+// (255,176,240) deliberately pulls green/blue down for white balance, which at
+// the low end is exactly what makes them hit 0 first. So as the output nears the
+// floor, ramp the applied correction from TypicalLEDStrip toward UncorrectedColor
+// (255,255,255) — restoring the green/blue channels so the floor reads as clean
+// (warm) white rather than red. Above LED_CORRECTION_FULL_AT the strip's normal
+// white balance is untouched; the ramp lives only in the bottom few PWM levels
+// where correction does more harm than good. Values mirror the FastLED
+// LEDColorCorrection enums (TypicalLEDStrip = 0xFFB0F0).
+constexpr uint8_t  LED_CORRECTION_FULL_AT    = 16;   // output ≥ this: full correction
+constexpr uint8_t  LED_CORRECTION_R          = 255;  // TypicalLEDStrip red
+constexpr uint8_t  LED_CORRECTION_G          = 176;  // TypicalLEDStrip green
+constexpr uint8_t  LED_CORRECTION_B          = 240;  // TypicalLEDStrip blue
+
 // ═══════════════════════════════════════════════════════════════════════════
 // NETWORK CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════

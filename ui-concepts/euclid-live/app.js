@@ -75,12 +75,6 @@
       return 0.1 + tri * 0.8;
     });
   }
-  function sampleStrobe(){
-    return Array.from({ length: GLYPH_SAMPLES }, function (_, i) {
-      var t = (i / GLYPH_SAMPLES) * 8;
-      return (Math.floor(t) % 2 === 0) ? 0.92 : 0.08;
-    });
-  }
   function sampleFlicker(seed, roughness){
     var rnd = mulberry32(seed);
     var vals = [];
@@ -135,14 +129,12 @@
     gradient: function () { return sampleGradient(); },
     breathe: function () { return sampleBreathe(); },
     pulse: function () { return samplePulse(); },
-    strobe: function () { return sampleStrobe(); },
     candle: function (fx) { return sampleFlicker(seedFor(fx.id), 0.32); },
     fire: function (fx) { return sampleFlicker(seedFor(fx.id), 0.5); },
     fireup: function (fx) { return sampleFlicker(seedFor(fx.id), 0.5); },
     noise: function (fx) { return sampleLayeredWave(seedFor(fx.id)); },
     twinkle: function (fx) { return sampleSparse(seedFor(fx.id), 0.28); },
     sparkle: function (fx) { return sampleSparse(seedFor(fx.id), 0.22); },
-    confetti: function (fx) { return sampleSparse(seedFor(fx.id), 0.34); },
     rainbow: function (fx) { return sampleCyclingWave(seedFor(fx.id)); },
     pride: function (fx) { return sampleCyclingWave(seedFor(fx.id)); },
     colorwaves: function (fx) { return sampleCyclingWave(seedFor(fx.id)); },
@@ -152,8 +144,7 @@
     sinelon: function (fx) { return sampleTravelingBump(seedFor(fx.id), 0.17); },
     wave: function (fx) { return sampleLayeredWave(seedFor(fx.id)); },
     pacifica: function (fx) { return sampleLayeredWave(seedFor(fx.id)); },
-    rain: function (fx) { return samplePulseTrain(seedFor(fx.id), 0.3); },
-    theater: function (fx) { return samplePulseTrain(seedFor(fx.id), 0.5); }
+    rain: function (fx) { return samplePulseTrain(seedFor(fx.id), 0.3); }
   };
 
   // Category-keyed fallbacks for any effect id the glyph table doesn't know

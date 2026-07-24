@@ -35,7 +35,6 @@ void effectGradient(SegmentView& view, const ParamValues& params, uint32_t frame
 // Animated effects
 void effectFire(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 void effectFireUp(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
-void effectConfetti(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 void effectColorWaves(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 void effectNoise(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 
@@ -47,14 +46,12 @@ void effectCandle(SegmentView& view, const ParamValues& params, uint32_t frame, 
 // Sparkle/twinkle effects
 void effectSparkle(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 void effectTwinkle(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
-void effectStrobe(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 
 // Moving effects
 void effectMeteor(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 void effectComet(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 void effectScanner(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 void effectSinelon(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
-void effectTheaterChase(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 void effectWave(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 void effectRain(SegmentView& view, const ParamValues& params, uint32_t frame, bool firstFrame);
 

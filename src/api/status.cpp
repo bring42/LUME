@@ -37,7 +37,7 @@ void handleApiStatus(AsyncWebServerRequest* request) {
     doc["ip"] = wifiConnected ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
     doc["heap"] = ESP.getFreeHeap();
     doc["ledCount"] = lume::controller.getLedCount();
-    doc["power"] = lume::controller.getPower();
+    doc["power"] = lume::controller.getTargetPower();
     
     // sACN status (using new protocol system)
     JsonObject sacn = doc["sacn"].to<JsonObject>();

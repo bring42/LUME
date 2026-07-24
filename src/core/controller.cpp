@@ -24,11 +24,11 @@ LumeController::LumeController()
     , workbufferOwner_(-1)
     , power(true)
     , globalBrightness(255)
-    , nightlightActive(false)
-    , nightlightStartTime(0)
-    , nightlightDuration(0)
-    , nightlightStartBrightness(0)
-    , nightlightTargetBrightness(0)
+    , ledGamma_(LED_GAMMA)          // runtime gamma, seeded from the compile default
+    , warmth_(LED_WARMTH_DEFAULT)   // dim-to-warm strength, seeded from the default
+
+    , powerOffWhenSettled_(false)
+    , powerOffWhenFadeSettles_(false)
     , protocolCount_(0)
     , protocolActive_(false)
     , activeProtocol_(nullptr)
@@ -60,104 +60,142 @@ void LumeController::begin(uint16_t count) {
     output_->setBrightness(globalBrightness);
     output_->clear();
     output_->show();
-    
+
+    // Seed the easing engine with the current brightness so the first eased
+    // change starts from the real value, not zero.
+    brightnessTransition_.snap(globalBrightness);
+    // Seed the power envelope to match the initial power state.
+    powerFade_.snap(power ? 255 : 0);
+
     lastFrameTime = millis();
     fpsUpdateTime = millis();
 }
 
 void LumeController::update() {
-    // Frame rate limiting
     uint32_t now = millis();
     uint32_t frameInterval = 1000 / targetFps;
-    
-    if (now - lastFrameTime < frameInterval) {
-        return;  // Not time for next frame yet
-    }
-    lastFrameTime = now;
-    
-    // Process any pending commands (single-writer model)
-    processCommands();
-    
-    // FPS calculation
-    fpsFrameCount++;
-    if (now - fpsUpdateTime >= 1000) {
-        actualFps = fpsFrameCount;
-        fpsFrameCount = 0;
-        fpsUpdateTime = now;
-    }
-    
-    // Update nightlight if active
-    if (nightlightActive) {
-        // Guard the subtraction: a StartNightlight command is applied inside this
-        // frame *after* `now` was captured, so nightlightStartTime can be slightly
-        // ahead of `now` on the first frame. Clamp to 0 to avoid unsigned underflow
-        // (which would otherwise insta-complete the fade).
-        uint32_t elapsed = (now > nightlightStartTime) ? (now - nightlightStartTime) / 1000 : 0;
-        if (elapsed >= nightlightDuration) {
-            // Nightlight complete - set target brightness and stop
-            setBrightness(nightlightTargetBrightness);
-            if (nightlightTargetBrightness == 0) {
-                setPower(false);
-            }
-            nightlightActive = false;
-            LOG_INFO(LogTag::LED, "Nightlight complete");
+
+    // Rendering (command processing, transition advance, effect draw) is frame-
+    // rate limited. But output_->show() runs on EVERY call — see the end. FastLED
+    // temporal dithering advances its counter each show(), so refreshing faster
+    // than the animation rate lets it smooth *mid-range* dim content. It does not
+    // fix dim white going red (saturated source bytes gain no dither headroom);
+    // that is handled by the output floor + correction ramp below. So: draw at
+    // targetFps, refresh as fast as the loop allows.
+    if (now - lastFrameTime >= frameInterval) {
+        lastFrameTime = now;
+
+        // Process any pending commands (single-writer model)
+        processCommands();
+
+        // FPS calculation
+        fpsFrameCount++;
+        if (now - fpsUpdateTime >= 1000) {
+            actualFps = fpsFrameCount;
+            fpsFrameCount = 0;
+            fpsUpdateTime = now;
+        }
+
+        // Advance the premium easing engine (eased global brightness — the
+        // user's level). Output brightness is composed + applied below; this
+        // only steps the stored level toward its target.
+        if (brightnessTransition_.isActive()) {
+            globalBrightness = brightnessTransition_.advance(now);
+        }
+
+        // Power-off rider: when a brightness fade carrying the "power off at
+        // zero" policy settles, switch the strip off (all that remains of
+        // "nightlight" in the core).
+        if (powerOffWhenSettled_ && !brightnessTransition_.isActive()) {
+            powerOffWhenSettled_ = false;
+            setPower(false);
+            LOG_INFO(LogTag::LED, "Brightness fade settled -> power off");
+        }
+
+        // Compose the perceptual output level (user level scaled by the power
+        // fade envelope, still perceptual) and gamma-encode to PWM. Equal steps
+        // in the linearly-eased level then read as equal *perceived* steps.
+        uint8_t powerEnv = powerFade_.advance(now);
+        uint8_t perceptual = (powerEnv == 255) ? globalBrightness
+                                               : scale8(globalBrightness, powerEnv);
+        uint8_t encoded = applyGamma_video(perceptual, ledGamma_);
+
+        // Low-end floor (deterministic; see LED_MIN_OUTPUT). Below a few PWM
+        // levels the green/blue channels of a white pixel round to 0 before red,
+        // so dim white collapses to (1,0,0) RED. Never emit a non-zero level
+        // inside that broken zone: hold the lowest clean level and let a true
+        // zero still cut to black. This is the white→red→black fix, and it needs
+        // no eyeball tuning.
+        if (perceptual > 0 && encoded < LED_MIN_OUTPUT) encoded = LED_MIN_OUTPUT;
+        output_->setBrightness(encoded);
+
+        // Correction ramp: the red bias *is* the color correction. TypicalLEDStrip
+        // (255,176,240) pulls green/blue down, so near the floor they die first.
+        // Ramp the applied correction from full TypicalLEDStrip (at/above
+        // LED_CORRECTION_FULL_AT) toward uncorrected white (255,255,255) as the
+        // output approaches the floor, so the dim end reads as clean white — the
+        // strip's normal white balance above the knee is untouched.
+        uint8_t k = (encoded >= LED_CORRECTION_FULL_AT)
+                        ? 255
+                        : (uint8_t)((uint16_t)encoded * 255 / LED_CORRECTION_FULL_AT);
+        float kf = (float)k / 255.0f;
+        output_->setCorrection(CRGB(lerpU8(255, LED_CORRECTION_R, kf),
+                                    lerpU8(255, LED_CORRECTION_G, kf),
+                                    lerpU8(255, LED_CORRECTION_B, kf)));
+
+        // Dim-to-warm: blend the output color temperature from neutral white
+        // toward the warm target as the perceptual level drops, so the low end
+        // glides to a designed amber instead of the accidental red PWM floor.
+        // Quadratic in (1 - level): near-neutral through the upper range, warm
+        // only down low. `t` in [0,1] scaled by the runtime warmth_ strength;
+        // warmth_ == 0 yields neutral (0xFFFFFF), i.e. no tint.
+        float dim = 1.0f - (float)perceptual / 255.0f;
+        float t = warmth_ * dim * dim;
+        output_->setTemperature(CRGB(lerpU8(255, LED_WARM_TARGET_R, t),
+                                     lerpU8(255, LED_WARM_TARGET_G, t),
+                                     lerpU8(255, LED_WARM_TARGET_B, t)));
+
+        // Flip logical power off once a fade-out envelope reaches zero.
+        if (powerOffWhenFadeSettles_ && !powerFade_.isActive()) {
+            powerOffWhenFadeSettles_ = false;
+            power = false;
+            LOG_INFO(LogTag::LED, "Power fade settled -> off");
+        }
+
+        // Draw this frame into leds[] from the active source (mutually exclusive).
+        if (!power) {
+            output_->clear();
         } else {
-            // Calculate current brightness based on progress
-            float progress = (float)elapsed / (float)nightlightDuration;
-            // Use int16_t to handle negative differences (fade down)
-            int16_t diff = (int16_t)nightlightTargetBrightness - (int16_t)nightlightStartBrightness;
-            int16_t newBri = (int16_t)nightlightStartBrightness + (int16_t)(diff * progress);
-            setBrightness((uint8_t)max((int16_t)0, min((int16_t)255, newBri)));
+            processProtocols();
+            if (protocolActive_) {
+                // A protocol (sACN) has already written leds[]; nothing to draw.
+            } else if (directPixels_.isReady()) {
+                // Drain a staged direct-pixel frame (debug /api/pixels). Single-
+                // writer: the web task only wrote directPixels_ (atomic ready
+                // flag); leds[] is touched here, on the loop. One-frame overlay.
+                uint16_t count = min(directPixels_.getLedCount(), ledCount);
+                memcpy(leds, directPixels_.getBuffer(), count * sizeof(CRGB));
+                directPixels_.clearReady();
+            } else {
+                // Clear only the LEDs not owned by an active segment. Effects
+                // own their canvas and many build fade-trails by reading the
+                // previous frame (sinelon, wave, comet...); a blanket clear
+                // would wipe that history. Clearing only gaps keeps it intact.
+                clearUncoveredLeds();
+                for (uint8_t i = 0; i < segmentCount; i++) {
+                    if (segments[i].isActive()) {
+                        segments[i].update(frameCounter, now);
+                    }
+                }
+            }
         }
-    }
-    
-    // Clear or handle power off
-    if (!power) {
-        output_->clear();
-        output_->show();
-        return;
-    }
-    
-    // Check protocols for incoming data
-    processProtocols();
-    
-    // If a protocol is active, it has already written to LEDs - just show
-    if (protocolActive_) {
-        output_->show();
         frameCounter++;
-        return;
     }
 
-    // Drain a staged direct-pixel frame (debug /api/pixels). Single-writer: the
-    // web task only wrote directPixels_ (atomic ready flag); leds[] is touched
-    // here, on the loop, then shown once. One-frame overlay — segments resume
-    // next frame (P0.1).
-    if (directPixels_.isReady()) {
-        uint16_t count = min(directPixels_.getLedCount(), ledCount);
-        memcpy(leds, directPixels_.getBuffer(), count * sizeof(CRGB));
-        directPixels_.clearReady();
-        output_->show();
-        frameCounter++;
-        return;
-    }
-
-    // Clear only the LEDs not owned by an active segment. Effects own their
-    // canvas (fill or fade) and many build fade-trails by reading the previous
-    // frame (confetti, sinelon, wave, comet...). A blanket FastLED.clear() here
-    // would wipe that history every frame; clearing only gaps keeps it intact
-    // while still blacking out uncovered pixels (gaps, removed segments).
-    clearUncoveredLeds();
-
-    // Update all active segments
-    for (uint8_t i = 0; i < segmentCount; i++) {
-        if (segments[i].isActive()) {
-            segments[i].update(frameCounter);
-        }
-    }
-    
-    // Show the result
+    // Push the frame on EVERY call. Repeated refreshes of the same buffer drive
+    // FastLED's temporal dithering for mid-range content (see the note above);
+    // the physical WS2812 transmission time naturally caps the rate.
     output_->show();
-    frameCounter++;
 }
 
 void LumeController::processCommands() {
@@ -231,14 +269,35 @@ void LumeController::executeCommand(const Command& cmd) {
             break;
             
         case CommandType::SetPower:
-            setPower(cmd.data.power);
-            LOG_INFO(LogTag::LED, "Power -> %s", cmd.data.power ? "ON" : "OFF");
+            // Eased when the command carries a transition window, instant
+            // otherwise (setPowerEased falls back to setPower at 0).
+            setPowerEased(cmd.data.power, cmd.transitionMs);
+            LOG_INFO(LogTag::LED, "Power -> %s%s", cmd.data.power ? "ON" : "OFF",
+                     cmd.transitionMs ? " (fade)" : "");
             break;
             
         case CommandType::SetGlobalBrightness:
-            setBrightness(cmd.data.value8);
+            // Eased when the command carries a transition window, instant
+            // otherwise (setBrightnessEased falls back to setBrightness at 0).
+            // The powerOffAtZero rider makes a fade-to-zero a "nightlight".
+            setBrightnessEased(cmd.data.value8, cmd.transitionMs, cmd.powerOffAtZero);
             break;
-            
+
+        case CommandType::SetGamma:
+            // Runtime perceptual-dimming gamma. Applied on the loop (single
+            // writer) so update()'s output-encode never reads a torn value.
+            // setGamma() clamps to [LED_GAMMA_MIN, LED_GAMMA_MAX].
+            setGamma(cmd.data.valueFloat);
+            LOG_INFO(LogTag::LED, "Gamma -> %.2f", ledGamma_);
+            break;
+
+        case CommandType::SetWarmth:
+            // Runtime dim-to-warm strength. Applied on the loop; setWarmth()
+            // clamps to [LED_WARMTH_MIN, LED_WARMTH_MAX].
+            setWarmth(cmd.data.valueFloat);
+            LOG_INFO(LogTag::LED, "Warmth -> %.2f", warmth_);
+            break;
+
         case CommandType::ApplyEffectSpec: {
             // Compound segment mutation (create/update) — the single-writer path
             // that replaces direct handler mutation (RFC 0001 §3).
@@ -254,6 +313,34 @@ void LumeController::executeCommand(const Command& cmd) {
             }
             if (!target) break;  // update targeting an unknown segment
 
+            // Editable boundaries: a non-create update carrying geometry resizes
+            // the target in place, clamped to the strip (start < ledCount, length
+            // in [1, ledCount - start]). Overlaps are deliberately allowed — the
+            // frame composites segments in order into leds[] — so we do NOT check
+            // for or prevent overlap. setRange re-points the view (and drops any
+            // borrowed workbuffer), which resets effect scratchpad state; that is
+            // acceptable for a resize. The trailing markSegmentsDirty() in
+            // executeCommand() schedules the debounced layout save, so a resized
+            // layout round-trips through serialize/restoreSegments.
+            if (!spec.create && spec.hasGeometry && ledCount > 0) {
+                uint16_t start = spec.start;
+                if (start >= ledCount) start = ledCount - 1;
+                uint16_t maxLen = ledCount - start;   // >= 1 since start < ledCount
+                uint16_t length = spec.length;
+                if (length > maxLen) length = maxLen;
+                if (length < 1)      length = 1;
+                target->setRange(leds, start, length, spec.reversed);
+            }
+
+            // Ease the param/color change when the command asks for it — but
+            // only for an in-place update of an existing effect. A create or an
+            // effect *change* has nothing coherent to ease from (new schema /
+            // freshly-defaulted params), so those snap. setEffect() below also
+            // cancels any transition, so snapshot BEFORE it.
+            bool easeParams = cmd.transitionMs > 0 && !spec.create && !spec.hasEffect;
+            uint32_t nowMs = millis();
+            if (easeParams) target->snapshotParamsForTransition(nowMs);
+
             if (spec.hasEffect)     target->setEffect(spec.effectId);
             if (spec.hasParams)     target->getParamValues().setSlots(spec.slots);
             // Semantic params (AI path) resolve param names on the loop.
@@ -264,16 +351,10 @@ void LumeController::executeCommand(const Command& cmd) {
             }
             if (spec.hasPalette)    target->setPalette(static_cast<PalettePreset>(spec.palette));
             if (spec.hasBrightness) target->setBrightness(spec.brightness);
+
+            if (easeParams) target->startParamTransition(cmd.transitionMs, nowMs);
             break;
         }
-
-        case CommandType::StartNightlight:
-            startNightlight(cmd.data.nightlight.durationSec, cmd.data.nightlight.targetBrightness);
-            break;
-
-        case CommandType::StopNightlight:
-            stopNightlight();
-            break;
 
         case CommandType::ReconfigureProtocols:
             // Applied on the loop (single writer) so protocol socket/config
@@ -557,37 +638,6 @@ void LumeController::processProtocols() {
             activeProtocol_ = nullptr;
         }
     }
-}
-
-void LumeController::startNightlight(uint16_t durationSeconds, uint8_t targetBrightness) {
-    nightlightActive = true;
-    nightlightStartTime = millis();
-    nightlightDuration = durationSeconds;
-    nightlightStartBrightness = globalBrightness;
-    nightlightTargetBrightness = targetBrightness;
-    
-    LOG_INFO(LogTag::LED, "Nightlight started: %ds fade from %d to %d", 
-             durationSeconds, nightlightStartBrightness, targetBrightness);
-}
-
-void LumeController::stopNightlight() {
-    if (nightlightActive) {
-        nightlightActive = false;
-        LOG_INFO(LogTag::LED, "Nightlight stopped");
-    }
-}
-
-float LumeController::getNightlightProgress() const {
-    if (!nightlightActive) {
-        return 0.0f;
-    }
-    
-    uint32_t elapsed = (millis() - nightlightStartTime) / 1000;
-    if (elapsed >= nightlightDuration) {
-        return 1.0f;
-    }
-    
-    return (float)elapsed / (float)nightlightDuration;
 }
 
 } // namespace lume
