@@ -138,9 +138,11 @@ edit-`ui-concepts/`-not-`data/` workflow.
 ## Remaining (P1/P2/P3 — no P0s left)
 
 - **P1.6 Scenes** — dead backend + a 404'ing UI; implement or remove.
-- **P2/P3 cleanups** — `removeSegment` copy-by-value scratchpad aliasing (make
-  `Segment` non-copyable/handle-based; the P1.5 borrow model sidesteps but doesn't fix
-  it); effect LED-caps; `clearUncoveredLeds` O(n·segs).
+- **P2/P3 cleanups** — `removeSegment` copy-by-value scratchpad aliasing is now
+  defused: each shifted survivor re-binds its view to its own inline pad
+  (`Segment::rebindScratchpad`), with a `test_command_bus` regression test. Making
+  `Segment` non-copyable/handle-based remains an optional deeper cleanup. Still open:
+  effect LED-caps; `clearUncoveredLeds` O(n·segs).
 - **2D itself** is now "a weekend on a sound base" — the four keystone seams
   (dims / Region / de-raw / workbuffer) are in.
 - **Matter** stays bridge-first (MQTT → Home Assistant, $0, Arduino); native on-device

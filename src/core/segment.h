@@ -270,6 +270,22 @@ private:
             memset(scratchpad, 0, SCRATCHPAD_SIZE);
         }
     }
+
+    // Re-point the view at THIS object's own inline pad after the whole Segment
+    // was copy-assigned into a new slot (the removeSegment array shift). The copy
+    // duplicates the inline scratchpad[] bytes correctly, but leaves
+    // view.scratchpad still aliasing the SOURCE object's pad (TECH_DEBT P2) — two
+    // segments would then render through one physical pad and stateful effects
+    // (fire heat, rain drops) bleed across channels. Fixing the pointer in place
+    // preserves the copied state, so no effect reset / visual blip. No-op while a
+    // borrowed workbuffer is attached: that pointer is externally owned and stays
+    // valid across the shift (and removeSegment releases the borrow first anyway).
+    void rebindScratchpad() {
+        if (!externalScratchpad_) {
+            view.scratchpad = scratchpad;
+            view.scratchpadCapacity = SCRATCHPAD_SIZE;
+        }
+    }
 };
 
 } // namespace lume

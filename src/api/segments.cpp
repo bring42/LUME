@@ -177,12 +177,16 @@ void handleApiV2SegmentGet(AsyncWebServerRequest* request) {
     // Parse segment ID from URL path
     String path = request->url();
     int lastSlash = path.lastIndexOf('/');
-    uint8_t id = path.substring(lastSlash + 1).toInt();
-    
-    if (id > 7) {
+    // toInt() returns a long; assigning it straight to uint8_t truncates, so
+    // /segments/256 would wrap to 0 and slip past the range guard onto segment 0.
+    // Parse wide, range-check, THEN narrow.
+    long idRaw = path.substring(lastSlash + 1).toInt();
+
+    if (idRaw < 0 || idRaw > 7) {
         sendJsonError(request, 400, "validation_error", "Segment ID must be between 0 and 7", "id");
         return;
     }
+    uint8_t id = (uint8_t)idRaw;
     
     lume::Segment* seg = lume::controller.getSegment(id);
     if (!seg) {
@@ -280,12 +284,16 @@ void handleApiV2SegmentUpdate(AsyncWebServerRequest* request, uint8_t* data, siz
     // Parse segment ID from URL path
     String path = request->url();
     int lastSlash = path.lastIndexOf('/');
-    uint8_t id = path.substring(lastSlash + 1).toInt();
-    
-    if (id > 7) {
+    // toInt() returns a long; assigning it straight to uint8_t truncates, so
+    // /segments/256 would wrap to 0 and slip past the range guard onto segment 0.
+    // Parse wide, range-check, THEN narrow.
+    long idRaw = path.substring(lastSlash + 1).toInt();
+
+    if (idRaw < 0 || idRaw > 7) {
         sendJsonError(request, 400, "validation_error", "Segment ID must be between 0 and 7", "id");
         return;
     }
+    uint8_t id = (uint8_t)idRaw;
     
     // Validate size at first chunk
     if (index == 0) {
@@ -347,12 +355,16 @@ void handleApiV2SegmentDelete(AsyncWebServerRequest* request) {
     // Parse segment ID from URL path
     String path = request->url();
     int lastSlash = path.lastIndexOf('/');
-    uint8_t id = path.substring(lastSlash + 1).toInt();
-    
-    if (id > 7) {
+    // toInt() returns a long; assigning it straight to uint8_t truncates, so
+    // /segments/256 would wrap to 0 and slip past the range guard onto segment 0.
+    // Parse wide, range-check, THEN narrow.
+    long idRaw = path.substring(lastSlash + 1).toInt();
+
+    if (idRaw < 0 || idRaw > 7) {
         sendJsonError(request, 400, "validation_error", "Segment ID must be between 0 and 7", "id");
         return;
     }
+    uint8_t id = (uint8_t)idRaw;
     
     if (!lume::controller.getSegment(id)) {
         sendJsonError(request, 404, "not_found", "Segment not found", "id");
