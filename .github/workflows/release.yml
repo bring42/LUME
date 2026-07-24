@@ -31,6 +31,13 @@ jobs:
         id: ver
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      # Regenerate data/ from the ui-concepts/ sources so the LittleFS image
+      # always ships the latest UI. data/ is a build output (its .gz are
+      # gitignored); this removes the manual `sync_web.py` step from the
+      # release path, so the committed data/ can never drift into a release.
+      - name: Sync web UI (ui-concepts/ → data/)
+        run: python3 scripts/sync_web.py
+
       # Build firmware + LittleFS image for every board, then assemble a
       # manifest.json carrying SHA-256 checksums the device verifies before it
       # boots a downloaded image. Asset ids MUST match BOARD_ID_BY_ENV in
