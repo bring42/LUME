@@ -362,8 +362,9 @@ void LumeController::releaseWorkbuffer() {
 }
 
 bool LumeController::removeSegment(uint8_t id) {
-    // Drop any borrow before the slots shift — indices (and the inline-pad
-    // aliasing of the copy-by-value move, TECH_DEBT P2) would otherwise dangle.
+    // Drop any borrow before the slots shift — the borrowed index would otherwise
+    // dangle. (The copy-by-value inline-pad aliasing, TECH_DEBT P2, is repaired
+    // below by rebindScratchpad after the shift.)
     releaseWorkbuffer();
     for (uint8_t i = 0; i < segmentCount; i++) {
         if (segments[i].getId() == id) {
@@ -372,9 +373,19 @@ bool LumeController::removeSegment(uint8_t id) {
                 segments[j] = segments[j + 1];
             }
             segmentCount--;
-            
+
             // Clear the removed slot
             segments[segmentCount] = Segment();
+
+            // Each copy-assignment above duplicated a segment's inline scratchpad
+            // bytes correctly but left its SegmentView.scratchpad aliasing the
+            // SOURCE slot's pad (TECH_DEBT P2). Re-point every shifted survivor
+            // back at its OWN inline pad, so two segments never render through one
+            // physical scratchpad. Slots below i were untouched by the shift.
+            for (uint8_t j = i; j < segmentCount; j++) {
+                segments[j].rebindScratchpad();
+            }
+
             markSegmentsDirty();
             return true;
         }
