@@ -110,6 +110,48 @@ void test_update_changes_params() {
     TEST_ASSERT_EQUAL_UINT8(222, c.getSegment(0)->getParamValues().getInt(0));
 }
 
+// Editable boundaries: a non-create update carrying geometry resizes the target
+// segment in place (start/length change), and out-of-range geometry is clamped
+// to the strip. This is the single-writer resize path behind carving zones.
+void test_update_resizes_segment_geometry() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::applyEffectSpec(255, makeCreateSpec(0, 60, 128)));  // full strip
+    c.update();
+    TEST_ASSERT_EQUAL_UINT16(0,  c.getSegment(0)->getStart());
+    TEST_ASSERT_EQUAL_UINT16(60, c.getSegment(0)->getLength());
+
+    // Plain resize: start 0->10, length 60->20.
+    EffectSpec resize = {};
+    resize.hasGeometry = true;
+    resize.start = 10;
+    resize.length = 20;
+    c.enqueueCommand(Command::applyEffectSpec(0, resize));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT16(10, c.getSegment(0)->getStart());
+    TEST_ASSERT_EQUAL_UINT16(20, c.getSegment(0)->getLength());
+
+    // Length running off the end is clamped to ledCount - start (55 -> 5 left).
+    EffectSpec oob = {};
+    oob.hasGeometry = true;
+    oob.start = 55;
+    oob.length = 999;
+    c.enqueueCommand(Command::applyEffectSpec(0, oob));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT16(55, c.getSegment(0)->getStart());
+    TEST_ASSERT_EQUAL_UINT16(5,  c.getSegment(0)->getLength());   // 60 - 55
+
+    // Start past the end clamps to the last pixel, length floors at 1.
+    EffectSpec past = {};
+    past.hasGeometry = true;
+    past.start = 200;
+    past.length = 10;
+    c.enqueueCommand(Command::applyEffectSpec(0, past));
+    c.update();
+    TEST_ASSERT_EQUAL_UINT16(59, c.getSegment(0)->getStart());    // ledCount - 1
+    TEST_ASSERT_EQUAL_UINT16(1,  c.getSegment(0)->getLength());
+}
+
 // A queued remove is likewise deferred to the loop (the P0.1 array-shift race
 // only ever happens on the single writer now).
 void test_remove_is_deferred_then_applied() {
@@ -159,6 +201,28 @@ void test_fade_to_zero_rider_powers_off() {
     for (int i = 0; i < 50 && c.isBrightnessFading(); i++) c.update();
     TEST_ASSERT_FALSE(c.isBrightnessFading());
     TEST_ASSERT_FALSE(c.getPower());            // powered off once settled
+}
+
+// Reported ("target") state is what a fade is heading to, not the mid-fade
+// value — this is what stops the WS reconcile from bouncing a just-moved slider.
+void test_reported_state_is_target_not_midfade() {
+    LumeController c;
+    c.begin(60);
+    c.enqueueCommand(Command::setGlobalBrightness(200));   // start at a known level
+    c.update();
+    // Eased change to 20: the live value walks down, but the reported target is
+    // 20 immediately (from the frame the transition starts).
+    c.enqueueCommand(Command::setGlobalBrightness(20).withTransition(5000));
+    c.update();
+    TEST_ASSERT_TRUE(c.isBrightnessFading());
+    TEST_ASSERT_EQUAL_UINT8(20, c.getTargetBrightness());  // heading to 20
+    TEST_ASSERT_TRUE(c.getBrightness() > 20);              // live value still mid-fade
+
+    // Power fade-out: still logically on mid-fade, but target power is already off.
+    c.enqueueCommand(Command::setPower(false).withTransition(5000));
+    c.update();
+    TEST_ASSERT_TRUE(c.getPower());          // live: still on (rendering, dimming)
+    TEST_ASSERT_FALSE(c.getTargetPower());   // reported: heading off
 }
 
 // Eased power-off keeps the strip logically on (rendering, dimming) until the
@@ -566,9 +630,11 @@ int main(int, char**) {
     RUN_TEST(test_serialize_segment_canonical_shape);
     RUN_TEST(test_create_is_deferred_then_applied);
     RUN_TEST(test_update_changes_params);
+    RUN_TEST(test_update_resizes_segment_geometry);
     RUN_TEST(test_remove_is_deferred_then_applied);
     RUN_TEST(test_power_and_brightness_via_bus);
     RUN_TEST(test_fade_to_zero_rider_powers_off);
+    RUN_TEST(test_reported_state_is_target_not_midfade);
     RUN_TEST(test_power_off_fade_defers_then_settles);
     RUN_TEST(test_power_on_fade_is_immediate_logical);
     RUN_TEST(test_fade_to_dim_stays_on);

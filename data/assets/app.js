@@ -141,13 +141,23 @@ function renderFader(animate) {
 }
 
 let faderDragging = false;
-function setFaderFromClientX(clientX) {
+let lastFaderClientX = null;
+let faderWriteAt = 0;
+const FADER_WRITE_MS = 60;   // throttle mid-drag PUTs; release sends the exact final
+function faderValueFromClientX(clientX) {
   const rect = faderEl.getBoundingClientRect();
   const pad = 9;
   const pct = clamp((clientX - rect.left - pad) / (rect.width - pad * 2), 0, 1);
+  return Math.round(pct * 255);
+}
+function setFaderFromClientX(clientX) {
+  lastFaderClientX = clientX;   // remembered so release can settle to the exact spot
+  const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+  if (now - faderWriteAt < FADER_WRITE_MS) return;   // throttled: fewer PUTs, no flood
+  faderWriteAt = now;
   // Short follow while dragging: the light chases the fader with a little
   // inertia (device re-eases from its current value) instead of snapping.
-  engine.setBrightness(Math.round(pct * 255), engine.TRANSITION.DRAG);
+  engine.setBrightness(faderValueFromClientX(clientX), engine.TRANSITION.DRAG);
 }
 faderEl.addEventListener("pointerdown", (e) => {
   faderDragging = true;
@@ -163,9 +173,14 @@ function endFaderDrag() {
   if (!faderDragging) return;
   faderDragging = false;
   faderEl.classList.remove("dragging");
-  // Graceful settle on release: re-ease from wherever the follow left off to
-  // the final value over the longer settle window.
-  engine.setBrightness(engine.state.controller.brightness, engine.TRANSITION.SETTLE);
+  // Settle to the EXACT release position over the longer window. Use the last
+  // pointer position (a mid-drag write may have been throttled out, so
+  // engine.state could be one step stale).
+  const finalV = lastFaderClientX != null
+    ? faderValueFromClientX(lastFaderClientX)
+    : engine.state.controller.brightness;
+  lastFaderClientX = null;
+  engine.setBrightness(finalV, engine.TRANSITION.SETTLE);
 }
 faderEl.addEventListener("pointerup", endFaderDrag);
 faderEl.addEventListener("pointercancel", endFaderDrag);
@@ -235,6 +250,14 @@ function segSwatchCss(seg) {
 function renderTabs() {
   const wrap = $("#segTabs");
   wrap.innerHTML = "";
+  // Empty-state hint so a stripped-bare rack never looks broken — the "+ Channel"
+  // button below is still the way back in.
+  if (engine.state.segments.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "rack-empty";
+    empty.textContent = "No channels — add one to light the strip";
+    wrap.appendChild(empty);
+  }
   engine.state.segments.forEach((seg) => {
     const eff = engine.effectById(seg.effect);
     const tab = document.createElement("button");
@@ -260,31 +283,74 @@ function renderTabs() {
   $("#segCountChip").textContent = engine.state.segments.length + " CH";
 }
 
+// Add a channel into the largest free gap on the strip. If the strip is full
+// (segments already cover everything — e.g. the default one full-strip segment),
+// drop a small channel at 0 that overlaps; the user then drags its boundaries.
+// Overlap is legal on-device (segments composite in order), so we never
+// dead-end — the "+ Channel" button always produces a channel to edit.
 function addChannel() {
   const segs = engine.state.segments;
   const ledCount = engine.state.controller.ledCount || 300;
-  const lastEnd = segs.reduce((m, s) => Math.max(m, s.stop != null ? s.stop : (s.start + s.length - 1)), -1);
-  const start = lastEnd + 1;
-  if (start >= ledCount) {
-    showToast("No room left — increase LED count in Settings");
-    return;
+  const DEFAULT_LEN = 10;
+
+  // Find the largest gap not covered by any segment.
+  const covered = new Array(ledCount).fill(false);
+  segs.forEach((s) => {
+    const a = s.start;
+    const b = s.stop != null ? s.stop : (s.start + s.length - 1);
+    for (let i = Math.max(0, a); i <= Math.min(ledCount - 1, b); i++) covered[i] = true;
+  });
+  let bestStart = -1, bestLen = 0, runStart = -1;
+  for (let i = 0; i <= ledCount; i++) {
+    const free = i < ledCount && !covered[i];
+    if (free && runStart < 0) runStart = i;
+    if (!free && runStart >= 0) {
+      const len = i - runStart;
+      if (len > bestLen) { bestLen = len; bestStart = runStart; }
+      runStart = -1;
+    }
   }
-  const length = Math.max(1, Math.min(50, ledCount - start));
-  engine.createSegment({ start: start, length: length, effect: "solid" });
-  showToast("Channel added");
+
+  if (bestLen > 0) {
+    const length = Math.min(DEFAULT_LEN, bestLen);
+    engine.createSegment({ start: bestStart, length: length, effect: "solid" });
+    showToast("Channel added");
+  } else {
+    // Strip is fully covered — add an overlapping channel to edit.
+    const length = Math.min(DEFAULT_LEN, ledCount);
+    engine.createSegment({ start: 0, length: length, effect: "solid" });
+    showToast("Channel added (overlaps — drag its Start/Length to place it)");
+  }
 }
 
+// Any channel can be removed now, including the last — the strip may then render
+// nothing until a channel is added back. The firmware handles an empty layout.
 function deleteActiveChannel() {
   const seg = engine.selectedSegment();
   if (!seg) return;
-  if (engine.state.segments.length <= 1) {
-    showToast("At least one channel is required");
-    return;
-  }
   engine.deleteSegment(seg.id);
   showToast(`CH ${seg.id + 1} removed`);
 }
 $("#deleteChannelBtn").addEventListener("click", deleteActiveChannel);
+
+// Editable segment boundaries. Commit on change (blur / Enter); the engine
+// clamps to the strip and PUTs {start}/{length}. Enter blurs to commit.
+function commitRange(field) {
+  const seg = engine.selectedSegment();
+  if (!seg) return;
+  const startInput = $("#rangeStartInput");
+  const lengthInput = $("#rangeLengthInput");
+  const raw = parseInt(field === "start" ? startInput.value : lengthInput.value, 10);
+  if (!Number.isFinite(raw)) { renderVisualizer(); return; }  // restore on garbage
+  engine.setSegmentRange(seg.id, field === "start" ? { start: raw } : { length: raw });
+  showToast(`CH ${seg.id + 1} range updated`);
+}
+["rangeStartInput", "rangeLengthInput"].forEach((id) => {
+  const el = $("#" + id);
+  const field = id === "rangeStartInput" ? "start" : "length";
+  el.addEventListener("change", () => commitRange(field));
+  el.addEventListener("keydown", (e) => { if (e.key === "Enter") el.blur(); });
+});
 
 /* ---------------------------------------------------------------------
    Visualizer — literal LED bar rendering an approximation of live color
@@ -352,15 +418,36 @@ function colorForPixel(seg, eff, i, n, t) {
 
 function renderVisualizer() {
   const seg = engine.selectedSegment();
-  if (!seg) return;
+  const startInput = $("#rangeStartInput");
+  const lengthInput = $("#rangeLengthInput");
+  // No selected segment (e.g. all channels deleted): blank the range editor and
+  // readouts instead of leaving stale values (the old hard-coded End 99 / prior
+  // channel's Start/Length) sitting there. The channel panels are hidden by
+  // renderChannelPanels(); this also guards the DOM in case they aren't.
+  if (!seg) {
+    $("#vizLabel").textContent = "No channel selected";
+    $("#vizPixels").textContent = "—";
+    $("#vizLength").textContent = "—";
+    $("#rangeEnd").textContent = "—";
+    startInput.value = ""; startInput.disabled = true;
+    lengthInput.value = ""; lengthInput.disabled = true;
+    return;
+  }
+  startInput.disabled = false;
+  lengthInput.disabled = false;
   const eff = engine.effectById(seg.effect);
   const name = eff ? eff.name : seg.effect;
   $("#vizLabel").textContent = `CH ${seg.id + 1} — ${name}`;
   const start = seg.start, end = seg.stop != null ? seg.stop : (seg.start + seg.length - 1);
   $("#vizPixels").textContent = `${start}–${end}`;
   $("#vizLength").textContent = seg.length;
-  $("#rangeStart").textContent = start;
-  $("#rangeLength").textContent = seg.length;
+  // Editable Start/Length. Don't clobber a field the user is actively editing;
+  // the max attrs guide (the engine also clamps) against the current LED count.
+  const ledCount = engine.state.controller.ledCount || 300;
+  startInput.max = Math.max(0, ledCount - 1);
+  lengthInput.max = Math.max(1, ledCount - start);
+  if (document.activeElement !== startInput) startInput.value = start;
+  if (document.activeElement !== lengthInput) lengthInput.value = seg.length;
   $("#rangeEnd").textContent = end;
 
   const count = clamp(Math.round(seg.length / 1.4), 40, 140);
@@ -1224,12 +1311,24 @@ function renderLedTotal() {
   if (el) el.textContent = `${engine.state.controller.ledCount} LEDs total`;
 }
 
+// Hide the visualizer + channel-strip editor when there's no selected segment
+// (0 channels) so a bare rack reads as intentionally empty — the "+ Channel"
+// button and the .rack-empty hint in the tab row are the way back in.
+function renderChannelPanels() {
+  const has = !!engine.selectedSegment();
+  const vizPanel = $("#vizPanel");
+  const stripPanel = $("#stripPanel");
+  if (vizPanel) vizPanel.style.display = has ? "" : "none";
+  if (stripPanel) stripPanel.style.display = has ? "" : "none";
+}
+
 function renderAll() {
   renderLinkStatus();
   renderPower();
   renderFader(false);
   renderNightlight();
   renderTabs();
+  renderChannelPanels();
   renderVisualizer();
   renderEffectGrid();
   renderControls(false);

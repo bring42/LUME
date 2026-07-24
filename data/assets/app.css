@@ -808,6 +808,14 @@ input, button, textarea{ font-family: inherit; color: inherit; }
   transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
 }
 .rack-add:hover{ color: var(--c-red); border-color: var(--c-red); }
+.rack-empty{
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--c-text-dim);
+  align-self: center;
+  padding: 5px 4px;
+}
 
 .strip-select-row{
   display: flex;
@@ -959,6 +967,29 @@ input, button, textarea{ font-family: inherit; color: inherit; }
   color: var(--c-text-dim);
 }
 .range-readout b{ color: var(--c-red); font-weight: 700; }
+
+/* editable segment range: Start / Length inputs + read-only End */
+.range-edit{
+  display: flex;
+  gap: 14px;
+  align-items: end;
+}
+.range-field{
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.range-field .jack-input{
+  width: 88px;
+  padding: 8px 10px;
+}
+.range-end{
+  font-family: var(--font-mono);
+  font-size: 13px;
+  align-self: end;
+  padding-bottom: 9px;
+}
+.range-end b{ color: var(--c-red); font-weight: 700; }
 
 /* ---- effect select: flat specimen pills ------------------------------ */
 

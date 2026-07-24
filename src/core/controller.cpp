@@ -313,6 +313,25 @@ void LumeController::executeCommand(const Command& cmd) {
             }
             if (!target) break;  // update targeting an unknown segment
 
+            // Editable boundaries: a non-create update carrying geometry resizes
+            // the target in place, clamped to the strip (start < ledCount, length
+            // in [1, ledCount - start]). Overlaps are deliberately allowed — the
+            // frame composites segments in order into leds[] — so we do NOT check
+            // for or prevent overlap. setRange re-points the view (and drops any
+            // borrowed workbuffer), which resets effect scratchpad state; that is
+            // acceptable for a resize. The trailing markSegmentsDirty() in
+            // executeCommand() schedules the debounced layout save, so a resized
+            // layout round-trips through serialize/restoreSegments.
+            if (!spec.create && spec.hasGeometry && ledCount > 0) {
+                uint16_t start = spec.start;
+                if (start >= ledCount) start = ledCount - 1;
+                uint16_t maxLen = ledCount - start;   // >= 1 since start < ledCount
+                uint16_t length = spec.length;
+                if (length > maxLen) length = maxLen;
+                if (length < 1)      length = 1;
+                target->setRange(leds, start, length, spec.reversed);
+            }
+
             // Ease the param/color change when the command asks for it — but
             // only for an in-place update of an existing effect. A create or an
             // effect *change* has nothing coherent to ease from (new schema /

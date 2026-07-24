@@ -121,6 +121,18 @@ void populateEffectSpecFromBody(lume::EffectSpec& spec, JsonDocument& doc,
         spec.palette = static_cast<uint8_t>(doc["palette"].as<int>());
     }
 
+    // Geometry (editable segment boundaries). Any of start/length/reverse in the
+    // body flags a geometry change; missing fields keep whatever the caller
+    // pre-seeded into the spec (the segment's current values on an update, the
+    // create defaults on a create). The render loop clamps to the strip and, for
+    // a non-create update, resizes the target via setRange (single writer).
+    if (doc["start"].is<int>() || doc["length"].is<int>() || doc["reverse"].is<bool>()) {
+        spec.hasGeometry = true;
+        if (doc["start"].is<int>())     spec.start    = doc["start"].as<uint16_t>();
+        if (doc["length"].is<int>())    spec.length   = doc["length"].as<uint16_t>();
+        if (doc["reverse"].is<bool>())  spec.reversed = doc["reverse"].as<bool>();
+    }
+
     if (doc["params"].is<JsonObjectConst>() && paramEffect && paramEffect->hasSchema()) {
         lume::ParamValues tmp = {};
         tmp.applyDefaults(*paramEffect->schema);
@@ -144,8 +156,8 @@ void handleApiV2SegmentsList(AsyncWebServerRequest* request) {
     JsonDocument doc;
     
     // Controller state
-    doc["power"] = lume::controller.getPower();
-    doc["brightness"] = lume::controller.getBrightness();
+    doc["power"] = lume::controller.getTargetPower();
+    doc["brightness"] = lume::controller.getTargetBrightness();
     doc["ledCount"] = lume::controller.getLedCount();
     
     // List all segments by index (not by probing the ID space) and report each
@@ -325,7 +337,13 @@ void handleApiV2SegmentUpdate(AsyncWebServerRequest* request, uint8_t* data, siz
 
         // Resolve params against the segment's current effect when the body
         // doesn't change it; the spec then carries pure, pre-resolved data.
+        // Seed geometry from the segment's current range so a body carrying only
+        // `start` (or only `length`) resizes along one axis and preserves the
+        // other — populateEffectSpecFromBody overwrites only the fields present.
         lume::EffectSpec spec = {};
+        spec.start    = seg->getStart();
+        spec.length   = seg->getLength();
+        spec.reversed = seg->isReversed();
         populateEffectSpecFromBody(spec, doc, /*currentEffect=*/seg->getEffect());
 
         // Optional premium eased transition (Matter-shaped: tenths of a second).
@@ -462,7 +480,7 @@ void handleApiV2Info(AsyncWebServerRequest* request) {
     
     JsonObject controllerInfo = doc["controller"].to<JsonObject>();
     controllerInfo["ledCount"] = lume::controller.getLedCount();
-    controllerInfo["power"] = lume::controller.getPower();
+    controllerInfo["power"] = lume::controller.getTargetPower();
     
     String output;
     serializeJson(doc, output);
@@ -479,8 +497,8 @@ void handleApiV2ControllerGet(AsyncWebServerRequest* request) {
     }
     
     JsonDocument doc;
-    doc["power"] = lume::controller.getPower();
-    doc["brightness"] = lume::controller.getBrightness();
+    doc["power"] = lume::controller.getTargetPower();
+    doc["brightness"] = lume::controller.getTargetBrightness();
     doc["ledCount"] = lume::controller.getLedCount();
     
     String output;

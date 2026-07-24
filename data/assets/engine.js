@@ -144,6 +144,31 @@
     var refreshTimer = null;
     var nightlightTimer = null;
 
+    /* ---- optimistic lock (kills the "slider jumps back for a frame" flicker) --
+       Writes are async + fire-and-forget; the ~1 Hz WebSocket push lags, so a
+       state snapshot taken *before* a local change arrives afterward and would
+       overwrite the value the user just set — for one frame, until the next push
+       corrects it. A debounce only makes that race rarer. The real fix: while a
+       field has a pending local write, ignore incoming reconciles for it until
+       the device echoes our value back (device caught up) or a timeout elapses
+       (so external changes — MQTT, another client — still win eventually). */
+    var LOCK_MS = 1500;
+    var pending = {};  // field -> { value, until }  (fields: "brightness","power")
+    var segmentsDirtyUntil = 0;  // array-wide time lock after a local segment edit
+    function lockSegments() { segmentsDirtyUntil = nowMs() + LOCK_MS; }
+    function lockField(field, value) {
+      pending[field] = { value: value, until: nowMs() + LOCK_MS };
+    }
+    // True if the incoming reconciled value should be applied for `field`.
+    function acceptField(field, incoming) {
+      var p = pending[field];
+      if (!p) return true;                                   // not locked
+      if (nowMs() >= p.until) { delete pending[field]; return true; }  // expired → external wins
+      if (incoming === p.value) { delete pending[field]; return true; } // device confirmed us
+      return false;                                          // stale/mid-fade → keep optimistic
+    }
+    function nowMs() { return (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now(); }
+
     /* ---- events ---- */
     function on(evt, fn) {
       if (!listeners[evt]) listeners[evt] = [];
@@ -184,6 +209,17 @@
     }
     function selectedSegment() {
       return segmentById(state.selectedId);
+    }
+    // Mirror the firmware's id assignment (src/core/controller.cpp): the lowest
+    // unused slot, NOT max+1. Matching its scheme for the optimistic temp id
+    // means the device usually hands back the SAME id on reconcile, so the
+    // freshly-selected new channel keeps its selection across the id swap.
+    function nextSegmentId() {
+      var used = {};
+      for (var i = 0; i < state.segments.length; i++) used[state.segments[i].id] = true;
+      var id = 0;
+      while (used[id]) id++;
+      return id;
     }
     // Build a complete, schema-valid params object for an effect from its
     // defaults, optionally overlaying known values. Palette-type params are
@@ -289,19 +325,41 @@
       refreshTimer = setTimeout(function () { refreshSegments(); }, REFRESH_AFTER_WRITE_MS);
     }
 
+    // For structural changes (create/delete) we hold an optimistic segments lock
+    // so a lagging reconcile can't drop the just-added/removed channel for a
+    // frame. That means a GET fired at REFRESH_AFTER_WRITE_MS would be skipped by
+    // the lock — so schedule the reconcile to land JUST AFTER the lock releases.
+    // This guarantees device truth (real IDs) replaces the optimistic structure
+    // even when the WS feed is down (offline-but-not-demo).
+    function scheduleRefreshAfterLock() {
+      if (state.demo) return;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      var delay = Math.max(REFRESH_AFTER_WRITE_MS, (segmentsDirtyUntil - nowMs()) + 50);
+      refreshTimer = setTimeout(function () { refreshSegments(); }, delay);
+    }
+
     function applyControllerAndSegments(payload) {
       if (!payload) return;
-      if (payload.controller) {
-        state.controller.power = !!payload.controller.power;
-        state.controller.brightness = clampInt(payload.controller.brightness, 0, 255);
-        state.controller.ledCount = Number(payload.controller.ledCount) || state.controller.ledCount;
-      } else {
-        // GET /api/v2/segments returns power/brightness/ledCount at top level
-        if (typeof payload.power === "boolean") state.controller.power = payload.power;
-        if (payload.brightness != null) state.controller.brightness = clampInt(payload.brightness, 0, 255);
-        if (payload.ledCount != null) state.controller.ledCount = Number(payload.ledCount);
+      // Both shapes carry power/brightness/ledCount: WS nests under .controller,
+      // GET /api/v2/segments has them at the top level. Apply through the
+      // optimistic lock so a lagging snapshot can't clobber a value we just set.
+      var cs = payload.controller ? payload.controller : payload;
+      if (typeof cs.power === "boolean" && acceptField("power", cs.power)) {
+        state.controller.power = cs.power;
       }
-      if (Array.isArray(payload.segments)) {
+      if (cs.brightness != null) {
+        var b = clampInt(cs.brightness, 0, 255);
+        if (acceptField("brightness", b)) state.controller.brightness = b;
+      }
+      if (cs.ledCount != null) state.controller.ledCount = Number(cs.ledCount) || state.controller.ledCount;
+      // Segment optimistic lock: after a local field edit (effect/param/palette/
+      // brightness/range — all applied in place on state.segments), skip the
+      // segments reconcile until the device catches up, so a lagging snapshot
+      // can't revert the edit for a frame (same flicker as brightness, on
+      // effects). Structural changes (create/delete) hold the lock too so their
+      // optimistic add/remove survives a lagging snapshot; scheduleRefreshAfterLock
+      // (or WS) reconciles device truth once the lock releases.
+      if (Array.isArray(payload.segments) && nowMs() >= segmentsDirtyUntil) {
         state.segments = payload.segments.map(function (s) {
           var prev = segmentById(s.id);
           var seg = {
@@ -466,6 +524,7 @@
       on = !!on;
       if (transitionMs === undefined) transitionMs = TRANSITION.POWER;
       state.controller.power = on;
+      lockField("power", on);   // hold our value until the device confirms it
       notify();
       var body = { power: on };
       if (transitionMs > 0) body.transition = Math.round(transitionMs / 100);
@@ -477,6 +536,7 @@
     function setBrightness(v, transitionMs) {
       v = clampInt(v, 0, 255);
       state.controller.brightness = v;
+      lockField("brightness", v);   // hold our value until the device confirms it
       notify();
       var body = { brightness: v };
       if (transitionMs > 0) body.transition = Math.round(transitionMs / 100);
@@ -499,6 +559,7 @@
       var eff = effectById(effectId);
       seg.effect = effectId;
       seg.params = defaultParamsFor(effectId);
+      lockSegments();
       notify();
       var body = { effect: effectId, params: seg.params };
       if (eff.usesPalette && seg._paletteIndex != null) body.palette = seg._paletteIndex;
@@ -529,6 +590,7 @@
       for (var k in seg.params) if (Object.prototype.hasOwnProperty.call(seg.params, k)) params[k] = seg.params[k];
       params[key] = value;
       seg.params = params;
+      lockSegments();
       notify();
       var body = { params: params };
       if (transitionMs > 0) body.transition = Math.round(transitionMs / 100);
@@ -541,6 +603,7 @@
       if (!seg) return;
       index = clampInt(index, 0, Math.max(0, state.palettes.length - 1));
       seg._paletteIndex = index;
+      lockSegments();
       notify();
       fireWrite("/api/v2/segments/" + id, "PUT", { palette: index });
     }
@@ -550,8 +613,41 @@
       if (!seg) return;
       v = clampInt(v, 0, 255);
       seg.brightness = v;
+      lockSegments();
       notify();
       fireWrite("/api/v2/segments/" + id, "PUT", { brightness: v });
+    }
+
+    // Resize a segment's boundaries (editable zones). Sends {start,length,reverse}
+    // to PUT /api/v2/segments/{id}; the device resizes on its render loop and
+    // clamps to the strip, so we clamp locally to match (start in [0,ledCount-1],
+    // length in [1, ledCount-start]). Overlaps are allowed on-device. Optimistic
+    // local update + fire-and-forget, like the other setters. Only the fields
+    // present in `geom` are changed; the others keep the segment's current value.
+    function setSegmentRange(id, geom) {
+      var seg = segmentById(id);
+      if (!seg) return;
+      geom = geom || {};
+      var ledCount = Number(state.controller.ledCount) || 1;
+      var body = {};
+      if (geom.start != null) {
+        seg.start = clampInt(geom.start, 0, Math.max(0, ledCount - 1));
+        body.start = seg.start;
+      }
+      if (geom.length != null) {
+        var maxLen = Math.max(1, ledCount - seg.start);
+        seg.length = clampInt(geom.length, 1, maxLen);
+        body.length = seg.length;
+      }
+      if (geom.reverse != null) {
+        seg.reverse = !!geom.reverse;
+        body.reverse = seg.reverse;
+      }
+      // Keep `stop` consistent so range readouts stay correct without a refetch.
+      seg.stop = seg.start + seg.length - 1;
+      lockSegments();
+      notify();
+      fireWrite("/api/v2/segments/" + id, "PUT", body);
     }
 
     function createSegment(cfg) {
@@ -563,29 +659,44 @@
       if (cfg.reverse != null) body.reverse = !!cfg.reverse;
       if (cfg.effect) { body.effect = cfg.effect; body.params = defaultParamsFor(cfg.effect); }
       if (cfg.palette != null) body.palette = clampInt(cfg.palette, 0, Math.max(0, state.palettes.length - 1));
-      if (state.demo) {
-        var nid = state.segments.reduce(function (m, s) { return Math.max(m, s.id); }, -1) + 1;
-        state.segments.push(normalizeSegment({
-          id: nid, start: body.start, stop: body.start + body.length - 1, length: body.length,
-          reverse: !!cfg.reverse, brightness: 255, effect: cfg.effect || "solid",
-          params: body.params || defaultParamsFor(cfg.effect || "solid"),
-          _paletteIndex: cfg.palette != null ? cfg.palette : null
-        }));
-        state.selectedId = nid;
-        notify();
-        return Promise.resolve();
-      }
-      return writeJson("/api/v2/segments", "POST", body).then(scheduleRefresh, scheduleRefresh);
+
+      // Optimistic add (both demo AND live device): push a normalized segment so
+      // the new channel appears in the UI INSTANTLY, then select it. Previously
+      // the live path only fired the POST and waited on the ~350 ms GET / ~1 Hz
+      // WS reconcile, so an add could appear to "do nothing" until reconcile
+      // caught up. The temp id mirrors the device's assignment (lowest unused
+      // slot); the real device-assigned id lands on reconcile.
+      var nid = nextSegmentId();
+      state.segments.push(normalizeSegment({
+        id: nid, start: body.start, stop: body.start + body.length - 1, length: body.length,
+        reverse: !!cfg.reverse, brightness: 255, effect: cfg.effect || "solid",
+        params: body.params || defaultParamsFor(cfg.effect || "solid"),
+        _paletteIndex: cfg.palette != null ? cfg.palette : null
+      }));
+      state.selectedId = nid;
+      // Hold the optimistic structure until the device catches up, so a reconcile
+      // snapshot taken BEFORE the device applied the create (WS push / GET in
+      // flight) can't drop the just-added channel for a frame. Device truth
+      // replaces it after the lock (scheduleRefreshAfterLock / WS). This is the
+      // same mechanism the field-edit setters use — create/delete used to clear
+      // the lock, which left the add at the mercy of reconcile timing.
+      lockSegments();
+      notify();
+      if (state.demo) return Promise.resolve();
+      return writeJson("/api/v2/segments", "POST", body).then(scheduleRefreshAfterLock, scheduleRefreshAfterLock);
     }
 
     function deleteSegment(id) {
-      if (state.demo) {
-        state.segments = state.segments.filter(function (s) { return s.id !== id; });
-        if (state.selectedId === id) state.selectedId = state.segments.length ? state.segments[0].id : null;
-        notify();
-        return Promise.resolve();
-      }
-      return writeJson("/api/v2/segments/" + id, "DELETE", undefined).then(scheduleRefresh, scheduleRefresh);
+      // Optimistic delete (both demo AND live device): drop it locally and fix
+      // the selection immediately, so the removal shows at once instead of
+      // waiting on reconcile. Lock held like create so a lagging snapshot can't
+      // resurrect the segment for a frame; device truth reconciles after.
+      state.segments = state.segments.filter(function (s) { return s.id !== id; });
+      if (state.selectedId === id) state.selectedId = state.segments.length ? state.segments[0].id : null;
+      lockSegments();
+      notify();
+      if (state.demo) return Promise.resolve();
+      return writeJson("/api/v2/segments/" + id, "DELETE", undefined).then(scheduleRefreshAfterLock, scheduleRefreshAfterLock);
     }
 
     /* ---- nightlight ---- */
@@ -791,6 +902,7 @@
       setParam: setParam,
       setPalette: setPalette,
       setSegmentBrightness: setSegmentBrightness,
+      setSegmentRange: setSegmentRange,
       createSegment: createSegment,
       deleteSegment: deleteSegment,
       startNightlight: startNightlight,

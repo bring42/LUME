@@ -133,7 +133,7 @@
     <div class="strip-select-row" id="segTabs"></div>
 
     <!-- Visualizer -->
-    <div class="panel viz-panel">
+    <div class="panel viz-panel" id="vizPanel">
       <div class="panel-label"><span id="vizLabel">CH 1 — Fire</span><span class="screw"></span></div>
       <div class="viz-stage" id="vizStage">
         <div class="viz-glow" id="vizGlow"></div>
@@ -148,14 +148,23 @@
     </div>
 
     <!-- Channel strip controls -->
-    <div class="panel strip-panel">
+    <div class="panel strip-panel" id="stripPanel">
 
       <div class="field-block">
         <span class="field-label">Segment Range</span>
-        <div class="range-readout">
-          <span>Start <b id="rangeStart">0</b></span>
-          <span>Length <b id="rangeLength">100</b></span>
-          <span>End <b id="rangeEnd">99</b></span>
+        <div class="range-edit">
+          <label class="range-field">
+            <span class="jack-label">Start</span>
+            <input type="number" class="jack-input" id="rangeStartInput" min="0" step="1" />
+          </label>
+          <label class="range-field">
+            <span class="jack-label">Length</span>
+            <input type="number" class="jack-input" id="rangeLengthInput" min="1" step="1" />
+          </label>
+          <div class="range-field range-end">
+            <span class="jack-label">End</span>
+            <b id="rangeEnd">—</b>
+          </div>
         </div>
       </div>
 

@@ -101,6 +101,11 @@ setParam(id, paramId, value, transitionMs?)  // whole params object; transitionM
                                       // (discrete params + effect changes snap)
 setPalette(id, paletteIndex)          // top-level int; updates _paletteIndex
 setSegmentBrightness(id, 0-255)
+setSegmentRange(id, {start?, length?, reverse?})  // resize/move a segment's
+                                      // boundaries (editable zones). Only the
+                                      // fields passed change; clamped to the
+                                      // strip (start∈[0,ledCount-1], length∈
+                                      // [1,ledCount-start]). Overlaps are allowed.
 createSegment({start, length, effect?, palette?, reverse?})
 deleteSegment(id)
 startNightlight(durationSeconds, targetBrightness)   // duration in SECONDS

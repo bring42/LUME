@@ -112,6 +112,11 @@ public:
     }
     bool getPower() const { return power; }
 
+    // Reported ("target") power for the UI / WS: during a fade-out the strip is
+    // still logically on (rendering, dimming) but heading to off — report the
+    // intent so the power toggle doesn't bounce back ON mid-fade.
+    bool getTargetPower() const { return powerOffWhenFadeSettles_ ? false : power; }
+
     // Eased power on/off (the premium path). Fade-on flips the strip logically
     // on and eases the envelope 0 -> full; fade-off eases full -> 0 and flips
     // off once it settles (so it keeps rendering, dimming, until dark). The
@@ -142,6 +147,16 @@ public:
         brightnessTransition_.snap(bri);
     }
     uint8_t getBrightness() const { return globalBrightness; }
+
+    // Reported ("target") brightness for the UI / WS state push: the value the
+    // user set / is heading to, NOT the mid-fade interpolated globalBrightness.
+    // Reporting the live value made the ~1Hz reconcile snap a just-moved slider
+    // back to a transient mid-fade level for a frame, then correct — a flicker.
+    // The committed target matches the client's optimistic value, so no bounce.
+    uint8_t getTargetBrightness() const {
+        return brightnessTransition_.isActive() ? brightnessTransition_.target()
+                                                : globalBrightness;
+    }
 
     // Ease global brightness toward `target` over `durationMs` (the premium
     // path). `powerOffAtZero` powers the strip off once the fade settles — the

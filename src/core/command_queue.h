@@ -81,8 +81,12 @@ struct SegmentData {
 // Trivial aggregate (no in-class initializers) so it stays usable as a union
 // member — producers zero-init with `EffectSpec spec = {};` then set fields.
 struct EffectSpec {
-    // Geometry — only used when `create` is true (segmentId is then 255).
+    // Geometry. On create (`create` true, segmentId 255) start/length/reversed
+    // seed the new segment. On a NON-create update, `hasGeometry` true means the
+    // producer wants the target segment RESIZED to start/length/reversed (the
+    // editable-boundaries path); the loop clamps to the strip and allows overlap.
     bool     create;
+    bool     hasGeometry;
     uint16_t start;
     uint16_t length;
     bool     reversed;
