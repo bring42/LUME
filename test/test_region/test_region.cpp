@@ -45,7 +45,7 @@ void test_empty_region() {
 
 // SegmentView exposes its Region and addresses pixels through it.
 void test_view_reports_its_region() {
-    CRGB buf[32];
+    CRGB16 buf[32];
     SegmentView view(buf, /*start=*/5, /*len=*/8, /*reversed=*/false);
     const Region& r = view.getRegion();
     TEST_ASSERT_EQUAL_UINT16(5, r.start);
@@ -59,7 +59,7 @@ void test_view_reports_its_region() {
 // Reversal lives in the view, not the Region: the region is unchanged, but
 // operator[] maps forward index -> reversed physical pixel.
 void test_view_reversal_maps_through_region() {
-    CRGB buf[32];
+    CRGB16 buf[32];
     // Forward view over [10,14): view[0] -> buf[10], view[3] -> buf[13].
     SegmentView fwd(buf, 10, 4, /*reversed=*/false);
     TEST_ASSERT_EQUAL_PTR(&buf[10], &fwd[0]);
@@ -79,13 +79,13 @@ void test_view_reversal_maps_through_region() {
 // raw contiguous pointer (the removed escape hatch) it would ignore reversal and
 // paint the physical head instead.
 void test_fill_is_remap_safe() {
-    CRGB buf[5] = {};
+    CRGB16 buf[5] = {};
     SegmentView rev(buf, /*start=*/0, /*len=*/5, /*reversed=*/true);
-    rev.fill(CRGB(255, 0, 0), /*offset=*/0, /*count=*/2);  // logical pixels 0,1
-    TEST_ASSERT_EQUAL_UINT8(255, buf[4].r);  // logical 0 -> physical 4
-    TEST_ASSERT_EQUAL_UINT8(255, buf[3].r);  // logical 1 -> physical 3
-    TEST_ASSERT_EQUAL_UINT8(0, buf[2].r);    // logical 2 untouched
-    TEST_ASSERT_EQUAL_UINT8(0, buf[0].r);    // physical head untouched
+    rev.fill(CRGB16(65535, 0, 0), /*offset=*/0, /*count=*/2);  // logical pixels 0,1
+    TEST_ASSERT_EQUAL_UINT16(65535, buf[4].r);  // logical 0 -> physical 4
+    TEST_ASSERT_EQUAL_UINT16(65535, buf[3].r);  // logical 1 -> physical 3
+    TEST_ASSERT_EQUAL_UINT16(0, buf[2].r);      // logical 2 untouched
+    TEST_ASSERT_EQUAL_UINT16(0, buf[0].r);      // physical head untouched
 }
 
 int main(int, char**) {

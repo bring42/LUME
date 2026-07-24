@@ -7,6 +7,7 @@
 #include "segment.h"
 #include "command_queue.h"
 #include "transition.h"              // premium easing engine (eased brightness)
+#include "render16.h"                // 16-bit render substrate (CRGB16, Gamma16)
 #include "led_output.h"              // ILedOutput HAL seam (RFC 0001 §6)
 #include "../protocols/protocol.h"   // ProtocolBuffer (direct-pixel staging)
 #include "../constants.h"
@@ -143,10 +144,18 @@ public:
     void setBrightness(uint8_t bri) {
         powerOffWhenSettled_ = false;
         globalBrightness = bri;
-        output_->setBrightness(bri);
+        // NB: do NOT push to output_->setBrightness — the driver is pinned at 255
+        // and master brightness is applied per-pixel in renderOutput16(). Pushing
+        // here would double-dim (driver scale × per-pixel scale).
         brightnessTransition_.snap(bri);
     }
     uint8_t getBrightness() const { return globalBrightness; }
+
+    // Render diagnostics. actualFps = the frame-gated effect/animation rate;
+    // showHz = the actual show()/pipeline/dither rate (what the premium bottom-
+    // code dither depends on — watch this when validating on hardware).
+    uint16_t getActualFps() const { return actualFps; }
+    uint16_t getShowHz() const { return showHz_; }
 
     // Reported ("target") brightness for the UI / WS state push: the value the
     // user set / is heading to, NOT the mid-fade interpolated globalBrightness.
@@ -184,6 +193,7 @@ public:
         if (gamma < LED_GAMMA_MIN) gamma = LED_GAMMA_MIN;
         if (gamma > LED_GAMMA_MAX) gamma = LED_GAMMA_MAX;
         ledGamma_ = gamma;
+        gamma16_.build(gamma);   // rebuild the 16-bit curve used by the output stage
     }
     float getGamma() const { return ledGamma_; }
 
@@ -268,9 +278,29 @@ private:
     // Process registered protocols (check for incoming data)
     void processProtocols();
     
-    // LED array
+    // LED array — the final 8-bit buffer handed to the output driver.
     CRGB leds[MAX_LED_COUNT];
     uint16_t ledCount;
+
+    // Premium 16-bit render substrate (render16.h). Effects render into canvas_
+    // (16-bit, perceptual/pre-gamma). Every show(), the output stage composes
+    // dim-to-warm + master brightness, low-passes through smooth_ (one-pole IIR),
+    // gamma-encodes once, and error-diffuses (ditherErr_) down to 8-bit leds[].
+    // See LumeController::renderOutput16().
+    CRGB16 canvas_[MAX_LED_COUNT];     // effect render target (16-bit)
+    CRGB16 smooth_[MAX_LED_COUNT];     // per-pixel one-pole IIR state (pre-gamma)
+    CRGB16 ditherErr_[MAX_LED_COUNT];  // per-pixel/channel dither error accumulators
+    Gamma16 gamma16_;                  // 16-bit gamma curve, rebuilt on setGamma()
+
+    // How fast the smoothed output approaches its target, per show(): larger =
+    // slower/silkier. This is the "nothing steps" low-pass; tune on-device.
+    static constexpr uint8_t kIirShift = 4;
+
+    // Carried from the frame-gated render block to the show()-rate output: the
+    // composed master level, and whether this frame's source is the 16-bit
+    // pipeline (effects / power-off) vs a raw 8-bit stream (sACN / direct pixels).
+    uint8_t lastPerceptual_;
+    bool pipeline16_;
 
     // Direct-pixel overlay staged by /api/pixels, drained on the loop (P0.1).
     ProtocolBuffer<MAX_LED_COUNT> directPixels_;
@@ -338,9 +368,16 @@ private:
     uint16_t targetFps;
     uint32_t frameCounter;
     uint32_t lastFrameTime;
-    uint16_t actualFps;
+    uint16_t actualFps;         // effect/animation render rate (frame-gated)
     uint32_t fpsUpdateTime;
     uint16_t fpsFrameCount;
+
+    // show() rate — the rate the 16-bit pipeline + dither actually run at, which
+    // is what the dither strategy depends on (needs several hundred Hz or the
+    // bottom codes shimmer). Distinct from actualFps (the gated render rate).
+    uint16_t showHz_;
+    uint32_t showFrameCount_;
+    uint32_t showRateUpdateTime_;
 
     // Segment-layout persistence (debounced autosave)
     bool segmentsDirty_;
@@ -352,6 +389,13 @@ private:
     // their own canvas and many rely on the buffer persisting between frames
     // (fade-trails), so the render loop must not wipe covered pixels.
     void clearUncoveredLeds();
+
+    // Compose + descend the 16-bit canvas to 8-bit leds[] for one frame: per
+    // pixel, dim-to-warm × master brightness (perceptual) → one-pole IIR
+    // (smooth_) → gamma16 → WS2812B correction → error-diffusion dither
+    // (ditherErr_) → LED_MIN_OUTPUT floor. Runs every show(). `perceptual` is the
+    // composed master level (globalBrightness × power-fade envelope).
+    void renderOutput16(uint8_t perceptual);
 };
 
 // Global controller instance

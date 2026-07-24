@@ -66,8 +66,34 @@ DEFINE_EFFECT_SCHEMA(kRecSchema,
 );
 REGISTER_EFFECT_SCHEMA(recfx, "recfx", "Rec FX", Animated, kRecSchema, 0);
 
+// A full-white fill, so the 16-bit output pipeline (brightness × dim-to-warm →
+// IIR → gamma → correction → dither → floor) has lit content to shape and tests
+// can assert on the composed 8-bit leds[] instead of the removed global stage.
+static void whitefx(SegmentView& v, const ParamValues&, uint32_t, bool) {
+    v.fill(CRGB16(65535, 65535, 65535));
+}
+DEFINE_EFFECT_SCHEMA(kWhiteSchema, ParamDesc::Int("x", "X", 0, 0, 255));
+REGISTER_EFFECT_SCHEMA(whitefx, "whitefx", "White FX", Solid, kWhiteSchema, 0);
+
 void setUp() {}
 void tearDown() {}
+
+// Create a full-strip white segment, then run the loop enough times for the
+// output IIR to settle to its target (the pipeline is a low-pass, so a single
+// update() is mid-approach). Tests then read the settled leds[].
+static void makeWhiteStrip(LumeController& c, uint16_t len) {
+    EffectSpec spec = {};
+    spec.create = true;
+    spec.start = 0;
+    spec.length = len;
+    spec.hasEffect = true;
+    std::strcpy(spec.effectId, "whitefx");
+    c.enqueueCommand(Command::applyEffectSpec(255, spec));
+    c.update();
+}
+static void settle(LumeController& c, int frames = 400) {
+    for (int i = 0; i < frames; i++) c.update();
+}
 
 // A queued create is applied only on update(), and carries effect + params.
 void test_create_is_deferred_then_applied() {
@@ -537,7 +563,21 @@ struct MockOutput : ILedOutput {
     void clear() override { clears++; }
 };
 
-void test_led_output_is_pluggable() {
+// Helper: the max channel across the whole strip (a proxy for "how lit").
+static uint16_t maxChannel(LumeController& c) {
+    const CRGB* leds = c.getLeds();
+    uint16_t m = 0;
+    for (uint16_t i = 0; i < c.getLedCount(); i++) {
+        m = std::max<uint16_t>(m, std::max(leds[i].r, std::max(leds[i].g, leds[i].b)));
+    }
+    return m;
+}
+
+// RFC 0001 §6: the LED output driver is pluggable via ILedOutput, and under the
+// 16-bit pipeline the driver's own scaling is PINNED — master brightness is
+// applied per-pixel, so the driver brightness stays 255 regardless of the user's
+// level (pushing it to the driver too would double-dim, fighting the dither).
+void test_led_output_is_pluggable_and_brightness_is_pinned() {
     LumeController c;
     MockOutput mock;
     c.setLedOutput(&mock);
@@ -546,95 +586,80 @@ void test_led_output_is_pluggable() {
     TEST_ASSERT_TRUE(mock.shows >= 1);            // ...and pushed a frame
 
     int showsBefore = mock.shows;
-    c.update();                                    // a render frame -> show() on the driver
+    c.update();                                    // every loop pass -> show()
     TEST_ASSERT_TRUE(mock.shows > showsBefore);
 
-    // Brightness reaches the driver gamma-encoded (perceptual dimming): full
-    // stays full, but a mid/low level is pulled down along the gamma curve.
-    c.enqueueCommand(Command::setGlobalBrightness(255));
-    c.update();
-    TEST_ASSERT_EQUAL_UINT8(255, mock.lastBrightness);              // full = full
-    c.enqueueCommand(Command::setGlobalBrightness(42));
-    c.update();
-    // Gamma-encoded, then clamped up to the low-end floor (they coincide at 42).
-    uint8_t expected42 = applyGamma_video(42, LED_GAMMA);
-    if (expected42 < LED_MIN_OUTPUT) expected42 = LED_MIN_OUTPUT;
-    TEST_ASSERT_EQUAL_UINT8(expected42, mock.lastBrightness);
-    TEST_ASSERT_TRUE(mock.lastBrightness < 42);                     // gamma pulled it down
-}
-
-// The low-end color floor (LED_MIN_OUTPUT): a very low but non-zero perceptual
-// level must never reach the driver inside the broken sub-floor PWM zone where
-// dim white collapses to red — it is held at the floor. A true zero still cuts
-// to black. This is the deterministic white→red→black fix.
-void test_low_end_output_floor() {
-    LumeController c;
-    MockOutput mock;
-    c.setLedOutput(&mock);
-    c.begin(60);
-
-    // A tiny level gamma-encodes below the floor; the output must be clamped up.
-    c.enqueueCommand(Command::setGlobalBrightness(5));
-    c.update();
-    TEST_ASSERT_TRUE(applyGamma_video(5, LED_GAMMA) < LED_MIN_OUTPUT); // would be red zone
-    TEST_ASSERT_EQUAL_UINT8(LED_MIN_OUTPUT, mock.lastBrightness);       // held at floor
-    TEST_ASSERT_TRUE(mock.lastBrightness > 0);                         // not black
-
-    // Brightness 0 is a true off: the floor does NOT light the strip.
-    c.enqueueCommand(Command::setGlobalBrightness(0));
-    c.update();
-    TEST_ASSERT_EQUAL_UINT8(0, mock.lastBrightness);
-
-    // A high level is well above the floor and passes through untouched.
-    c.enqueueCommand(Command::setGlobalBrightness(255));
-    c.update();
+    // The driver brightness is pinned at 255 no matter the user's level; and the
+    // driver's correction/temperature are never driven per-frame anymore (neutral).
+    c.setBrightness(42);  settle(c);
     TEST_ASSERT_EQUAL_UINT8(255, mock.lastBrightness);
+    c.setBrightness(255); settle(c);
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastBrightness);
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastCorrection.r);
+    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.r);
 }
 
-// Correction ramp: near the floor the applied correction relaxes toward
-// uncorrected white (green/blue restored) so dim white reads white, not red;
-// at a high level the strip's full TypicalLEDStrip white balance is applied.
-void test_low_end_correction_ramp() {
+// Master brightness is applied per-pixel in the 16-bit stage: full-white content
+// dims monotonically with the level, and a true zero cuts the strip to black.
+void test_master_brightness_dims_content() {
     LumeController c;
-    MockOutput mock;
-    c.setLedOutput(&mock);
     c.begin(60);
+    makeWhiteStrip(c, 60);
 
-    // At full brightness (output >= LED_CORRECTION_FULL_AT): full correction.
-    c.enqueueCommand(Command::setGlobalBrightness(255));
-    c.update();
-    TEST_ASSERT_EQUAL_UINT8(LED_CORRECTION_G, mock.lastCorrection.g);   // 176
-    TEST_ASSERT_EQUAL_UINT8(LED_CORRECTION_B, mock.lastCorrection.b);   // 240
+    c.setBrightness(255); settle(c);
+    uint16_t full = maxChannel(c);
+    TEST_ASSERT_TRUE(full > 200);                 // full white is bright
 
-    // At the floor: correction relaxed toward uncorrected white — green/blue are
-    // pulled back up above their fully-corrected values (no red collapse).
-    c.enqueueCommand(Command::setGlobalBrightness(5));
-    c.update();
-    TEST_ASSERT_TRUE(mock.lastCorrection.g > LED_CORRECTION_G);
-    TEST_ASSERT_TRUE(mock.lastCorrection.b > LED_CORRECTION_B);
-    TEST_ASSERT_EQUAL_UINT8(255, mock.lastCorrection.r);               // red never scaled
+    c.setBrightness(96);  settle(c);
+    uint16_t mid = maxChannel(c);
+    TEST_ASSERT_TRUE(mid < full);                 // dimmer than full
+    TEST_ASSERT_TRUE(mid > 0);                     // but still lit
+
+    c.setBrightness(0);   settle(c);
+    TEST_ASSERT_EQUAL_UINT16(0, maxChannel(c));    // true off = black
 }
 
-// Runtime gamma flows through the single-writer bus: an enqueued value is
-// applied only when the loop drains the queue in update(), and out-of-range
-// values are clamped to [LED_GAMMA_MIN, LED_GAMMA_MAX]. A higher gamma must also
-// reach the output stage, pulling a mid level further down the curve.
+// The low-end floor (LED_MIN_OUTPUT) is now a per-CHANNEL invariant of the output
+// stage: no channel may ever sit in the broken (0, LED_MIN_OUTPUT) PWM zone where
+// a WS2812B collapses; a channel is either a clean 0 or >= the floor. Check it
+// holds for lit white across a sweep of low levels.
+void test_low_end_floor_is_per_channel_invariant() {
+    LumeController c;
+    c.begin(60);
+    makeWhiteStrip(c, 60);
+
+    for (uint8_t bri = 1; bri <= 40; bri += 3) {
+        c.setBrightness(bri); settle(c, 200);
+        const CRGB* leds = c.getLeds();
+        for (uint16_t i = 0; i < c.getLedCount(); i++) {
+            for (uint8_t ch : {leds[i].r, leds[i].g, leds[i].b}) {
+                TEST_ASSERT_TRUE(ch == 0 || ch >= LED_MIN_OUTPUT);
+            }
+        }
+    }
+}
+
+// Runtime gamma still flows through the single-writer bus and clamps to
+// [LED_GAMMA_MIN, LED_GAMMA_MAX]; and a deeper gamma visibly pulls a mid level
+// further down (now observed in the composed per-pixel output, not a global set).
 void test_gamma_via_bus_and_clamps() {
     LumeController c;
-    MockOutput mock;
-    c.setLedOutput(&mock);
     c.begin(60);
+    makeWhiteStrip(c, 60);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_GAMMA, c.getGamma());   // seeded from the compile default
 
+    c.enqueueCommand(Command::setGamma(2.2f));
+    c.update();
+    c.setBrightness(110); settle(c);
+    uint16_t midGamma22 = maxChannel(c);
+
     c.enqueueCommand(Command::setGamma(2.8f));
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_GAMMA, c.getGamma());   // deferred (single writer)
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.2f, c.getGamma());        // deferred (single writer)
     c.update();
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 2.8f, c.getGamma());        // applied on the loop
-
-    // A mid level is encoded with the *runtime* gamma now (2.8, deeper than 2.2).
-    c.enqueueCommand(Command::setGlobalBrightness(128));
-    c.update();
-    TEST_ASSERT_EQUAL_UINT8(applyGamma_video(128, 2.8f), mock.lastBrightness);
+    settle(c);
+    uint16_t midGamma28 = maxChannel(c);
+    TEST_ASSERT_TRUE(midGamma28 < midGamma22);                   // deeper gamma pulls the mid down
 
     // Above range -> clamped to max; below range -> clamped to min.
     c.enqueueCommand(Command::setGamma(9.0f));
@@ -665,35 +690,35 @@ void test_warmth_via_bus_and_clamps() {
     TEST_ASSERT_FLOAT_WITHIN(0.001f, LED_WARMTH_MIN, c.getWarmth());
 }
 
-// Dim-to-warm actually reaches the driver: at full brightness the temperature
-// is neutral (no tint); at a low level it warms — red held, green/blue pulled
-// down, and blue pulled *more* than green (toward the Tungsten40W target). This
-// guards the color-temp math, which previously fell through MockOutput's no-op.
+// Dim-to-warm shows in the composed per-pixel output: the same white content is
+// warmer (a lower blue-to-red ratio) at a low level than at full brightness. The
+// WS2812B correction is constant now, so the shift is purely the dim-to-warm
+// stage. Red always stays the dominant channel.
 void test_dim_to_warm_tints_the_low_end() {
     LumeController c;
-    MockOutput mock;
-    c.setLedOutput(&mock);
     c.begin(60);
+    makeWhiteStrip(c, 60);
     c.setWarmth(0.6f);
 
-    c.setBrightness(255);   // full → neutral temperature
-    c.update();
-    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.r);
-    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.g);
-    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.b);
+    c.setBrightness(255); settle(c);
+    const CRGB* leds = c.getLeds();
+    // Full brightness: no warm tint applied (dim == 0). Capture the b/r ratio.
+    float ratioFull = (float)leds[0].b / (float)leds[0].r;
+    TEST_ASSERT_TRUE(leds[0].r >= leds[0].b);   // red dominant
 
-    c.setBrightness(20);    // low → warm tint
-    c.update();
-    TEST_ASSERT_EQUAL_UINT8(255, mock.lastTemperature.r);          // red held
-    TEST_ASSERT_TRUE(mock.lastTemperature.g < 255);                // green pulled down
-    TEST_ASSERT_TRUE(mock.lastTemperature.b < mock.lastTemperature.g);  // blue pulled more
+    c.setBrightness(48); settle(c);
+    leds = c.getLeds();
+    float ratioLow = (float)leds[0].b / (float)leds[0].r;
+    TEST_ASSERT_TRUE(leds[0].r >= leds[0].g);   // red still dominant when dim
+    TEST_ASSERT_TRUE(leds[0].r >= leds[0].b);
+    TEST_ASSERT_TRUE(ratioLow < ratioFull);     // warmer (less blue) at the low end
 }
 
 int main(int, char**) {
     UNITY_BEGIN();
-    RUN_TEST(test_led_output_is_pluggable);
-    RUN_TEST(test_low_end_output_floor);
-    RUN_TEST(test_low_end_correction_ramp);
+    RUN_TEST(test_led_output_is_pluggable_and_brightness_is_pinned);
+    RUN_TEST(test_master_brightness_dims_content);
+    RUN_TEST(test_low_end_floor_is_per_channel_invariant);
     RUN_TEST(test_gamma_via_bus_and_clamps);
     RUN_TEST(test_warmth_via_bus_and_clamps);
     RUN_TEST(test_dim_to_warm_tints_the_low_end);

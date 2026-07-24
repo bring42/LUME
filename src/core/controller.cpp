@@ -38,6 +38,11 @@ LumeController::LumeController()
     , actualFps(0)
     , fpsUpdateTime(0)
     , fpsFrameCount(0)
+    , showHz_(0)
+    , showFrameCount_(0)
+    , showRateUpdateTime_(0)
+    , lastPerceptual_(0)
+    , pipeline16_(false)
     , segmentsDirty_(false)
     , suppressDirty_(false)
     , lastSegmentChange_(0)
@@ -57,9 +62,21 @@ void LumeController::begin(uint16_t count) {
     
     // Initialize the LED output driver (FastLED by default; see RFC 0001 §6).
     output_->begin(leds, ledCount);
-    output_->setBrightness(globalBrightness);
+    // The 16-bit pipeline owns all brightness/gamma/correction/dither, so the
+    // driver's own scaling is pinned to identity (255) once and never touched
+    // again — master brightness is applied per-pixel in renderOutput16().
+    output_->setBrightness(255);
     output_->clear();
     output_->show();
+
+    // Build the 16-bit gamma curve from the seeded exponent (setGamma rebuilds it).
+    gamma16_.build(ledGamma_);
+
+    // Seed the dither accumulators with a decorrelated per-pixel (and per-channel)
+    // phase so the 16→8 flips spread across space, not into a synchronized shimmer.
+    for (uint16_t i = 0; i < ledCount; i++) {
+        ditherErr_[i] = CRGB16(ditherSeed(i), ditherSeed(i + 85), ditherSeed(i + 170));
+    }
 
     // Seed the easing engine with the current brightness so the first eased
     // change starts from the real value, not zero.
@@ -69,6 +86,7 @@ void LumeController::begin(uint16_t count) {
 
     lastFrameTime = millis();
     fpsUpdateTime = millis();
+    showRateUpdateTime_ = millis();
 }
 
 void LumeController::update() {
@@ -112,48 +130,13 @@ void LumeController::update() {
             LOG_INFO(LogTag::LED, "Brightness fade settled -> power off");
         }
 
-        // Compose the perceptual output level (user level scaled by the power
-        // fade envelope, still perceptual) and gamma-encode to PWM. Equal steps
-        // in the linearly-eased level then read as equal *perceived* steps.
+        // Compose the perceptual master level: the user's eased level scaled by
+        // the power-fade envelope. Still perceptual/pre-gamma — gamma, dim-to-warm,
+        // WS2812B correction, and dithering are ALL applied per-pixel in the
+        // 16-bit pipeline (renderOutput16), so nothing global is encoded here.
         uint8_t powerEnv = powerFade_.advance(now);
         uint8_t perceptual = (powerEnv == 255) ? globalBrightness
                                                : scale8(globalBrightness, powerEnv);
-        uint8_t encoded = applyGamma_video(perceptual, ledGamma_);
-
-        // Low-end floor (deterministic; see LED_MIN_OUTPUT). Below a few PWM
-        // levels the green/blue channels of a white pixel round to 0 before red,
-        // so dim white collapses to (1,0,0) RED. Never emit a non-zero level
-        // inside that broken zone: hold the lowest clean level and let a true
-        // zero still cut to black. This is the white→red→black fix, and it needs
-        // no eyeball tuning.
-        if (perceptual > 0 && encoded < LED_MIN_OUTPUT) encoded = LED_MIN_OUTPUT;
-        output_->setBrightness(encoded);
-
-        // Correction ramp: the red bias *is* the color correction. TypicalLEDStrip
-        // (255,176,240) pulls green/blue down, so near the floor they die first.
-        // Ramp the applied correction from full TypicalLEDStrip (at/above
-        // LED_CORRECTION_FULL_AT) toward uncorrected white (255,255,255) as the
-        // output approaches the floor, so the dim end reads as clean white — the
-        // strip's normal white balance above the knee is untouched.
-        uint8_t k = (encoded >= LED_CORRECTION_FULL_AT)
-                        ? 255
-                        : (uint8_t)((uint16_t)encoded * 255 / LED_CORRECTION_FULL_AT);
-        float kf = (float)k / 255.0f;
-        output_->setCorrection(CRGB(lerpU8(255, LED_CORRECTION_R, kf),
-                                    lerpU8(255, LED_CORRECTION_G, kf),
-                                    lerpU8(255, LED_CORRECTION_B, kf)));
-
-        // Dim-to-warm: blend the output color temperature from neutral white
-        // toward the warm target as the perceptual level drops, so the low end
-        // glides to a designed amber instead of the accidental red PWM floor.
-        // Quadratic in (1 - level): near-neutral through the upper range, warm
-        // only down low. `t` in [0,1] scaled by the runtime warmth_ strength;
-        // warmth_ == 0 yields neutral (0xFFFFFF), i.e. no tint.
-        float dim = 1.0f - (float)perceptual / 255.0f;
-        float t = warmth_ * dim * dim;
-        output_->setTemperature(CRGB(lerpU8(255, LED_WARM_TARGET_R, t),
-                                     lerpU8(255, LED_WARM_TARGET_G, t),
-                                     lerpU8(255, LED_WARM_TARGET_B, t)));
 
         // Flip logical power off once a fade-out envelope reaches zero.
         if (powerOffWhenFadeSettles_ && !powerFade_.isActive()) {
@@ -162,9 +145,16 @@ void LumeController::update() {
             LOG_INFO(LogTag::LED, "Power fade settled -> off");
         }
 
-        // Draw this frame into leds[] from the active source (mutually exclusive).
+        // Choose this frame's pixel source. The effect path and the power-off
+        // fade render into the 16-bit canvas and set pipeline16 so renderOutput16()
+        // composes them down to leds[]. Protocol (sACN) and direct-pixel paths
+        // write 8-bit leds[] directly and bypass the pipeline — external streams
+        // want raw, unshaped control.
+        bool pipeline16 = false;
         if (!power) {
-            output_->clear();
+            // Target black; the IIR still eases the residual down for a soft cut.
+            for (uint16_t i = 0; i < ledCount; i++) canvas_[i] = CRGB16();
+            pipeline16 = true;
         } else {
             processProtocols();
             if (protocolActive_) {
@@ -177,25 +167,85 @@ void LumeController::update() {
                 memcpy(leds, directPixels_.getBuffer(), count * sizeof(CRGB));
                 directPixels_.clearReady();
             } else {
-                // Clear only the LEDs not owned by an active segment. Effects
+                // Clear only the pixels not owned by an active segment. Effects
                 // own their canvas and many build fade-trails by reading the
-                // previous frame (sinelon, wave, comet...); a blanket clear
-                // would wipe that history. Clearing only gaps keeps it intact.
+                // previous frame; a blanket clear would wipe that history.
                 clearUncoveredLeds();
                 for (uint8_t i = 0; i < segmentCount; i++) {
                     if (segments[i].isActive()) {
                         segments[i].update(frameCounter, now);
                     }
                 }
+                pipeline16 = true;
             }
         }
+
+        // Carry the composed level + source choice to the show()-rate output below.
+        lastPerceptual_ = perceptual;
+        pipeline16_ = pipeline16;
         frameCounter++;
     }
 
-    // Push the frame on EVERY call. Repeated refreshes of the same buffer drive
-    // FastLED's temporal dithering for mid-range content (see the note above);
-    // the physical WS2812 transmission time naturally caps the rate.
+    // ── Output — runs EVERY loop pass (several hundred Hz) ──
+    // The 16-bit pipeline lives here, not in the frame-gated block, because its
+    // one-pole IIR smoothing and error-diffusion dither depend on the high show()
+    // rate: that is exactly what makes the bottom codes read continuous instead of
+    // stepping. canvas_ only changes at render rate, so re-composing a static
+    // target each pass just lets the IIR settle — deliberate.
+    if (pipeline16_) {
+        renderOutput16(lastPerceptual_);
+    }
     output_->show();
+
+    // Track the actual show()/dither rate (distinct from the gated render FPS).
+    // The dither strategy depends on a high show() rate — log it periodically so
+    // it is visible on `pio device monitor` during on-device validation.
+    showFrameCount_++;
+    if (now - showRateUpdateTime_ >= 1000) {
+        showHz_ = (uint16_t)showFrameCount_;
+        showFrameCount_ = 0;
+        showRateUpdateTime_ = now;
+        if ((now / 1000) % 3 == 0) {
+            LOG_INFO(LogTag::LED, "render %u fps, show %u Hz (%u LEDs)",
+                     actualFps, showHz_, ledCount);
+        }
+    }
+}
+
+namespace {
+// WS2812B low-end floor: never emit a channel into the 1..LED_MIN_OUTPUT PWM zone
+// where it collapses (dim white → red); a true zero still cuts clean to black.
+inline uint8_t floorChannel(uint8_t v) {
+    return (v > 0 && v < LED_MIN_OUTPUT) ? (uint8_t)LED_MIN_OUTPUT : v;
+}
+}  // namespace
+
+void LumeController::renderOutput16(uint8_t perceptual) {
+    // Dim-to-warm gains (perceptual space): neutral up high, warm (green/blue
+    // pulled down toward the warm target) as the level drops. Quadratic in
+    // (1 - level), scaled by the runtime warmth_ strength; warmth_ == 0 → neutral.
+    float dim = 1.0f - (float)perceptual / 255.0f;
+    float t = warmth_ * dim * dim;
+    uint8_t warmG = lerpU8(255, LED_WARM_TARGET_G, t);
+    uint8_t warmB = lerpU8(255, LED_WARM_TARGET_B, t);
+    // WS2812B white-balance correction (TypicalLEDStrip), applied post-gamma in
+    // 16-bit so it never re-quantizes an already-dithered 8-bit byte.
+    const uint8_t corrR = LED_CORRECTION_R, corrG = LED_CORRECTION_G, corrB = LED_CORRECTION_B;
+
+    for (uint16_t i = 0; i < ledCount; i++) {
+        // 1. Compose in perceptual 16-bit: dim-to-warm, then master brightness.
+        CRGB16 c = scaleRGB(canvas_[i], 255, warmG, warmB);
+        c = scale(c, perceptual);
+        // 2. One-pole low-pass toward the target — PRE-gamma, at show() rate.
+        iirStep(smooth_[i], c, kIirShift);
+        // 3. Gamma-encode once (perceptual → PWM-linear), then WS2812B correction.
+        CRGB16 g = gamma16_.apply(smooth_[i]);
+        g = scaleRGB(g, corrR, corrG, corrB);
+        // 4. Error-diffusion dither 16 → 8 per channel, then the low-end floor.
+        leds[i] = CRGB(floorChannel(dither16to8(g.r, ditherErr_[i].r)),
+                       floorChannel(dither16to8(g.g, ditherErr_[i].g)),
+                       floorChannel(dither16to8(g.b, ditherErr_[i].b)));
+    }
 }
 
 void LumeController::processCommands() {
@@ -329,7 +379,7 @@ void LumeController::executeCommand(const Command& cmd) {
                 uint16_t length = spec.length;
                 if (length > maxLen) length = maxLen;
                 if (length < 1)      length = 1;
-                target->setRange(leds, start, length, spec.reversed);
+                target->setRange(canvas_, start, length, spec.reversed);
             }
 
             // Ease the param/color change when the command asks for it — but
@@ -401,7 +451,7 @@ Segment* LumeController::createSegment(uint16_t start, uint16_t length, bool rev
     
     // Add segment to next available slot
     Segment* seg = &segments[segmentCount];
-    seg->setRange(leds, start, actualLength, reversed);
+    seg->setRange(canvas_, start, actualLength, reversed);
     seg->id = newId;
     segmentCount++;
 
@@ -586,7 +636,7 @@ void LumeController::clearUncoveredLeds() {
             }
         }
         if (!covered) {
-            leds[i] = CRGB::Black;
+            canvas_[i] = CRGB16();
         }
     }
 }
