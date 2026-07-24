@@ -1340,10 +1340,137 @@ engine.on("change", renderAll);
 engine.on("connection", renderLinkStatus);
 
 /* ---------------------------------------------------------------------
+   Modules — collapsible + drag-reorderable main-view panels.
+   Every main-view block carries data-module + a .module-head (which is
+   both the drag handle and the collapse toggle host). Order and collapse
+   state persist in localStorage so a user's layout survives reloads.
+   Pure DOM sugar — no device wiring here; all element IDs are untouched
+   so the engine bindings keep working regardless of order.
+   -------------------------------------------------------------------- */
+
+function initModules() {
+  const view = $("#viewMain");
+  if (!view) return;
+
+  const KEY_ORDER = "lume.console.moduleOrder";
+  const KEY_COLLAPSED = "lume.console.moduleCollapsed";
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} },
+  };
+
+  const modules = () => $$("#viewMain > [data-module]");
+
+  // Restore saved order (unknown/new modules keep their markup order at the end).
+  const savedOrder = store.get(KEY_ORDER);
+  if (Array.isArray(savedOrder)) {
+    const byId = new Map(modules().map((m) => [m.dataset.module, m]));
+    savedOrder.forEach((id) => { const el = byId.get(id); if (el) view.appendChild(el); });
+  }
+  const saveOrder = () => store.set(KEY_ORDER, modules().map((m) => m.dataset.module));
+
+  // Restore + wire collapse state.
+  const collapsed = new Set(store.get(KEY_COLLAPSED) || []);
+  const saveCollapsed = () => store.set(KEY_COLLAPSED, Array.from(collapsed));
+
+  let dragEl = null;
+
+  modules().forEach((mod) => {
+    const id = mod.dataset.module;
+    const head = mod.querySelector(".module-head");
+    const btn = mod.querySelector(".module-collapse");
+
+    if (collapsed.has(id)) {
+      mod.classList.add("is-collapsed");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    }
+
+    if (btn) btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const nowCollapsed = mod.classList.toggle("is-collapsed");
+      btn.setAttribute("aria-expanded", nowCollapsed ? "false" : "true");
+      if (nowCollapsed) collapsed.add(id); else collapsed.delete(id);
+      saveCollapsed();
+    });
+
+    if (head) {
+      head.setAttribute("draggable", "true");
+      head.addEventListener("dragstart", (e) => {
+        dragEl = mod;
+        mod.classList.add("is-dragging");
+        view.classList.add("modules-dragging");
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = "move";
+          try { e.dataTransfer.setData("text/plain", id); } catch (_) {}
+        }
+      });
+      head.addEventListener("dragend", () => {
+        mod.classList.remove("is-dragging");
+        view.classList.remove("modules-dragging");
+        dragEl = null;
+        saveOrder();
+      });
+    }
+  });
+
+  view.addEventListener("dragover", (e) => {
+    if (!dragEl) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    const target = e.target.closest("[data-module]");
+    if (!target || target === dragEl || target.parentElement !== view) return;
+    const rect = target.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height / 2;
+    view.insertBefore(dragEl, before ? target : target.nextElementSibling);
+  });
+  view.addEventListener("drop", (e) => { if (dragEl) e.preventDefault(); });
+}
+
+/* ---------------------------------------------------------------------
+   Theme — Auto / Light / Dark. The <head> inline script sets the initial
+   resolved data-theme before first paint (no flash); this wires the
+   Settings control, persists the preference, and re-resolves "auto" live
+   when the system scheme changes.
+   -------------------------------------------------------------------- */
+
+function initTheme() {
+  const KEY = "lume.console.theme";
+  const root = document.documentElement;
+  const mq = window.matchMedia("(prefers-color-scheme: light)");
+  const store = {
+    get() { try { return localStorage.getItem(KEY); } catch (_) { return null; } },
+    set(v) { try { localStorage.setItem(KEY, v); } catch (_) {} },
+  };
+
+  let pref = store.get() || "auto"; // "auto" | "light" | "dark"
+  const btns = $$("#themeSeg .theme-seg-btn");
+
+  const resolve = (p) => (p === "auto" ? (mq.matches ? "light" : "dark") : p);
+  const apply = () => {
+    root.setAttribute("data-theme", resolve(pref));
+    btns.forEach((b) => b.classList.toggle("active", b.dataset.themeChoice === pref));
+  };
+
+  btns.forEach((b) => b.addEventListener("click", () => {
+    pref = b.dataset.themeChoice;
+    store.set(pref);
+    apply();
+  }));
+
+  const onSystemChange = () => { if (pref === "auto") apply(); };
+  if (mq.addEventListener) mq.addEventListener("change", onSystemChange);
+  else if (mq.addListener) mq.addListener(onSystemChange); // older Safari
+
+  apply();
+}
+
+/* ---------------------------------------------------------------------
    Bootstrap
    -------------------------------------------------------------------- */
 
 requestAnimationFrame(() => {
+  initTheme();
+  initModules();
   engine.start().then(() => {
     if (engine.state.demo) {
       showToast("Demo mode — no device found, using sample data");
