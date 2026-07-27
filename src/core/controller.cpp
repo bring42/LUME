@@ -43,6 +43,7 @@ LumeController::LumeController()
     , showRateUpdateTime_(0)
     , lastPerceptual_(0)
     , pipeline16_(false)
+    , outputSeeded_(false)
     , segmentsDirty_(false)
     , suppressDirty_(false)
     , lastSegmentChange_(0)
@@ -72,10 +73,15 @@ void LumeController::begin(uint16_t count) {
     // Build the 16-bit gamma curve from the seeded exponent (setGamma rebuilds it).
     gamma16_.build(ledGamma_);
 
-    // Seed the dither accumulators with a decorrelated per-pixel (and per-channel)
-    // phase so the 16→8 flips spread across space, not into a synchronized shimmer.
+    // Seed the dither accumulators with a decorrelated per-PIXEL phase so the
+    // 16→8 flips spread across space, not into a synchronized shimmer. The phase
+    // is the SAME across a pixel's channels: a per-channel offset would give one
+    // channel a head-start over the others and tint the first frames (a blue cast,
+    // since blue drew the largest offset) — visible now that boot snaps straight
+    // to the target. Spatial decorrelation only needs per-pixel variation.
     for (uint16_t i = 0; i < ledCount; i++) {
-        ditherErr_[i] = CRGB16(ditherSeed(i), ditherSeed(i + 85), ditherSeed(i + 170));
+        uint16_t phase = ditherSeed(i);
+        ditherErr_[i] = CRGB16(phase, phase, phase);
     }
 
     // Seed the easing engine with the current brightness so the first eased
@@ -232,12 +238,21 @@ void LumeController::renderOutput16(uint8_t perceptual) {
     // 16-bit so it never re-quantizes an already-dithered 8-bit byte.
     const uint8_t corrR = LED_CORRECTION_R, corrG = LED_CORRECTION_G, corrB = LED_CORRECTION_B;
 
+    // Until the first LIT frame, snap (don't ease): easing up from black would dwell
+    // in the bottom codes where all channels floor to LED_MIN_OUTPUT and a WS2812B
+    // reads green/turquoise. Snapping lands boot straight on the composed warm
+    // white. `contentSeen` gates the flip so a black first frame doesn't seed.
+    bool snapping = !outputSeeded_;
+    uint16_t contentSeen = 0;
+
     for (uint16_t i = 0; i < ledCount; i++) {
+        contentSeen |= canvas_[i].r | canvas_[i].g | canvas_[i].b;
         // 1. Compose in perceptual 16-bit: dim-to-warm, then master brightness.
         CRGB16 c = scaleRGB(canvas_[i], 255, warmG, warmB);
         c = scale(c, perceptual);
         // 2. One-pole low-pass toward the target — PRE-gamma, at show() rate.
-        iirStep(smooth_[i], c, kIirShift);
+        if (snapping) smooth_[i] = c;
+        else          iirStep(smooth_[i], c, kIirShift);
         // 3. Gamma-encode once (perceptual → PWM-linear), then WS2812B correction.
         CRGB16 g = gamma16_.apply(smooth_[i]);
         g = scaleRGB(g, corrR, corrG, corrB);
@@ -246,6 +261,9 @@ void LumeController::renderOutput16(uint8_t perceptual) {
                        floorChannel(dither16to8(g.g, ditherErr_[i].g)),
                        floorChannel(dither16to8(g.b, ditherErr_[i].b)));
     }
+    // Flip to eased mode only once a lit frame has actually been snapped, so a
+    // black boot frame doesn't lock the seed in and re-introduce the ramp.
+    if (snapping && contentSeen) outputSeeded_ = true;
 }
 
 void LumeController::processCommands() {

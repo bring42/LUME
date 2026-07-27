@@ -302,6 +302,13 @@ private:
     uint8_t lastPerceptual_;
     bool pipeline16_;
 
+    // The output IIR normally eases from its previous state. On the very first
+    // rendered frame there is no previous state (smooth_ is black), and easing up
+    // from black would dwell in the bottom codes where all channels floor to
+    // LED_MIN_OUTPUT and a WS2812B reads green. Snap to the target that first
+    // frame instead, so boot lands straight on the composed colour.
+    bool outputSeeded_;
+
     // Direct-pixel overlay staged by /api/pixels, drained on the loop (P0.1).
     ProtocolBuffer<MAX_LED_COUNT> directPixels_;
 
