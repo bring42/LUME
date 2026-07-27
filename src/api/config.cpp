@@ -4,6 +4,7 @@
 #include "../logging.h"
 #include "../storage.h"
 #include "../lume.h"
+#include "../network/wifi.h"
 
 // External globals
 extern Config config;
@@ -58,9 +59,16 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
             return;
         }
         
-        // Update config
+        // Update config. Track whether the WiFi credentials change so the loop
+        // task can kick off a connect attempt with them right away — nothing
+        // else triggers one, and the periodic retry is (correctly) suppressed
+        // while the provisioning phone sits on the SoftAP.
+        String prevWifiSsid = config.wifiSSID;
+        String prevWifiPass = config.wifiPassword;
         storage.configFromJson(config, doc);
-        
+        bool wifiCredsChanged = (config.wifiSSID != prevWifiSsid ||
+                                 config.wifiPassword != prevWifiPass);
+
         // Save to storage
         if (storage.saveConfig(config)) {
             // ledCount is NOT applied live: it's bound to FastLED at boot via
@@ -82,6 +90,14 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
             lume::controller.enqueueCommand(lume::Command::setGamma(config.gamma));
             // Same story for dim-to-warm strength: live, via the bus.
             lume::controller.enqueueCommand(lume::Command::setWarmth(config.warmth));
+
+            // New WiFi credentials: have the loop task connect with them now.
+            // Radio calls must not happen on this (AsyncTCP) task, and the
+            // maintenance retry alone would never fire during provisioning
+            // (client parked on the SoftAP suppresses it).
+            if (wifiCredsChanged && config.wifiSSID.length() > 0) {
+                requestWifiConnect();
+            }
 
             request->send(200, "application/json", "{\"success\":true}");
         } else {

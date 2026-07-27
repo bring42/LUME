@@ -946,6 +946,10 @@ function formatUptime(seconds) {
 }
 
 let settingsLoaded = false;
+// True once the user types in the SSID field; blocks the status-poll prefill
+// from overwriting their input. Cleared on a successful save (the configured
+// SSID is then what they typed, so tracking may resume).
+let wifiSsidEdited = false;
 function loadSettingsView() {
   renderSettingsFromState();
   if (settingsLoaded) return;
@@ -974,7 +978,13 @@ function renderSettingsFromState() {
       if (t) $("#dUptime").textContent = t;
     }
     if (status.ip) $("#dIp").textContent = status.ip;
-    if (status.wifi && status.wifi.ssid) $("#wifiSsid").value = status.wifi.ssid;
+    // Prefill the configured SSID only until the user edits the field. This
+    // re-runs on every status poll, and a focus check alone is not enough:
+    // mobile blurs the input when the keyboard closes (or the user taps the
+    // password field), and the next poll would stomp the typed SSID.
+    if (status.wifi && status.wifi.ssid && !wifiSsidEdited) {
+      $("#wifiSsid").value = status.wifi.ssid;
+    }
     if (status.wifi && status.wifi.rssi != null) {
       $("#dRssi").textContent = status.wifi.rssi + " dBm";
       const pct = clamp((status.wifi.rssi + 90) / 60, 0, 1);
@@ -1043,18 +1053,22 @@ $("#ledCount").addEventListener("change", (e) => {
   });
 });
 
-// WiFi changes restart the device — require an explicit confirm, and never
-// send a blank password (omit it to keep the current one).
+// WiFi changes make the device try the new network immediately (no restart) —
+// require an explicit confirm, and never send a blank password (omit it to
+// keep the current one). Key is "wifiSSID": the exact spelling the firmware
+// parses (case-sensitive).
+$("#wifiSsid").addEventListener("input", () => { wifiSsidEdited = true; });
 $("#wifiSave").addEventListener("click", () => {
   const ssid = $("#wifiSsid").value.trim();
   const pass = $("#wifiPass").value;
   if (!ssid) { showToast("SSID cannot be empty"); return; }
-  const proceed = window.confirm("Apply Wi-Fi settings and restart the device now?");
+  const proceed = window.confirm("Apply Wi-Fi settings? The device will try to join this network now (you may briefly drop off the setup AP).");
   if (!proceed) return;
-  const body = { wifiSsid: ssid };
+  const body = { wifiSSID: ssid };
   if (pass) body.wifiPassword = pass;
   engine.saveConfig(body).then((res) => {
-    showToast(res.ok ? "Wi-Fi settings applied — device restarting" : "Failed to save Wi-Fi settings");
+    if (res.ok) wifiSsidEdited = false;
+    showToast(res.ok ? "Wi-Fi settings saved — device connecting…" : "Failed to save Wi-Fi settings");
   });
 });
 

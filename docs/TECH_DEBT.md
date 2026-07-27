@@ -87,6 +87,12 @@ is implemented but not yet exercised on hardware. Known hardening path, in prior
    `setFilter([]{ return !updaterInProgress(); })`, so asset reads fall through to the `onNotFound`
    503 guard during an FS flash instead of reading a partition mid-erase.
 
+**Stale-asset cache (found 2026-07-28, wifi-provisioning debugging):** `/assets/` is served
+with `max-age=604800` and stable filenames, so browsers keep running week-old `app.js`/
+`engine.js` after any UI change — including OTA fs updates — until a private tab / cleared
+site data. Fix: version-stamped asset URLs (`?v=FIRMWARE_VERSION`, injected by
+`scripts/sync_web.py`) or ETag revalidation; keep `index.html` itself uncached.
+
 **Deferred from the 2026-07-23 branch audit (LOW / nits):** manifest fetched via unbounded
 `getString()` (MITM-gated OOM risk on the ~130 KB-heap C3 — add a size cap); the `applyTarget`
 poller can misreport a suspiciously-fast reboot as "failed" (`sawFlashing` never set — cosmetic,
