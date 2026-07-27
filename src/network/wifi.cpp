@@ -66,6 +66,15 @@ void setupWiFi() {
     // the SoftAP + web server sluggish/unreliable (slow loads, dropped connections).
     WiFi.setSleep(false);
 
+    // Own STA (re)connection entirely from handleWifiMaintenance(). The IDF's built-in
+    // auto-reconnect scans the single radio behind our back, and every scan channel-hops
+    // the SoftAP off its channel — which kills a provisioning client's DHCP handshake
+    // (the "169.254 link-local / jumping addresses" symptom when the saved network is
+    // out of range). persistent(false) also stops the IDF from auto-connecting a stale
+    // SSID out of its own NVS before we decide to; our creds live in Preferences.
+    WiFi.persistent(false);
+    WiFi.setAutoReconnect(false);
+
     // Start Access Point
     WiFi.softAP(AP_SSID, AP_PASSWORD);
     LOG_INFO(LogTag::WIFI, "AP started: %s", AP_SSID);
@@ -89,16 +98,17 @@ void setupWiFi() {
 
 // Helper function for WiFi reconnection and status monitoring
 void handleWifiMaintenance() {
-    // WiFi reconnection logic. While a client is connected to the SoftAP, back OFF
-    // but do NOT stop: WiFi.begin() channel-hops the single radio to scan, which
-    // briefly drops AP clients (annoying mid-setup). Using a much longer interval
-    // instead of skipping entirely means an idle phone parked on the AP can't wedge
-    // the device offline forever if it drops its saved network (e.g. router reboot).
-    if (!wifiConnected && config.wifiSSID.length() > 0) {
-        uint32_t interval = (WiFi.softAPgetStationNum() > 0)
-                                ? WIFI_RETRY_INTERVAL_AP_BUSY_MS
-                                : WIFI_RETRY_INTERVAL_MS;
-        if (millis() - lastWifiAttempt > interval) {
+    // WiFi reconnection logic. While a client is connected to the SoftAP, SKIP the
+    // reconnect entirely: WiFi.begin() channel-hops the single radio to scan, which
+    // drops the AP client mid-DHCP — the exact provisioning failure this addresses (an
+    // unreachable saved network otherwise scans every retry and makes the setup AP
+    // unusable). Once the client leaves (station count back to 0) the retry resumes, so
+    // an idle phone parked on the AP can't wedge the device offline forever and the
+    // link still self-heals when the saved network (or a freshly-provisioned one)
+    // returns.
+    if (!wifiConnected && config.wifiSSID.length() > 0 &&
+        WiFi.softAPgetStationNum() == 0) {
+        if (millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS) {
             lastWifiAttempt = millis();
             LOG_INFO(LogTag::WIFI, "Attempting WiFi reconnection...");
             WiFi.begin(config.wifiSSID.c_str(), config.wifiPassword.c_str());
