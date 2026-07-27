@@ -110,11 +110,10 @@ constexpr uint8_t  LED_CORRECTION_B          = 240;  // TypicalLEDStrip blue
 #define MDNS_HOSTNAME "lume"
 
 // Timeouts (milliseconds)
+// STA reconnect cadence. Reconnect is SKIPPED entirely while a client is parked on the
+// SoftAP (see handleWifiMaintenance): the single-radio scan a reconnect triggers would
+// channel-hop the AP and break the client's DHCP mid-provisioning.
 constexpr uint32_t WIFI_RETRY_INTERVAL_MS   = 30000;
-// Slower reconnect cadence while a client is parked on the SoftAP: keeps a scan's
-// brief AP disruption rare during setup, while still letting the device recover on
-// its own if a saved network returns while an idle client is holding the AP.
-constexpr uint32_t WIFI_RETRY_INTERVAL_AP_BUSY_MS = 120000;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SYSTEM LIMITS & BUFFERS
