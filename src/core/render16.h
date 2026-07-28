@@ -94,6 +94,23 @@ inline CRGB16 scaleRGB(const CRGB16& c, uint8_t rs, uint8_t gs, uint8_t bs) {
     return CRGB16(scale16by8(c.r, rs), scale16by8(c.g, gs), scale16by8(c.b, bs));
 }
 
+// Scale a whole colour by a 16-bit fraction (0 → black, 65535 → ~identity). Used
+// for the Wu subpixel split, where the two straddled pixels get complementary
+// 16-bit weights.
+inline CRGB16 scale16(const CRGB16& c, uint16_t s) {
+    return CRGB16(scale16(c.r, s), scale16(c.g, s), scale16(c.b, s));
+}
+
+// Saturating add — additive drawing (overlapping points, trails) that clamps at
+// full instead of wrapping.
+inline uint16_t qadd16(uint16_t a, uint16_t b) {
+    uint32_t s = (uint32_t)a + b;
+    return s > 65535u ? (uint16_t)65535 : (uint16_t)s;
+}
+inline CRGB16 addSat(const CRGB16& a, const CRGB16& b) {
+    return CRGB16(qadd16(a.r, b.r), qadd16(a.g, b.g), qadd16(a.b, b.b));
+}
+
 // ── 16-bit gamma ────────────────────────────────────────────────────────────
 // A 257-entry curve over the normalized domain, interpolated for a smooth
 // 16-bit transfer. Built once when gamma changes (uses powf); lookup is a shift,

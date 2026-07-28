@@ -116,6 +116,29 @@ void test_dither_seed_decorrelates() {
     TEST_ASSERT_TRUE(ditherSeed(10) != ditherSeed(11));
 }
 
+// Saturating add clamps at full instead of wrapping — additive drawing safety.
+void test_qadd16_saturates() {
+    TEST_ASSERT_EQUAL_UINT16(300, qadd16(100, 200));
+    TEST_ASSERT_EQUAL_UINT16(65535, qadd16(65000, 1000));   // would wrap without clamp
+    TEST_ASSERT_EQUAL_UINT16(65535, qadd16(65535, 65535));
+    CRGB16 s = addSat(CRGB16(60000, 100, 0), CRGB16(10000, 50, 5));
+    TEST_ASSERT_EQUAL_UINT16(65535, s.r);   // clamped
+    TEST_ASSERT_EQUAL_UINT16(150, s.g);
+    TEST_ASSERT_EQUAL_UINT16(5, s.b);
+}
+
+// 16-bit fractional scale (the Wu split weight): 0 → black, full → ~identity.
+void test_scale16_fraction() {
+    CRGB16 c(65535, 40000, 8000);
+    CRGB16 z = scale16(c, (uint16_t)0);
+    TEST_ASSERT_EQUAL_UINT16(0, z.r);
+    CRGB16 full = scale16(c, (uint16_t)65535);
+    TEST_ASSERT_UINT16_WITHIN(2, 65535, full.r);
+    TEST_ASSERT_UINT16_WITHIN(2, 40000, full.g);
+    CRGB16 half = scale16(c, (uint16_t)32768);
+    TEST_ASSERT_UINT16_WITHIN(2, 32768, half.r);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_expand8_endpoints);
@@ -127,5 +150,7 @@ int main(int, char**) {
     RUN_TEST(test_dither_exact_codes_are_steady);
     RUN_TEST(test_dither_frame_average_matches_truth);
     RUN_TEST(test_dither_seed_decorrelates);
+    RUN_TEST(test_qadd16_saturates);
+    RUN_TEST(test_scale16_fraction);
     return UNITY_END();
 }

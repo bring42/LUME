@@ -88,6 +88,52 @@ void test_fill_is_remap_safe() {
     TEST_ASSERT_EQUAL_UINT16(0, buf[0].r);      // physical head untouched
 }
 
+// Subpixel Wu point: an integer position lands entirely on one pixel; a .5
+// position splits ~50/50 across the pair; energy is conserved either way.
+void test_wu_point_integer_and_half() {
+    CRGB16 buf[8] = {};
+    SegmentView v(buf, /*start=*/0, /*len=*/8, /*reversed=*/false);
+
+    // Integer position 3.0 → all on pixel 3, neighbour untouched.
+    v.addWuPoint((uint32_t)3 << 16, CRGB16(60000, 0, 0));
+    TEST_ASSERT_UINT16_WITHIN(2, 60000, buf[3].r);
+    TEST_ASSERT_EQUAL_UINT16(0, buf[4].r);
+
+    // Half position 5.5 → split across 5 and 6, each ~half, sum ~= the colour.
+    CRGB16 buf2[8] = {};
+    SegmentView v2(buf2, 0, 8, false);
+    v2.addWuPoint(((uint32_t)5 << 16) | 0x8000u, CRGB16(40000, 0, 0));
+    TEST_ASSERT_UINT16_WITHIN(400, 20000, buf2[5].r);
+    TEST_ASSERT_UINT16_WITHIN(400, 20000, buf2[6].r);
+    TEST_ASSERT_UINT16_WITHIN(2, 40000, (uint16_t)(buf2[5].r + buf2[6].r)); // energy conserved
+}
+
+// Wu is additive (saturating) and respects the far edge: a point on the last
+// pixel contributes only its in-range half — no wrap, no out-of-bounds write.
+void test_wu_point_additive_and_edge() {
+    CRGB16 buf[4] = {};
+    SegmentView v(buf, 0, 4, false);
+
+    // Two points on pixel 1 accumulate.
+    v.addWuPoint((uint32_t)1 << 16, CRGB16(10000, 0, 0));
+    v.addWuPoint((uint32_t)1 << 16, CRGB16(10000, 0, 0));
+    TEST_ASSERT_UINT16_WITHIN(4, 20000, buf[1].r);
+
+    // Last pixel (3) with a fraction: only the near half lands, buf[4] doesn't exist.
+    v.addWuPoint(((uint32_t)3 << 16) | 0x8000u, CRGB16(30000, 0, 0));
+    TEST_ASSERT_UINT16_WITHIN(300, 15000, buf[3].r);   // ~half of 30000
+}
+
+// Wu writes through operator[], so a reversed view places the subpixel point at
+// the correct physical pixel (logical 0 → physical last).
+void test_wu_point_is_remap_safe() {
+    CRGB16 buf[5] = {};
+    SegmentView rev(buf, /*start=*/0, /*len=*/5, /*reversed=*/true);
+    rev.addWuPoint((uint32_t)0 << 16, CRGB16(50000, 0, 0));  // logical 0
+    TEST_ASSERT_UINT16_WITHIN(2, 50000, buf[4].r);           // → physical 4
+    TEST_ASSERT_EQUAL_UINT16(0, buf[0].r);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_region_interval_math);
@@ -96,5 +142,8 @@ int main(int, char**) {
     RUN_TEST(test_view_reports_its_region);
     RUN_TEST(test_view_reversal_maps_through_region);
     RUN_TEST(test_fill_is_remap_safe);
+    RUN_TEST(test_wu_point_integer_and_half);
+    RUN_TEST(test_wu_point_additive_and_edge);
+    RUN_TEST(test_wu_point_is_remap_safe);
     return UNITY_END();
 }

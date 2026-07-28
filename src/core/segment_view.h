@@ -152,6 +152,26 @@ struct SegmentView {
         }
     }
 
+    // --- Subpixel motion (Wu point) ---
+    // Draw an anti-aliased point at a 16.16 fixed-point position (in logical pixel
+    // units): the integer part picks the near LED, the 16-bit fraction splits the
+    // colour's brightness across it and its neighbour, and the result is ADDED
+    // (saturating) to whatever is already there. This is THE premium-motion
+    // primitive — a moving point tracks position in fixed point and eases across
+    // the strip instead of jumping whole LEDs. Writes through operator[], so it is
+    // remap-safe; a point straddling the far edge contributes only its in-range
+    // half (no wrap). Clear or fade the canvas first, then add points/trails.
+    void addWuPoint(uint32_t posFixed, CRGB16 color) {
+        uint16_t i = (uint16_t)(posFixed >> 16);
+        uint16_t f = (uint16_t)(posFixed & 0xFFFF);   // fraction toward the next pixel
+        if (i < region.length) {
+            (*this)[i] = addSat((*this)[i], scale16(color, (uint16_t)(65535u - f)));
+        }
+        if ((uint32_t)i + 1 < region.length) {
+            (*this)[i + 1] = addSat((*this)[i + 1], scale16(color, f));
+        }
+    }
+
     // --- Geometry accessors ---
 
     // Get the pixel region this view covers (P1.3)
