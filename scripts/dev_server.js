@@ -2,7 +2,7 @@
  *
  *   node scripts/dev_server.js         # then open http://localhost:8791
  *
- * Serves data/ (console UI at /, euclid UI at /euclid/) and mocks the firmware
+ * Serves data/ (console UI at /) and mocks the firmware
  * API faithfully enough to develop against: async 202 writes, the /ws state
  * push, whole-`params` semantics, palette-as-top-level-int, hex colors. The
  * effect catalogue is pulled straight from ui-concepts/_engine/engine.js so it
@@ -108,5 +108,5 @@ server.on("upgrade", (req, socket) => {
 
 setInterval(broadcast, 1000);
 server.listen(PORT, () => {
-  console.log("LUME UI dev server → http://localhost:" + PORT + "  (console)   +  /euclid/  (euclid)");
+  console.log("LUME UI dev server → http://localhost:" + PORT + "  (console)");
 });

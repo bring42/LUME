@@ -29,8 +29,8 @@ transport HAL + normalized-coordinate canvas), `docs/rfcs/0001-command-bus.md`,
   seam, de-`raw()`'d canvas, tiered scratchpad + shared workbuffer. 2D itself is now
   "a weekend on a sound base."
 - **v1 `GET /api/segments` route removed** (#28) — v1 is gone, not just frozen.
-- **Web UI redesign shipped** (#29) — two skins (console at `/`, euclid at `/euclid/`)
-  on one schema-driven engine.
+- **Web UI redesign shipped** (#29) — console skin at `/` on one schema-driven
+  engine. (A second `/euclid/` plate skin shipped then was later removed to reclaim flash.)
 - **Hardware flash-verify DONE** — LILYGO T-Display S3 two-boot
   save→reboot→restore proven on-device; MQTT→Home Assistant verified against a local
   broker; Seeed XIAO ESP32-C3 hardware-runs the UI. Reboot still has no HTTP endpoint
