@@ -245,6 +245,25 @@ public:
         directPixels_.write(data, count);
     }
 
+    // Viz readback (GET /api/v2/pixels): copy the strip's current PERCEPTUAL
+    // output as 8-bit RGB triplets — smooth_ carries master brightness, the
+    // power-fade envelope and dim-to-warm, but NOT gamma / WS2812B correction /
+    // dither. That's deliberately the screen-ready frame: leds[] holds the
+    // gamma-encoded wire bytes for LED PWM, which an sRGB display would
+    // double-gamma into a dark, oversaturated mess. Called from the web task
+    // while the loop writes smooth_; reads are unsynchronized by design — a
+    // torn pixel is one frame of viz noise, and a lock here would stall
+    // rendering (read-only, so P0.1's single-writer rule is untouched).
+    uint16_t copyVizPixels(uint8_t* out, uint16_t maxPixels) const {
+        uint16_t n = ledCount < maxPixels ? ledCount : maxPixels;
+        for (uint16_t i = 0; i < n; i++) {
+            out[i * 3 + 0] = (uint8_t)(smooth_[i].r >> 8);
+            out[i * 3 + 1] = (uint8_t)(smooth_[i].g >> 8);
+            out[i * 3 + 2] = (uint8_t)(smooth_[i].b >> 8);
+        }
+        return n;
+    }
+
     // --- Command queue access (for handlers) ---
     
     // Enqueue a command (thread-safe)

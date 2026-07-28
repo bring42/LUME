@@ -390,6 +390,38 @@ function commitRange(field) {
 let vizLedCount = -1;
 let vizRaf = null;
 
+/* Live pixel stream — the viz mirrors the REAL strip via engine.fetchPixels()
+   (GET /api/v2/pixels: screen-ready perceptual bytes; master brightness, the
+   power fade and dim-to-warm are already applied on-device, so they are
+   painted as-is — no extra scaling here). Chained single-flight polling:
+   the next request is scheduled only after the previous one settles, and it
+   idles right down while the tab is hidden / demo mode / nothing selected.
+   A null frame (demo, device unreachable) → vizTick paints the procedural
+   stand-in instead, so the panel still moves. */
+const VIZ_POLL_MS = 100;   // ~10 real frames/sec while live
+const VIZ_IDLE_MS = 600;   // retry cadence while there's nothing to stream
+const vizStream = { bytes: null, frames: 0, fpsAt: 0, fps: 0 };
+function vizPoll() {
+  if (document.hidden || engine.state.demo || !engine.selectedSegment()) {
+    vizStream.bytes = null;
+    setTimeout(vizPoll, VIZ_IDLE_MS);
+    return;
+  }
+  engine.fetchPixels().then((bytes) => {
+    vizStream.bytes = bytes;
+    if (bytes) {
+      vizStream.frames++;
+      const now = performance.now();
+      if (now - vizStream.fpsAt >= 1000) {
+        vizStream.fps = Math.round((vizStream.frames * 1000) / (now - vizStream.fpsAt)) || 0;
+        vizStream.frames = 0;
+        vizStream.fpsAt = now;
+      }
+    }
+    setTimeout(vizPoll, bytes ? VIZ_POLL_MS : VIZ_IDLE_MS);
+  });
+}
+
 function buildVizLeds(count) {
   const row = $("#vizLedRow");
   row.innerHTML = "";
@@ -443,8 +475,11 @@ function colorForPixel(seg, eff, i, n, t) {
     const b = (Math.sin(t * (1 + speedNorm * 3) + i * 0.2) * 0.5 + 0.5) * 0.7 + 0.3;
     return dim(c0, b);
   }
-  const u = (i / n + t * speedNorm * 0.4) % 1;
-  return lerpHex("#062534", "#7fe8e0", (Math.sin(u * 6.28) * 0.5 + 0.5));
+  // Self-contained mode (no color params, no palette — all the premium modes):
+  // a slow warm ember drift, not the old hardcoded cyan. Only reachable as a
+  // stand-in — live devices stream real pixels via vizStream instead.
+  const w = Math.sin(t * (0.5 + speedNorm) + i * 0.35) * 0.5 + 0.5;
+  return lerpHex("#241204", "#ffb46b", 0.25 + 0.55 * w);
 }
 
 function renderVisualizer() {
@@ -486,8 +521,12 @@ function renderVisualizer() {
     buildVizLeds(count);
     vizLedCount = count;
   }
-  const glowColor = segSwatchCssSolid(seg, eff);
-  $("#vizGlow").style.background = `radial-gradient(ellipse at 50% 50%, ${glowColor}, transparent 70%)`;
+  // Glow: while a live pixel stream is painting, vizTick derives the glow from
+  // the real strip average — don't fight it with the static swatch here.
+  if (!vizStream.bytes) {
+    const glowColor = segSwatchCssSolid(seg, eff);
+    $("#vizGlow").style.background = `radial-gradient(ellipse at 50% 50%, ${glowColor}, transparent 70%)`;
+  }
 }
 
 // A single representative solid color for glow purposes (first color param,
@@ -509,17 +548,34 @@ function vizTick(ts) {
     const n = leds.length;
     const powered = engine.state.controller.power;
     const bright = engine.state.controller.brightness / 255;
+    const strip = vizStream.bytes;
 
-    if (powered && n && eff) {
+    if (strip && strip.length >= 3 && n) {
+      // Live: paint the segment's window of the REAL strip (physical order;
+      // brightness/power fade/warmth already in the bytes). Average → glow.
+      const total = (strip.length / 3) | 0;
+      let ar = 0, ag = 0, ab = 0;
+      for (let i = 0; i < n; i++) {
+        let idx = seg.start + Math.floor(((i + 0.5) / n) * seg.length);
+        if (idx >= total) idx = total - 1;
+        const r = strip[idx * 3], g = strip[idx * 3 + 1], b = strip[idx * 3 + 2];
+        ar += r; ag += g; ab += b;
+        leds[i].style.background = `rgb(${r},${g},${b})`;
+      }
+      $("#vizGlow").style.background =
+        `radial-gradient(ellipse at 50% 50%, rgb(${(ar / n) | 0},${(ag / n) | 0},${(ab / n) | 0}), transparent 70%)`;
+      $("#vizFps").textContent = vizStream.fps;
+    } else if (powered && n && eff) {
+      // Stand-in (demo mode / device unreachable): procedural approximation.
       for (let i = 0; i < n; i++) {
         const c = colorForPixel(seg, eff, i, n, t);
         leds[i].style.background = bright < 0.999 ? mixWithBlack(c, bright) : c;
       }
+      $("#vizFps").textContent = 42 + Math.round(Math.sin(ts / 900) * 3);
     } else if (n) {
       for (let i = 0; i < n; i++) leds[i].style.background = "#050505";
+      $("#vizFps").textContent = "—";
     }
-    const fps = 42 + Math.round(Math.sin(ts / 900) * 3);
-    $("#vizFps").textContent = fps;
   }
   vizRaf = requestAnimationFrame(vizTick);
 }
@@ -1511,6 +1567,7 @@ requestAnimationFrame(() => {
     }
     renderAll();
     vizRaf = requestAnimationFrame(vizTick);
+    vizPoll();
   });
 });
 

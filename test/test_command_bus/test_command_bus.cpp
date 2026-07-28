@@ -530,6 +530,41 @@ void test_direct_pixels_are_deferred_then_applied() {
     TEST_ASSERT_EQUAL_UINT8(0x55, leds[5].g);
 }
 
+// GET /api/v2/pixels reads copyVizPixels(): the PERCEPTUAL frame (post master
+// brightness, pre gamma/correction/dither) — what a screen should display.
+// Proves (a) full-brightness white reads back ~white, (b) the readback tracks
+// master brightness linearly while the wire bytes (leds[]) sit far below it
+// (gamma-encoded), i.e. the viz really reads pre-gamma, (c) maxPixels clamps.
+void test_viz_readback_is_perceptual_pre_gamma() {
+    LumeController c;
+    c.begin(60);
+    makeWhiteStrip(c, 60);
+    c.enqueueCommand(Command::setGlobalBrightness(255));
+    settle(c);
+
+    uint8_t px[60 * 3];
+    TEST_ASSERT_EQUAL_UINT16(60, c.copyVizPixels(px, 60));
+    // Full white, full brightness: dim-to-warm is neutral at the top, so the
+    // perceptual bytes should read back essentially white on all channels.
+    TEST_ASSERT_UINT8_WITHIN(2, 255, px[0]);
+    TEST_ASSERT_UINT8_WITHIN(2, 255, px[1]);
+    TEST_ASSERT_UINT8_WITHIN(2, 255, px[2]);
+
+    // Halve-ish the master brightness: the perceptual readback scales with it
+    // linearly (64/255), while the gamma-encoded wire byte drops much further
+    // ((64/255)^2.2 ≈ 12/255). The gap is the whole point of the viz reading
+    // smooth_ instead of leds[] — a screen would double-gamma the wire bytes.
+    c.enqueueCommand(Command::setGlobalBrightness(64));
+    settle(c);
+    c.copyVizPixels(px, 60);
+    TEST_ASSERT_UINT8_WITHIN(4, 64, px[0]);                    // perceptual: ~64
+    TEST_ASSERT_LESS_THAN_UINT8(30, c.getLeds()[0].r);         // wire: gamma'd way down
+    TEST_ASSERT_LESS_THAN_UINT8(px[0], c.getLeds()[0].r);      // and always below viz
+
+    // maxPixels clamps the copy, and reports what it wrote.
+    TEST_ASSERT_EQUAL_UINT16(10, c.copyVizPixels(px, 10));
+}
+
 // P1.7: the one canonical projection — colors as #rrggbb hex (not [r,g,b]), a
 // string `effect`, and stop/brightness present. Every transport shares this.
 void test_serialize_segment_canonical_shape() {
@@ -786,5 +821,6 @@ int main(int, char**) {
     RUN_TEST(test_scratchpad_rebinds_to_own_pad_after_middle_delete);
     RUN_TEST(test_reconfigure_protocols_runs_hook_on_loop);
     RUN_TEST(test_direct_pixels_are_deferred_then_applied);
+    RUN_TEST(test_viz_readback_is_perceptual_pre_gamma);
     return UNITY_END();
 }

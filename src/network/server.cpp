@@ -194,6 +194,9 @@ void setupServer() {
         NULL,
         handleApiPixels
     );
+
+    // Live pixel readback (channel viz mirrors the real strip through this)
+    server.on("/api/v2/pixels", HTTP_GET, handleApiPixelsGet);
     
     // Nightlight endpoints
     server.on("/api/nightlight", HTTP_GET, handleApiNightlightGet);
