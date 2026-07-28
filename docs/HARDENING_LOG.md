@@ -132,8 +132,13 @@ not a finished feature.
 Two finished UI skins over one shared, schema-driven engine — console skin at `/`,
 euclid skin at `/euclid/`. Merged alongside #28 (legacy v1 route removal) and #30
 (Seeed XIAO ESP32-C3 board env + single-core C3 FastLED boot-loop fix), with #31 a
-rotary-knob follow-up. See the project's UI notes for the engine contract and the
-edit-`ui-concepts/`-not-`data/` workflow.
+rotary-knob follow-up.
+
+*Update 2026-07-28:* the euclid skin was removed to reclaim tight LittleFS flash
+(~20 KB gzipped), leaving the console skin as the one UI. With a single skin the
+`ui-concepts/` source tree + `sync_web.py` copy step became pure overhead and were
+dissolved: `data/` is now the web UI's single source of truth (engine contract in
+`docs/ENGINE_API.md`, workflow in `docs/WEB_UI.md`).
 
 ## Remaining (P1/P2/P3 — no P0s left)
 

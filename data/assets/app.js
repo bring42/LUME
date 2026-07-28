@@ -1,7 +1,7 @@
 /* ==========================================================================
    LUME — Console × Byrne (LIVE, engine-bound)
-   Same lighting-console structure/interactions as the console-euclid-live
-   look (channel rack, drag fader, rotary knobs, live LED bar), rewired to
+   A studio lighting-console control surface in the Byrne (Euclid) material
+   language (channel rack, drag fader, rotary knobs, live LED bar), bound to
    the shared LumeEngine. This file never talks to the network directly —
    it renders `engine.state` and calls `engine.*` methods; the engine owns
    all device-API correctness (schema-driven params, 202-async writes, WS

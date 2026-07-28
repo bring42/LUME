@@ -89,10 +89,11 @@ is implemented but not yet exercised on hardware. Known hardening path, in prior
 
 ~~**Stale-asset cache**~~ (found + RESOLVED 2026-07-28) — `/assets/` was served with
 `max-age=604800` and stable filenames, so browsers kept running week-old `app.js`/`engine.js`
-after any UI change (including OTA fs updates). `scripts/sync_web.py` now stamps every asset
-reference with a per-file content hash (`?v=<sha1[:8]>`), and the HTML entry points are served
-`Cache-Control: no-cache` so a cached page can never pin an old asset set. The week-long
-max-age on `/assets/` stays.
+after any UI change (including OTA fs updates). Every asset reference now carries a per-file
+content hash (`?v=<sha1[:8]>`), and the HTML entry points are served `Cache-Control: no-cache`
+so a cached page can never pin an old asset set. The week-long max-age on `/assets/` stays.
+The stamping lives in `scripts/gzip_web_files.py` (the buildfs/uploadfs pre-action; originally
+in the since-removed `sync_web.py`), so images are always internally consistent.
 
 **Deferred from the 2026-07-23 branch audit (LOW / nits):** manifest fetched via unbounded
 `getString()` (MITM-gated OOM risk on the ~130 KB-heap C3 — add a size cap); the `applyTarget`
