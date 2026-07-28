@@ -52,10 +52,11 @@ src/
     ├── sacn.*            # Self-contained sACN/E1.31 implementation
     └── mqtt.*            # MQTT protocol support
 
-data/                     # LittleFS web UI (uploaded separately)
-├── index.html            # Main web interface
+data/                     # LittleFS web UI (single source of truth — edit directly)
+├── index.html            # Main web interface (asset URLs carry ?v= hash stamps)
 └── assets/
-    ├── app.js            # Client-side JavaScript
+    ├── engine.js         # THE controller — all fetch/WebSocket/param logic
+    ├── app.js            # The view: DOM wiring + look-and-feel only
     └── app.css           # Styles
 ```
 
@@ -187,18 +188,17 @@ pio device monitor
 
 ### Web UI Development
 
-Frontend assets live in `data/` and are served via LittleFS:
-- Edit `data/index.html`, `data/assets/app.js`, `data/assets/app.css`
-- Run `pio run -t uploadfs` to push changes to device
-- Firmware must be flashed first; `uploadfs` only updates the filesystem partition
-
-**Automatic Gzip Compression:**
-- Script: [scripts/gzip_web_files.py](../scripts/gzip_web_files.py)
-- Trigger: Runs before `uploadfs` and `uploadfsota` commands
-- Result: 88K uncompressed → 15K compressed (~83% reduction)
-- Smart caching: Only recompresses files that have changed
-
-ESPAsyncWebServer automatically serves `.gz` files when they exist, with proper `Content-Encoding` headers. Browsers decompress transparently.
+**The canonical account of the web workflow is [docs/WEB_UI.md](WEB_UI.md)** (and
+the engine contract in [docs/ENGINE_API.md](ENGINE_API.md)) — read those before
+touching UI code. The short version:
+- `data/` is the single source of truth: edit `index.html` / `assets/{engine,app}.js` / `assets/app.css` directly
+- The view (`app.js`) never calls `fetch` — all device-API logic lives in `engine.js`
+- Preview against the mock device: `node scripts/dev_server.js`
+- `pio run -t uploadfs` pushes to the device; the pre-action
+  ([scripts/gzip_web_files.py](../scripts/gzip_web_files.py)) re-stamps the `?v=`
+  asset cache-busters and gzips automatically (ESPAsyncWebServer serves the `.gz`
+  transparently). Firmware must be flashed first; `uploadfs` only updates the
+  filesystem partition.
 
 Baud rate: 115200
 
