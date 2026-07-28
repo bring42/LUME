@@ -98,7 +98,7 @@ in the since-removed `sync_web.py`), so images are always internally consistent.
 **Deferred from the 2026-07-23 branch audit (LOW / nits):** manifest fetched via unbounded
 `getString()` (MITM-gated OOM risk on the ~130 KB-heap C3 — add a size cap); the `applyTarget`
 poller can misreport a suspiciously-fast reboot as "failed" (`sawFlashing` never set — cosmetic,
-bounded); effect/palette **names** are rendered via `innerHTML` in both skins (pre-existing, NOT
+bounded); effect/palette **names** are rendered via `innerHTML` in the UI (pre-existing, NOT
 this branch — device is the same-origin trust root, but worth moving to `textContent`).
 
 ---

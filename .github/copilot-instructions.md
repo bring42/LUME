@@ -109,9 +109,13 @@ pio run -t uploadfs                          # Upload LittleFS web UI assets
 
 ## Web UI Development
 
-Frontend assets live in `data/` and are served via LittleFS:
-- Edit `data/index.html`, `data/assets/app.js`, `data/assets/app.css`
-- Run `pio run -t uploadfs` to push changes to device
+Frontend assets live in `data/` (the single source of truth) and are served via
+LittleFS. Full workflow: `docs/WEB_UI.md`; engine contract: `docs/ENGINE_API.md`.
+- Edit `data/index.html`, `data/assets/engine.js`, `data/assets/app.js`, `data/assets/app.css` directly
+- **The view (`app.js`) never calls `fetch`, opens WebSockets, or builds `/api/` payloads** — all
+  device-API logic belongs in `engine.js`. Do not reintroduce API calls into the view.
+- Run `pio run -t uploadfs` to push changes to device (auto re-stamps `?v=` asset
+  hashes + gzips via the `gzip_web_files.py` pre-action)
 - Firmware must be flashed first; `uploadfs` only updates the filesystem partition
 
 ## Critical Conventions

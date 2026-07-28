@@ -148,9 +148,8 @@ input, button, textarea{ font-family: inherit; color: inherit; }
 }
 
 /* ---- top rail : the nameplate badge --------------------------------
-   Flat ink plate, hairline rule, construction-mark glyph — the same
-   "engraved badge" idea as console/, translated into Byrne's own
-   emblem language (the circle-and-hair mark from euclid/). */
+   Flat ink plate, hairline rule, construction-mark glyph — an engraved
+   badge in Byrne's own emblem language (the circle-and-hair mark). */
 
 .top-rail{
   display: flex;
@@ -473,8 +472,8 @@ input, button, textarea{ font-family: inherit; color: inherit; }
 }
 
 /* ---- power plane --------------------------------------------------------
-   Adapted directly from euclid's own power control: a flat solid-ink
-   square housing a paper-coloured glyph and a mono "LUX — ON" caption.
+   A flat solid-ink square housing a paper-coloured glyph and a mono
+   "LUX — ON" caption.
    No gradients, no shadows, no bezel throw — the only "physicality" is a
    plain eased colour crossfade between the on/off planes, matching the
    non-snappy transition quality used everywhere else in this app. */
@@ -521,8 +520,7 @@ input, button, textarea{ font-family: inherit; color: inherit; }
 }
 
 /* powered-off state: plane empties out to a hairline outline only,
-   glyph/caption drop to faint ink-on-void — same idea as euclid's
-   [aria-pressed="false"] rule, ported to this button's .on toggle class */
+   glyph/caption drop to faint ink-on-void (keyed on the .on toggle class) */
 .power-btn:not(.on){
   background: transparent;
   border-color: var(--c-line);
