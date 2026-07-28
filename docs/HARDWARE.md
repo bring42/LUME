@@ -74,6 +74,22 @@ build_flags =
     ; -DARDUINO_USB_CDC_ON_BOOT=1  ; ← Comment out for upload issues
 ```
 
+#### 4. Flash Partition Layout (4 MB boards)
+
+The C3 environments use a custom table (`partitions_4mb.csv`) instead of the
+stock Arduino one: the web UI only needs ~220 KB of LittleFS, so the filesystem
+partition is shrunk to 384 KB and the reclaimed 1 MB is split across the two
+OTA app slots (1.25 MB → **1.75 MB each**). `nvs`/`otadata` keep their stock
+offsets, so WiFi/config survive the change.
+
+**OTA compatibility fork:** a partition-table change only takes effect via a
+USB-serial flash (`pio run -t upload`, then `-t uploadfs`). A device still on
+the stock layout must NOT OTA-update onto images built for this table (the
+app image can exceed its old 1.25 MB slot, and the FS image size won't match).
+Reflash such devices over USB once; OTA works normally from then on. The
+S3 boards (8/16 MB flash) still use the stock 4 MB table and have their own
+headroom story — retabling them is a separate, deliberate change.
+
 ---
 
 ## Supported Hardware
