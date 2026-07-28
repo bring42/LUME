@@ -129,8 +129,9 @@ not a finished feature.
 
 ## Web UI redesign shipped (≈2026-07-22, PR #29)
 
-Two finished UI skins over one shared, schema-driven engine — console skin at `/`,
-euclid skin at `/euclid/`. Merged alongside #28 (legacy v1 route removal) and #30
+A finished UI skin over one shared, schema-driven engine — the console skin at `/`.
+(A second "euclid plate" skin at `/euclid/` shipped here too but was later removed
+to reclaim flash.) Merged alongside #28 (legacy v1 route removal) and #30
 (Seeed XIAO ESP32-C3 board env + single-core C3 FastLED boot-loop fix), with #31 a
 rotary-knob follow-up. See the project's UI notes for the engine contract and the
 edit-`ui-concepts/`-not-`data/` workflow.
