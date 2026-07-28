@@ -225,6 +225,25 @@ QueueHandle_t       aiJobQueue  = nullptr;
 TaskHandle_t        aiTaskHandle = nullptr;
 std::atomic<bool>   aiBusy{false};   // one AI request in flight at a time
 
+// Last job outcome, for GET /api/prompt/status. The 202-accept pattern means
+// the UI never sees the worker's result on the POST — before this, "no key",
+// "invalid key" and "retired model" were all indistinguishable from success
+// (the error only ever reached the serial log). Written by the worker task,
+// read by the web task: the writer updates the buffer THEN bumps aiJobSeq
+// (release); the reader copies the buffer between two acquire-loads of the
+// seq and retries once on mismatch — a torn read is thereby detected, and
+// writes are rare (one per completed job).
+static char                  lastAiOutcome[160] = "";  // error text; "" = ok/none
+static std::atomic<bool>     lastAiOk{false};
+static std::atomic<uint32_t> aiJobSeq{0};              // completed-job counter
+
+static void recordAiOutcome(bool ok, const String& error) {
+    strncpy(lastAiOutcome, ok ? "" : error.c_str(), sizeof(lastAiOutcome) - 1);
+    lastAiOutcome[sizeof(lastAiOutcome) - 1] = '\0';
+    lastAiOk.store(ok, std::memory_order_relaxed);
+    aiJobSeq.fetch_add(1, std::memory_order_release);
+}
+
 void aiWorkerTask(void*) {
     AiJob job;
     for (;;) {
@@ -241,12 +260,17 @@ void aiWorkerTask(void*) {
                 String applyError;
                 if (!applySpec(specDoc, applyError)) {
                     LOG_WARN(LogTag::WEB, "AI applySpec failed: %s", applyError.c_str());
+                    recordAiOutcome(false, applyError);
+                } else {
+                    recordAiOutcome(true, "");
                 }
             } else {
                 LOG_WARN(LogTag::WEB, "AI returned invalid format");
+                recordAiOutcome(false, "AI returned an unparseable response");
             }
         } else {
             LOG_ERROR(LogTag::WEB, "AI call failed: %s", apiError.c_str());
+            recordAiOutcome(false, apiError);
         }
         aiBusy.store(false);   // single release point for the busy flag
     }
@@ -269,6 +293,29 @@ bool ensureAiWorker() {
 } // namespace
 
 void initAiPromptWorker() { ensureAiWorker(); }
+
+// GET /api/prompt/status — the UI polls this after its 202 to learn what the
+// worker actually did. {busy, jobs, lastOk, lastError}; jobs is a completed-
+// job counter so a client can tell "still the previous result" from "mine".
+void handleApiPromptStatus(AsyncWebServerRequest* request) {
+    char outcome[sizeof(lastAiOutcome)];
+    uint32_t s1, s2;
+    do {
+        s1 = aiJobSeq.load(std::memory_order_acquire);
+        strncpy(outcome, lastAiOutcome, sizeof(outcome) - 1);
+        outcome[sizeof(outcome) - 1] = '\0';
+        s2 = aiJobSeq.load(std::memory_order_acquire);
+    } while (s1 != s2);   // torn read (job finished mid-copy) → re-copy
+
+    JsonDocument doc;
+    doc["busy"] = aiBusy.load(std::memory_order_relaxed);
+    doc["jobs"] = s2;
+    doc["lastOk"] = lastAiOk.load(std::memory_order_relaxed);
+    doc["lastError"] = outcome;
+    String out;
+    serializeJson(doc, out);
+    request->send(200, "application/json", out);
+}
 
 void handleApiPromptPost(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
     // Auth check at start of request
