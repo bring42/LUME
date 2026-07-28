@@ -218,14 +218,6 @@ void LumeController::update() {
     }
 }
 
-namespace {
-// WS2812B low-end floor: never emit a channel into the 1..LED_MIN_OUTPUT PWM zone
-// where it collapses (dim white → red); a true zero still cuts clean to black.
-inline uint8_t floorChannel(uint8_t v) {
-    return (v > 0 && v < LED_MIN_OUTPUT) ? (uint8_t)LED_MIN_OUTPUT : v;
-}
-}  // namespace
-
 void LumeController::renderOutput16(uint8_t perceptual) {
     // Dim-to-warm gains (perceptual space): neutral up high, warm (green/blue
     // pulled down toward the warm target) as the level drops. Quadratic in
@@ -238,10 +230,10 @@ void LumeController::renderOutput16(uint8_t perceptual) {
     // 16-bit so it never re-quantizes an already-dithered 8-bit byte.
     const uint8_t corrR = LED_CORRECTION_R, corrG = LED_CORRECTION_G, corrB = LED_CORRECTION_B;
 
-    // Until the first LIT frame, snap (don't ease): easing up from black would dwell
-    // in the bottom codes where all channels floor to LED_MIN_OUTPUT and a WS2812B
-    // reads green/turquoise. Snapping lands boot straight on the composed warm
-    // white. `contentSeen` gates the flip so a black first frame doesn't seed.
+    // Until the first LIT frame, snap (don't ease): easing up from black would drag
+    // the whole strip through the very bottom codes on boot, which reads muddy on a
+    // WS2812B. Snapping lands boot straight on the composed warm white.
+    // `contentSeen` gates the flip so a black first frame doesn't seed.
     bool snapping = !outputSeeded_;
     uint16_t contentSeen = 0;
 
@@ -256,10 +248,15 @@ void LumeController::renderOutput16(uint8_t perceptual) {
         // 3. Gamma-encode once (perceptual → PWM-linear), then WS2812B correction.
         CRGB16 g = gamma16_.apply(smooth_[i]);
         g = scaleRGB(g, corrR, corrG, corrB);
-        // 4. Error-diffusion dither 16 → 8 per channel, then the low-end floor.
-        leds[i] = CRGB(floorChannel(dither16to8(g.r, ditherErr_[i].r)),
-                       floorChannel(dither16to8(g.g, ditherErr_[i].g)),
-                       floorChannel(dither16to8(g.b, ditherErr_[i].b)));
+        // 4. Error-diffusion dither 16 → 8 per channel. No low-end floor: the old
+        //    per-channel floor lifted green/blue to LED_MIN_OUTPUT in the bottom
+        //    codes — which a WS2812B reads as cyan and which directly fought
+        //    dim-to-warm (that deliberately pulls G/B toward 0 to go warm). The
+        //    16-bit dither now carries the low end, so the fade-out stays warm
+        //    (dim-to-warm) all the way down and then cuts cleanly to black.
+        leds[i] = CRGB(dither16to8(g.r, ditherErr_[i].r),
+                       dither16to8(g.g, ditherErr_[i].g),
+                       dither16to8(g.b, ditherErr_[i].b));
     }
     // Flip to eased mode only once a lit frame has actually been snapped, so a
     // black boot frame doesn't lock the seed in and re-introduce the ramp.

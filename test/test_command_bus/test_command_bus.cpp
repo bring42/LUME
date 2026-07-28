@@ -619,23 +619,33 @@ void test_master_brightness_dims_content() {
     TEST_ASSERT_EQUAL_UINT16(0, maxChannel(c));    // true off = black
 }
 
-// The low-end floor (LED_MIN_OUTPUT) is now a per-CHANNEL invariant of the output
-// stage: no channel may ever sit in the broken (0, LED_MIN_OUTPUT) PWM zone where
-// a WS2812B collapses; a channel is either a clean 0 or >= the floor. Check it
-// holds for lit white across a sweep of low levels.
-void test_low_end_floor_is_per_channel_invariant() {
+// The low end must never go cool. There is no per-channel floor anymore (it lifted
+// green/blue in the bottom codes and read as cyan, fighting dim-to-warm); instead
+// dim-to-warm + dither own the descent. The invariant that guards the
+// "turquoise right before dark" regression: across a sweep of low levels on white
+// content, red stays >= blue on every lit pixel — the fade goes warm, never cyan.
+void test_low_end_stays_warm_never_cyan() {
     LumeController c;
     c.begin(60);
     makeWhiteStrip(c, 60);
+    c.setWarmth(0.6f);
 
-    for (uint8_t bri = 1; bri <= 40; bri += 3) {
+    // Aggregate over frames: at the very bottom the dither flickers channels 0/1
+    // independently, so a single frame can transiently show B>R — the meaningful
+    // invariant is the time-averaged balance. Total red output must dominate blue
+    // at every low level (warm, never cyan) — the "turquoise before dark" guard.
+    for (uint8_t bri : {6, 12, 20, 30}) {
         c.setBrightness(bri); settle(c, 200);
-        const CRGB* leds = c.getLeds();
-        for (uint16_t i = 0; i < c.getLedCount(); i++) {
-            for (uint8_t ch : {leds[i].r, leds[i].g, leds[i].b}) {
-                TEST_ASSERT_TRUE(ch == 0 || ch >= LED_MIN_OUTPUT);
+        uint32_t sumR = 0, sumB = 0;
+        for (int f = 0; f < 120; f++) {
+            c.update();
+            const CRGB* leds = c.getLeds();
+            for (uint16_t i = 0; i < c.getLedCount(); i++) {
+                sumR += leds[i].r;
+                sumB += leds[i].b;
             }
         }
+        TEST_ASSERT_TRUE(sumR >= sumB);
     }
 }
 
@@ -718,7 +728,7 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_led_output_is_pluggable_and_brightness_is_pinned);
     RUN_TEST(test_master_brightness_dims_content);
-    RUN_TEST(test_low_end_floor_is_per_channel_invariant);
+    RUN_TEST(test_low_end_stays_warm_never_cyan);
     RUN_TEST(test_gamma_via_bus_and_clamps);
     RUN_TEST(test_warmth_via_bus_and_clamps);
     RUN_TEST(test_dim_to_warm_tints_the_low_end);
