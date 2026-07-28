@@ -2,10 +2,10 @@
  *
  *   node scripts/dev_server.js         # then open http://localhost:8791
  *
- * Serves data/ (console UI at /, euclid UI at /euclid/) and mocks the firmware
- * API faithfully enough to develop against: async 202 writes, the /ws state
+ * Serves data/ (the web UI source of truth) and mocks the firmware API
+ * faithfully enough to develop against: async 202 writes, the /ws state
  * push, whole-`params` semantics, palette-as-top-level-int, hex colors. The
- * effect catalogue is pulled straight from ui-concepts/_engine/engine.js so it
+ * effect catalogue is pulled straight from data/assets/engine.js so it
  * matches what the UI expects. This is a dev tool only — the real device is the
  * ESP32 firmware.
  */
@@ -19,7 +19,7 @@ const DATA = path.join(ROOT, "data");
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8791;
 
 global.window = { location: {} };
-require(path.join(ROOT, "ui-concepts/_engine/engine.js"));
+require(path.join(ROOT, "data/assets/engine.js"));
 const EFFECTS = window.LumeEngine.FALLBACK_EFFECTS;
 const PALETTES = window.LumeEngine.FALLBACK_PALETTES;
 const effById = (id) => EFFECTS.find((e) => e.id === id);
@@ -108,5 +108,5 @@ server.on("upgrade", (req, socket) => {
 
 setInterval(broadcast, 1000);
 server.listen(PORT, () => {
-  console.log("LUME UI dev server → http://localhost:" + PORT + "  (console)   +  /euclid/  (euclid)");
+  console.log("LUME UI dev server → http://localhost:" + PORT);
 });

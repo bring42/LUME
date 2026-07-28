@@ -192,8 +192,8 @@ bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
     // Only update fields that are present
     // "wifiSSID" is the one canonical key, and the spelling is load-bearing:
     // ArduinoJson is case-sensitive, and a UI sending anything else (PR #29
-    // shipped "wifiSsid") silently drops the SSID here. Keep the skins in
-    // ui-concepts/ matched to this exact key.
+    // shipped "wifiSsid") silently drops the SSID here. Keep the web UI
+    // (data/) matched to this exact key.
     if (doc["wifiSSID"].is<const char*>()) {
         config.wifiSSID = doc["wifiSSID"].as<String>();
     }
