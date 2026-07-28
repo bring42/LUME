@@ -746,6 +746,27 @@
       });
     }
 
+    /* ---- live pixel readback (channel viz) ---- */
+    // GET /api/v2/pixels → the strip's CURRENT perceptual output as a flat
+    // Uint8Array [r,g,b, r,g,b, …] in physical strip order. Master brightness,
+    // the power fade and dim-to-warm are already applied on-device and the
+    // values are screen-ready (pre-gamma) — display them as-is, do NOT scale
+    // by controller.brightness again. Resolves null in demo mode or when the
+    // device doesn't answer; callers fall back to their own stand-in. Polling
+    // cadence is the caller's business — poll only while a viz is visible.
+    function fetchPixels() {
+      if (state.demo) return Promise.resolve(null);
+      return apiFetch("/api/v2/pixels").then(function (r) {
+        if (!r || typeof r.rgb !== "string") return null;
+        var n = r.rgb.length >> 1;
+        var bytes = new Uint8Array(n);
+        for (var i = 0; i < n; i++) {
+          bytes[i] = parseInt(r.rgb.substr(i * 2, 2), 16) || 0;
+        }
+        return bytes;
+      }, function () { return null; });
+    }
+
     /* ---- config (settings view) ---- */
     function getConfig() {
       return apiFetch("/api/config").then(function (c) { state.config = c; notify(); return c; },
@@ -914,6 +935,7 @@
       firmwareStatus: firmwareStatus,
       refreshSegments: refreshSegments,
       refreshStatus: refreshStatus,
+      fetchPixels: fetchPixels,
       // color helpers (shared by skins)
       util: { normalizeHex: normalizeHex, coerceColor: coerceColor, rgbArrayToHex: rgbArrayToHex, clampInt: clampInt }
     };

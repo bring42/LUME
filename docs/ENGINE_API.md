@@ -123,6 +123,16 @@ setTransition(key, ms)                // live-tune a TRANSITION duration ("DRAG"
                                       // "SETTLE"|"POWER"); updates engine.TRANSITION
                                       // in place + persists to localStorage
 refreshSegments(), refreshStatus()
+fetchPixels() → Promise<Uint8Array|null>  // GET /api/v2/pixels: the strip's
+                                      // CURRENT output as flat [r,g,b,…] bytes,
+                                      // physical order. Screen-ready perceptual
+                                      // values — brightness/power fade/warmth
+                                      // already applied; paint as-is, never
+                                      // rescale. null in demo mode / no answer
+                                      // (fall back to a local stand-in). Poll
+                                      // it yourself, only while a viz is
+                                      // visible (~10 Hz); the "don't poll" rule
+                                      // above covers state, not this stream.
 util.normalizeHex, util.coerceColor, util.rgbArrayToHex, util.clampInt
 ```
 

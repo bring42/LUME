@@ -477,6 +477,25 @@ Direct pixel control (bypasses effects). Four input forms are accepted; an optio
 - `pixels`/`rgb` return `{"success":true,"pixelsSet":N}`; `fill`/`gradient` return a success
   flag. Malformed color arrays return `400`.
 
+### GET /api/v2/pixels
+
+Live readback of the strip's current output — the web UI's channel viz mirrors the real
+strip through this, with zero per-effect coupling (a new effect needs no viz code at all).
+
+```json
+{ "count": 300, "rgb": "1a0b03ffb46b…" }
+```
+
+**Notes:**
+- `rgb` is one lowercase hex triplet (`rrggbb`) per pixel, physical strip order,
+  `count` pixels total.
+- Values are the **perceptual** frame: master brightness, the power-fade envelope and
+  dim-to-warm are applied; gamma, WS2812B color correction and dithering are **not**
+  (those encode for LED PWM — an sRGB display would double-gamma them). Render the bytes
+  as-is; do not scale by `brightness` again.
+- Read-only and unsynchronized with the render loop by design: a torn pixel is one frame
+  of viz noise. Intended polling cadence is ~10 Hz while a viz is visible.
+
 ---
 
 ## AI & Automation Endpoints

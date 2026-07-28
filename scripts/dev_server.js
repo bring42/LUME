@@ -81,6 +81,19 @@ const server = http.createServer(async (req, res) => {
   if (m === "GET" && url === "/api/status") return send(res, 200, { online: true, ip: "192.168.1.42", uptime: 384720, wifi: { ssid: "LUME-Studio", rssi: -52, connected: true }, led: { count: dev.controller.ledCount, power: dev.controller.power, brightness: dev.controller.brightness, fps: 60 }, protocols: { sacn: { enabled: false }, mqtt: { enabled: false, connected: false } } });
   if (m === "GET" && url === "/api/config") return send(res, 200, { wifiSSID: "LUME-Studio", ledCount: dev.controller.ledCount, aiApiKey: "****7f2c", aiApiKeySet: true, aiModel: "claude-3-5-sonnet-20241022", sacnEnabled: false, sacnUniverse: 1, mqttEnabled: false, mqttBroker: "mqtt.local", mqttPort: 1883 });
   if (m === "GET" && url === "/api/nightlight") return send(res, 200, dev.nightlight);
+  if (m === "GET" && url === "/api/v2/pixels") {
+    // Mirrors GET /api/v2/pixels: perceptual bytes, brightness/power applied.
+    // A drifting warm wave — enough motion to exercise the live viz path.
+    const n = dev.controller.ledCount, t = Date.now() / 1000;
+    const level = dev.controller.power ? dev.controller.brightness / 255 : 0;
+    let hex = "";
+    for (let i = 0; i < n; i++) {
+      const w = Math.sin(t * 1.2 + i * 0.09) * 0.5 + 0.5;
+      const r = Math.round((40 + 215 * w) * level), g = Math.round((18 + 130 * w) * level), b = Math.round((6 + 60 * w) * level);
+      hex += ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+    }
+    return send(res, 200, { count: n, rgb: hex });
+  }
 
   if (m === "PUT" && url === "/api/v2/controller") { const b = await readBody(req); if (typeof b.power === "boolean") dev.controller.power = b.power; if (b.brightness != null) dev.controller.brightness = Math.max(0, Math.min(255, b.brightness | 0)); setTimeout(broadcast, 120); return accepted(res); }
   if (m === "POST" && url === "/api/v2/segments") { const b = await readBody(req); if (b.start == null || b.length == null) return send(res, 400, { error: "validation_error", field: "start", message: "Fields 'start' and 'length' are required" }); dev.segments.push({ id: dev.nextId++, start: b.start | 0, length: b.length | 0, reverse: !!b.reverse, brightness: 255, effect: b.effect || "solid", params: defaultParams(b.effect || "solid", b.params), paletteIndex: b.palette != null ? b.palette : null }); setTimeout(broadcast, 120); return accepted(res); }

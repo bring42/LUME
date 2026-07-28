@@ -8,6 +8,32 @@
 // Static body buffer for async request handling
 static String pixelsBodyBuffer;
 
+// GET /api/v2/pixels — live viz readback. Returns the strip's current
+// perceptual output (see LumeController::copyVizPixels for exactly what that
+// means and why it's NOT leds[]) as {"count":N,"rgb":"rrggbb..."} — one hex
+// triplet per pixel, physical strip order. Read-only, no auth (matches the
+// other GET endpoints); the web UI polls this while its channel viz is
+// visible, so it must stay allocation-light: one heap frame + one reserved
+// String (~9 KB total at MAX_LED_COUNT, transient).
+void handleApiPixelsGet(AsyncWebServerRequest* request) {
+    uint16_t ledCount = lume::controller.getLedCount();
+    std::unique_ptr<uint8_t[]> px(new uint8_t[ledCount > 0 ? (size_t)ledCount * 3 : 1]);
+    uint16_t n = lume::controller.copyVizPixels(px.get(), ledCount);
+
+    String out;
+    out.reserve((size_t)n * 6 + 32);
+    out += "{\"count\":";
+    out += n;
+    out += ",\"rgb\":\"";
+    static const char HEX_CHARS[] = "0123456789abcdef";
+    for (size_t i = 0; i < (size_t)n * 3; i++) {
+        out += HEX_CHARS[px[i] >> 4];
+        out += HEX_CHARS[px[i] & 0x0F];
+    }
+    out += "\"}";
+    request->send(200, "application/json", out);
+}
+
 // Direct pixel control handler
 // Accepts: { "pixels": [[r,g,b], [r,g,b], ...], "brightness": 255 }
 // Or compact: { "rgb": [r,g,b,r,g,b,...], "brightness": 255 }
