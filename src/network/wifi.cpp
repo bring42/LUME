@@ -6,11 +6,21 @@
 #include "../protocols/sacn.h"
 #include "../protocols/mqtt.h"
 #include <WiFi.h>
+#include <atomic>
 
 // External globals
 extern Config config;
 extern bool wifiConnected;
 extern unsigned long lastWifiAttempt;
+
+// One-shot STA connect request, set from the web task after a credential save
+// and consumed on the loop task. Atomic so the flag (and, via its ordering, the
+// config Strings written before it) is safely visible across tasks.
+static std::atomic<bool> staConnectRequested{false};
+
+void requestWifiConnect() {
+    staConnectRequested.store(true);
+}
 
 // Access Point settings
 #define AP_SSID "LUME-Setup"
@@ -98,6 +108,19 @@ void setupWiFi() {
 
 // Helper function for WiFi reconnection and status monitoring
 void handleWifiMaintenance() {
+    // User-initiated connect: WiFi credentials were just saved. Fire immediately,
+    // even with a client parked on the SoftAP — this is the one scan provisioning
+    // NEEDS. The brief AP blip is deliberate; the alternative (waiting for the
+    // phone to leave the AP before ever trying) is a setup flow that never
+    // visibly completes. disconnect() first so a switch away from a currently
+    // connected network takes effect too.
+    if (staConnectRequested.exchange(false) && config.wifiSSID.length() > 0) {
+        LOG_INFO(LogTag::WIFI, "Credentials changed; connecting to %s", config.wifiSSID.c_str());
+        WiFi.disconnect();
+        WiFi.begin(config.wifiSSID.c_str(), config.wifiPassword.c_str());
+        lastWifiAttempt = millis();
+    }
+
     // WiFi reconnection logic. While a client is connected to the SoftAP, SKIP the
     // reconnect entirely: WiFi.begin() channel-hops the single radio to scan, which
     // drops the AP client mid-DHCP — the exact provisioning failure this addresses (an
