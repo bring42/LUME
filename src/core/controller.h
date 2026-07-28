@@ -292,6 +292,15 @@ private:
     CRGB16 ditherErr_[MAX_LED_COUNT];  // per-pixel/channel dither error accumulators
     Gamma16 gamma16_;                  // 16-bit gamma curve, rebuilt on setGamma()
 
+    // Mode crossfade: switching effects must not snap (spec: 2–3 s eased blend).
+    // On an effect change we freeze the outgoing mode's last frame into outgoing_
+    // and ease the canvas from it toward the incoming live render over the window.
+    // Whole-canvas (not per-segment): the premium case is one mode spanning the
+    // strip; unchanged segments blend frozen→live but for slow modes that's nil.
+    CRGB16 outgoing_[MAX_LED_COUNT];
+    Transition modeCrossfade_;
+    static constexpr uint32_t kModeCrossfadeMs = 2000;
+
     // How fast the smoothed output approaches its target, per show(): larger =
     // slower/silkier. This is the "nothing steps" low-pass; tune on-device.
     static constexpr uint8_t kIirShift = 4;
@@ -396,6 +405,13 @@ private:
     // their own canvas and many rely on the buffer persisting between frames
     // (fade-trails), so the render loop must not wipe covered pixels.
     void clearUncoveredLeds();
+
+    // Freeze the current canvas as the outgoing mode and start the eased blend
+    // toward the incoming one (called when an effect actually changes at runtime).
+    void beginModeCrossfade();
+    // setEffect wrapper that triggers a crossfade when the id actually changes
+    // from an already-rendering effect (not on first assignment or boot restore).
+    void changeEffectWithCrossfade(Segment* seg, const char* effectId);
 
     // Compose + descend the 16-bit canvas to 8-bit leds[] for one frame: per
     // pixel, dim-to-warm × master brightness (perceptual) → one-pole IIR

@@ -75,6 +75,14 @@ static void whitefx(SegmentView& v, const ParamValues&, uint32_t, bool) {
 DEFINE_EFFECT_SCHEMA(kWhiteSchema, ParamDesc::Int("x", "X", 0, 0, 255));
 REGISTER_EFFECT_SCHEMA(whitefx, "whitefx", "White FX", Solid, kWhiteSchema, 0);
 
+// A black fill — a distinct incoming mode for exercising the crossfade (it
+// actively writes black, so the canvas differs from a stale white frame).
+static void blackfx(SegmentView& v, const ParamValues&, uint32_t, bool) {
+    v.clear();
+}
+DEFINE_EFFECT_SCHEMA(kBlackSchema, ParamDesc::Int("x", "X", 0, 0, 255));
+REGISTER_EFFECT_SCHEMA(blackfx, "blackfx", "Black FX", Solid, kBlackSchema, 0);
+
 void setUp() {}
 void tearDown() {}
 
@@ -649,6 +657,31 @@ void test_low_end_stays_warm_never_cyan() {
     }
 }
 
+// Switching a segment's effect must not snap the output — it crossfades from the
+// outgoing mode over ~kModeCrossfadeMs. Change a bright-white segment to a
+// black-fill effect: the frame right after the switch is still lit (frozen white
+// dominates the eased blend), and only once the window elapses does it reach the
+// incoming black mode. A snap would jump to black in one frame.
+void test_mode_switch_crossfades_not_snaps() {
+    LumeController c;
+    c.begin(60);
+    makeWhiteStrip(c, 60);   // segment id 0, whitefx
+    c.setBrightness(255);
+    settle(c);
+    TEST_ASSERT_TRUE(maxChannel(c) > 200);   // bright white to start
+
+    // Switch segment 0 to blackfx (the incoming mode renders black).
+    EffectSpec spec = {};
+    spec.hasEffect = true;
+    std::strcpy(spec.effectId, "blackfx");
+    c.enqueueCommand(Command::applyEffectSpec(0, spec));
+    c.update();  // command applies + crossfade starts; first blended frame ~ white
+    TEST_ASSERT_TRUE(maxChannel(c) > 100);   // did NOT snap to black
+
+    settle(c);   // let the crossfade window fully elapse + the IIR settle
+    TEST_ASSERT_EQUAL_UINT16(0, maxChannel(c));  // arrived at the incoming black mode
+}
+
 // Runtime gamma still flows through the single-writer bus and clamps to
 // [LED_GAMMA_MIN, LED_GAMMA_MAX]; and a deeper gamma visibly pulls a mid level
 // further down (now observed in the composed per-pixel output, not a global set).
@@ -729,6 +762,7 @@ int main(int, char**) {
     RUN_TEST(test_led_output_is_pluggable_and_brightness_is_pinned);
     RUN_TEST(test_master_brightness_dims_content);
     RUN_TEST(test_low_end_stays_warm_never_cyan);
+    RUN_TEST(test_mode_switch_crossfades_not_snaps);
     RUN_TEST(test_gamma_via_bus_and_clamps);
     RUN_TEST(test_warmth_via_bus_and_clamps);
     RUN_TEST(test_dim_to_warm_tints_the_low_end);

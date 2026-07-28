@@ -182,6 +182,15 @@ void LumeController::update() {
                         segments[i].update(frameCounter, now);
                     }
                 }
+                // Mode crossfade: ease the freshly-rendered incoming mode over the
+                // frozen outgoing frame. Eased fraction 0 → outgoing, 1 → incoming;
+                // auto-deactivates when the window elapses (then this is skipped).
+                if (modeCrossfade_.isActive()) {
+                    uint16_t frac = (uint16_t)(modeCrossfade_.eased(now) * 65535.0f);
+                    for (uint16_t i = 0; i < ledCount; i++) {
+                        canvas_[i] = blend16(outgoing_[i], canvas_[i], frac);
+                    }
+                }
                 pipeline16 = true;
             }
         }
@@ -216,6 +225,24 @@ void LumeController::update() {
                      actualFps, showHz_, ledCount);
         }
     }
+}
+
+void LumeController::beginModeCrossfade() {
+    // Freeze the outgoing mode's last rendered frame (canvas_ still holds it —
+    // commands run before this frame's render), then open the eased blend window.
+    for (uint16_t i = 0; i < ledCount; i++) outgoing_[i] = canvas_[i];
+    modeCrossfade_.start(kModeCrossfadeMs, millis());
+}
+
+void LumeController::changeEffectWithCrossfade(Segment* seg, const char* effectId) {
+    if (!seg || !effectId) return;
+    // Crossfade only when switching from an already-rendering effect to a
+    // different one. First assignment (no current effect) or a no-op re-set just
+    // appears via the output pipeline's snap-on-first-lit-frame — no blend.
+    if (seg->getEffect() != nullptr && strcmp(seg->getEffectId(), effectId) != 0) {
+        beginModeCrossfade();
+    }
+    seg->setEffect(effectId);
 }
 
 void LumeController::renderOutput16(uint8_t perceptual) {
@@ -286,7 +313,7 @@ void LumeController::executeCommand(const Command& cmd) {
     switch (cmd.type) {
         case CommandType::SetEffect:
             if (seg && cmd.data.effectId) {
-                seg->setEffect(cmd.data.effectId);
+                changeEffectWithCrossfade(seg, cmd.data.effectId);
                 LOG_DEBUG(LogTag::LED, "Segment %d effect -> %s", cmd.segmentId, cmd.data.effectId);
             }
             break;
@@ -406,7 +433,7 @@ void LumeController::executeCommand(const Command& cmd) {
             uint32_t nowMs = millis();
             if (easeParams) target->snapshotParamsForTransition(nowMs);
 
-            if (spec.hasEffect)     target->setEffect(spec.effectId);
+            if (spec.hasEffect)     changeEffectWithCrossfade(target, spec.effectId);
             if (spec.hasParams)     target->getParamValues().setSlots(spec.slots);
             // Semantic params (AI path) resolve param names on the loop.
             if (spec.hasSpeed)      target->setSpeed(spec.speed);
