@@ -955,10 +955,14 @@ function runAiPrompt(promptText) {
         rate_limited: "Rate limited — try again in a moment",
         busy: "Device is busy — try again shortly",
         bad_request: "Couldn't understand that prompt",
+        timeout: "AI took too long — check the device log",
         error: "AI prompt failed",
         empty: "Type a prompt first",
       };
-      const msg = (res && reasonMsg[res.reason]) || "AI prompt failed";
+      // ai_error carries the device's own outcome text (e.g. "AI API key not
+      // configured", an upstream API error) — show it verbatim.
+      const msg = (res && res.reason === "ai_error" && res.message) ||
+                  (res && reasonMsg[res.reason]) || "AI prompt failed";
       statusEl.textContent = msg;
       showToast(msg);
     }
@@ -1127,6 +1131,20 @@ $("#wifiSave").addEventListener("click", () => {
     showToast(res.ok ? "Wi-Fi settings saved — device connecting…" : "Failed to save Wi-Fi settings");
   });
 });
+
+// AI API key: saved on change (blur/Enter). GET /api/config echoes a masked
+// key ("****xxxx") and that's also what prefills the field — never send a
+// masked value back (the firmware rejects it, but don't even try). Empty =
+// leave the stored key unchanged.
+$("#aiKey").addEventListener("change", (e) => {
+  const key = e.target.value.trim();
+  if (!key || key.startsWith("****")) return;
+  engine.saveConfig({ aiApiKey: key }).then((res) => {
+    showToast(res.ok ? "API key saved" : "Failed to save API key");
+    if (res.ok) engine.getConfig(); // refresh → field shows the masked echo
+  });
+});
+$("#aiKey").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
 
 $("#mqttSwitch").addEventListener("click", () => {
   const next = !$("#mqttSwitch").classList.contains("on");

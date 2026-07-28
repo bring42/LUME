@@ -11,6 +11,7 @@
 #include "../api/firmware.h"
 #include "../core/segment_serializer.h"   // canonical serializeSegment (P1.7)
 #include "../api/pixels.h"
+#include "../api/prompt.h"
 #include "updater.h"
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -219,6 +220,7 @@ void setupServer() {
     });
     
     // AI Prompt endpoint
+    server.on("/api/prompt/status", HTTP_GET, handleApiPromptStatus);
     server.on("/api/prompt", HTTP_POST,
         [](AsyncWebServerRequest* request) {},
         NULL,
