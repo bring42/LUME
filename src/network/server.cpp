@@ -336,13 +336,24 @@ void setupServer() {
         }
 
         if (LittleFS.exists(path)) {
-            request->send(LittleFS, path, contentTypeFromPath(path));
+            AsyncWebServerResponse* response =
+                request->beginResponse(LittleFS, path, contentTypeFromPath(path));
+            // HTML entry points (e.g. /euclid/index.html) must revalidate:
+            // they carry the ?v= cache-busted asset URLs, so a cached page
+            // would pin clients to an old asset set.
+            if (path.endsWith(".html")) {
+                response->addHeader("Cache-Control", "no-cache");
+            }
+            request->send(response);
             return;
         }
 
         // SPA fallback: serve index for client-side routes without extensions
         if (path.indexOf('.') < 0 && LittleFS.exists("/index.html")) {
-            request->send(LittleFS, "/index.html", "text/html; charset=utf-8");
+            AsyncWebServerResponse* response =
+                request->beginResponse(LittleFS, "/index.html", "text/html; charset=utf-8");
+            response->addHeader("Cache-Control", "no-cache");
+            request->send(response);
             return;
         }
 

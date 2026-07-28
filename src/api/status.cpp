@@ -21,7 +21,13 @@ void handleRoot(AsyncWebServerRequest* request) {
         return;
     }
     if (webUiAvailable && LittleFS.exists("/index.html")) {
-        request->send(LittleFS, "/index.html", "text/html; charset=utf-8");
+        AsyncWebServerResponse* response =
+            request->beginResponse(LittleFS, "/index.html", "text/html; charset=utf-8");
+        // no-cache: the page carries the ?v= cache-busted asset URLs, so a
+        // cached copy would pin clients to an old asset set (the /assets/
+        // files themselves are cached for a week by design).
+        response->addHeader("Cache-Control", "no-cache");
+        request->send(response);
         return;
     }
     request->send(503, "text/plain", "Web UI not available");

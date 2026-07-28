@@ -22,6 +22,7 @@ Deployment layout on the device (LittleFS):
 Run:  python3 scripts/sync_web.py        (from repo root)
 Gzip is applied separately at `pio run -t uploadfs` by scripts/gzip_web_files.py.
 """
+import hashlib
 import re
 import shutil
 from pathlib import Path
@@ -32,6 +33,13 @@ DATA = ROOT / "data"
 
 ENGINE_SRC = SRC / "_engine" / "engine.js"
 ENGINE_DEVICE_PATH = "/assets/engine.js"
+
+
+def vtag(path: Path) -> str:
+    """8-hex content hash used as the ?v= cache-buster on asset URLs. Changes
+    exactly when the served bytes change, so /assets/ keeps its week-long
+    max-age without ever pinning a browser to stale JS/CSS."""
+    return hashlib.sha1(path.read_bytes()).hexdigest()[:8]
 
 
 def write(dst: Path, text: str):
@@ -47,24 +55,34 @@ def copy(src: Path, dst: Path):
 
 
 def sync_console():
-    """console-euclid-live → root. Assets are rewritten to /assets/*."""
+    """console-euclid-live → root. Assets are rewritten to /assets/*?v=<hash>."""
     print("console-euclid-live → data/ (root)")
     skin = SRC / "console-euclid-live"
     html = (skin / "index.html").read_text(encoding="utf-8")
-    html = html.replace("../_engine/engine.js", ENGINE_DEVICE_PATH)
-    html = re.sub(r'href="styles\.css"', 'href="/assets/app.css"', html)
-    html = re.sub(r'src="app\.js"', 'src="/assets/app.js"', html)
+    html = html.replace("../_engine/engine.js",
+                        f"{ENGINE_DEVICE_PATH}?v={vtag(ENGINE_SRC)}")
+    html = re.sub(r'href="styles\.css"',
+                  f'href="/assets/app.css?v={vtag(skin / "styles.css")}"', html)
+    html = re.sub(r'src="app\.js"',
+                  f'src="/assets/app.js?v={vtag(skin / "app.js")}"', html)
     write(DATA / "index.html", html)
     copy(skin / "styles.css", DATA / "assets" / "app.css")
     copy(skin / "app.js", DATA / "assets" / "app.js")
 
 
 def sync_euclid():
-    """euclid-live → /euclid/. style.css + app.js stay relative; engine absolute."""
+    """euclid-live → /euclid/. style.css + app.js stay relative; engine absolute.
+    All refs get ?v=<hash> stamps too — /euclid/ isn't long-cached today, but the
+    stamps make that safe to change and defeat any heuristic caching."""
     print("euclid-live → data/euclid/")
     skin = SRC / "euclid-live"
     html = (skin / "index.html").read_text(encoding="utf-8")
-    html = html.replace("../_engine/engine.js", ENGINE_DEVICE_PATH)
+    html = html.replace("../_engine/engine.js",
+                        f"{ENGINE_DEVICE_PATH}?v={vtag(ENGINE_SRC)}")
+    html = re.sub(r'href="style\.css"',
+                  f'href="style.css?v={vtag(skin / "style.css")}"', html)
+    html = re.sub(r'src="app\.js"',
+                  f'src="app.js?v={vtag(skin / "app.js")}"', html)
     write(DATA / "euclid" / "index.html", html)
     copy(skin / "style.css", DATA / "euclid" / "style.css")
     copy(skin / "app.js", DATA / "euclid" / "app.js")
