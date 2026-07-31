@@ -20,8 +20,10 @@
 #else
 #define LED_DATA_PIN                2               // GPIO2 (T-Display S3: broken out, not a strapping pin)
 #endif
-#define LED_STRIP_TYPE              WS2812B         // Common addressable RGB LED
-#define LED_COLOR_MODE              GRB             // Byte order (GRB for WS2812B)
+#define LED_STRIP_TYPE              SM16703         // 12V external-IC strip (3 LEDs/pixel typical)
+#define LED_COLOR_MODE              BRG             // Byte order — hardware-verified on this strip:
+                                                    // with RGB, sent-R showed blue / sent-G showed red
+                                                    // / sent-B showed green => slots are B,R,G
 
 // Strip Dimensions
 // MAX_LED_COUNT sets compile-time buffer size (3 bytes per LED)
