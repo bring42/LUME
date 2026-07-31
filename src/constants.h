@@ -20,8 +20,15 @@
 #else
 #define LED_DATA_PIN                2               // GPIO2 (T-Display S3: broken out, not a strapping pin)
 #endif
+// Strip type + byte order. Guarded so a board env (or local build) can retarget
+// other hardware via build_flags without editing the defaults, e.g.:
+//   build_flags = -DLED_STRIP_TYPE=SM16703 -DLED_COLOR_MODE=BRG
+#ifndef LED_STRIP_TYPE
 #define LED_STRIP_TYPE              WS2812B         // Common addressable RGB LED
+#endif
+#ifndef LED_COLOR_MODE
 #define LED_COLOR_MODE              GRB             // Byte order (GRB for WS2812B)
+#endif
 
 // Strip Dimensions
 // MAX_LED_COUNT sets compile-time buffer size (3 bytes per LED)
@@ -67,37 +74,17 @@ constexpr uint8_t  LED_WARM_TARGET_R        = 255;   // Tungsten40W (2600 K)
 constexpr uint8_t  LED_WARM_TARGET_G        = 197;
 constexpr uint8_t  LED_WARM_TARGET_B        = 143;
 
-// Low-end color floor. WS2812B is 8-bit-per-channel with no low-end headroom,
-// and FastLED's output scale is per-channel (brightness × color-correction ×
-// temperature, all multiplied in CRGB::computeAdjustment). At a FastLED output
-// brightness of 1-3 the green/blue channels of a white pixel round to 0 *before*
-// red does (correction/warmth scale them down more), so "dim white" collapses to
-// pure (1,0,0) RED — the ugly white→red→black seen when fading out. Temporal
-// dithering does NOT rescue this: the dither offset is added to the *source*
-// byte before scaling (qadd8(b, d)), and a white source byte is 255 — it
-// saturates, so no channel of a white pixel gains any dither headroom. The floor
-// is therefore the deterministic fix.
+// Low-end handling lives entirely in the 16-bit pipeline (render16.h +
+// renderOutput16): error-diffusion dither carries dim content through the
+// bottom codes, and dim-to-warm keeps the fade-out warm all the way down
+// before cutting clean to black. The 8-bit era's LED_MIN_OUTPUT floor (clamp
+// output to ≥4 so dim white couldn't collapse to red) and its companion
+// correction ramp are GONE — the floor lifted green/blue back up in exactly
+// the range dim-to-warm deliberately pulls them down, and the 16-bit dither
+// made it unnecessary. See renderOutput16() step 4.
 //
-// LED_MIN_OUTPUT is the lowest FastLED brightness we will ever emit for a
-// non-zero level. applyGamma_video(perceptual) is clamped up to this floor for
-// any perceptual > 0; a true zero (off / a settled fade-out) still emits 0. This
-// is what physical dimmers do — hold a lowest clean level, then cut to black,
-// never dwelling in the sub-usable PWM zone. At 4/255 every channel of the
-// warmest tinted white is still ≥ 1 (no collapse to red); the trade is a small
-// dead band at the very bottom of the range (perceptual ~1..38 at gamma 2.2 all
-// render at the floor) instead of a red-tinted fade into that zone.
-constexpr uint8_t  LED_MIN_OUTPUT            = 4;
-
-// Color-correction is itself the source of the red bias: TypicalLEDStrip
-// (255,176,240) deliberately pulls green/blue down for white balance, which at
-// the low end is exactly what makes them hit 0 first. So as the output nears the
-// floor, ramp the applied correction from TypicalLEDStrip toward UncorrectedColor
-// (255,255,255) — restoring the green/blue channels so the floor reads as clean
-// (warm) white rather than red. Above LED_CORRECTION_FULL_AT the strip's normal
-// white balance is untouched; the ramp lives only in the bottom few PWM levels
-// where correction does more harm than good. Values mirror the FastLED
-// LEDColorCorrection enums (TypicalLEDStrip = 0xFFB0F0).
-constexpr uint8_t  LED_CORRECTION_FULL_AT    = 16;   // output ≥ this: full correction
+// WS2812B white-balance correction, applied post-gamma in 16-bit. Values
+// mirror FastLED's TypicalLEDStrip (0xFFB0F0).
 constexpr uint8_t  LED_CORRECTION_R          = 255;  // TypicalLEDStrip red
 constexpr uint8_t  LED_CORRECTION_G          = 176;  // TypicalLEDStrip green
 constexpr uint8_t  LED_CORRECTION_B          = 240;  // TypicalLEDStrip blue

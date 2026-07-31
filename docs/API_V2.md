@@ -493,6 +493,10 @@ strip through this, with zero per-effect coupling (a new effect needs no viz cod
   dim-to-warm are applied; gamma, WS2812B color correction and dithering are **not**
   (those encode for LED PWM — an sRGB display would double-gamma them). Render the bytes
   as-is; do not scale by `brightness` again.
+- When a **raw source** drives the strip (sACN, or a `POST /api/pixels` overlay frame),
+  those paths bypass the 16-bit pipeline — the endpoint then returns the raw source
+  bytes verbatim (also screen-appropriate: they never passed gamma/correction), so the
+  viz mirrors the real strip in every mode.
 - Read-only and unsynchronized with the render loop by design: a torn pixel is one frame
   of viz noise. Intended polling cadence is ~10 Hz while a viz is visible.
 

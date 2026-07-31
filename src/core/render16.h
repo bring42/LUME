@@ -20,9 +20,9 @@
 //
 // Everything here is pure integer math with NO FastLED dependency (mirroring
 // core/transition.h), so it is fully host-tested in `pio test -e native`
-// (test_render16) with zero hardware. Hardware-specific final steps — the
-// WS2812B colour correction and the LED_MIN_OUTPUT red-floor — stay in the
-// output driver, downstream of the 8-bit values this produces.
+// (test_render16) with zero hardware. Hardware-specific final shaping (the
+// WS2812B colour correction) lives in the controller's output stage
+// (renderOutput16), downstream of these primitives.
 //
 // Design notes:
 //  • Linear space. Content, compositing, master brightness, and dim-to-warm all
@@ -74,9 +74,14 @@ inline uint16_t scale16(uint16_t v, uint16_t s) {
     return (uint16_t)(((uint32_t)v * (s + 1)) >> 16);
 }
 
-// Linear interpolate two 16-bit channels; frac 0 → a, 65535 → b.
+// Linear interpolate two 16-bit channels; frac 0 → a, 65535 → b. The delta ×
+// frac product spans ±65535², which overflows int32 — signed overflow is UB
+// (UBSan-verified; the old code only *happened* to produce correct values).
+// Widen the intermediate to int64: one 64-bit multiply per channel, and this
+// only runs during mode crossfades.
 inline uint16_t lerp16(uint16_t a, uint16_t b, uint16_t frac) {
-    return (int32_t)a + (((int32_t)b - (int32_t)a) * (int32_t)frac >> 16);
+    return (uint16_t)((int32_t)a +
+                      (int32_t)((((int64_t)b - (int64_t)a) * (int64_t)frac) >> 16));
 }
 
 inline CRGB16 blend16(const CRGB16& a, const CRGB16& b, uint16_t frac) {

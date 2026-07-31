@@ -24,7 +24,10 @@ constexpr uint8_t MAX_EFFECT_ID_LEN = 24;
  */
 enum class CommandType : uint8_t {
     // Segment effect control
-    SetEffect,          // Change effect on a segment
+    // (Effect changes ride ApplyEffectSpec, which OWNS its id in a fixed
+    // buffer. The old SetEffect command carried a borrowed const char* — a
+    // dangling-pointer trap for any producer whose string didn't outlive the
+    // queue — and had no remaining producers, so it was removed.)
     SetBrightness,      // Set segment or global brightness
     SetSpeed,           // Set effect speed
     SetIntensity,       // Set effect intensity
@@ -145,9 +148,6 @@ struct Command {
     bool powerOffAtZero = false;
 
     union {
-        // SetEffect
-        const char* effectId;
-
         // SetBrightness, SetSpeed, SetIntensity, SetPalette
         uint8_t value8;
 
@@ -171,14 +171,6 @@ struct Command {
     } data;
     
     // Constructors for common commands
-    static Command setEffect(uint8_t segId, const char* effectId) {
-        Command cmd;
-        cmd.type = CommandType::SetEffect;
-        cmd.segmentId = segId;
-        cmd.data.effectId = effectId;
-        return cmd;
-    }
-    
     static Command setBrightness(uint8_t segId, uint8_t brightness) {
         Command cmd;
         cmd.type = CommandType::SetBrightness;

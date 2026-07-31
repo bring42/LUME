@@ -183,11 +183,14 @@ void LumeController::update() {
                     }
                 }
                 // Mode crossfade: ease the freshly-rendered incoming mode over the
-                // frozen outgoing frame. Eased fraction 0 → outgoing, 1 → incoming;
-                // auto-deactivates when the window elapses (then this is skipped).
+                // frozen outgoing frame — but ONLY within the changed segment's
+                // window [fadeLo_, fadeHi_); other segments render live. Eased
+                // fraction 0 → outgoing, 1 → incoming; auto-deactivates when the
+                // window elapses (then this is skipped).
                 if (modeCrossfade_.isActive()) {
                     uint16_t frac = (uint16_t)(modeCrossfade_.eased(now) * 65535.0f);
-                    for (uint16_t i = 0; i < ledCount; i++) {
+                    uint16_t hi = min(fadeHi_, ledCount);
+                    for (uint16_t i = fadeLo_; i < hi; i++) {
                         canvas_[i] = blend16(outgoing_[i], canvas_[i], frac);
                     }
                 }
@@ -201,7 +204,9 @@ void LumeController::update() {
         frameCounter++;
     }
 
-    // ── Output — runs EVERY loop pass (several hundred Hz) ──
+    // ── Output — runs EVERY loop pass (several hundred Hz on typical ≲300 px
+    // strips; a WS2812B line blocks ~30 µs/pixel in show(), so 1000 px caps
+    // this near 33 Hz on the wire alone — showHz_ below reports the truth) ──
     // The 16-bit pipeline lives here, not in the frame-gated block, because its
     // one-pole IIR smoothing and error-diffusion dither depend on the high show()
     // rate: that is exactly what makes the bottom codes read continuous instead of
@@ -227,10 +232,22 @@ void LumeController::update() {
     }
 }
 
-void LumeController::beginModeCrossfade() {
+void LumeController::beginModeCrossfade(uint16_t lo, uint16_t hi) {
     // Freeze the outgoing mode's last rendered frame (canvas_ still holds it —
-    // commands run before this frame's render), then open the eased blend window.
+    // commands run before this frame's render), then open the eased blend
+    // window. The whole canvas is frozen (cheap memcpy-shaped loop) but the
+    // blend only READS [fadeLo_, fadeHi_): pixels of other segments keep
+    // rendering live. A second change mid-fade widens the window — freezing
+    // the canvas at its current (possibly mid-blend) visual state, so the
+    // earlier fade continues from what was actually showing.
     for (uint16_t i = 0; i < ledCount; i++) outgoing_[i] = canvas_[i];
+    if (modeCrossfade_.isActive()) {
+        fadeLo_ = min(fadeLo_, lo);
+        fadeHi_ = max(fadeHi_, hi);
+    } else {
+        fadeLo_ = lo;
+        fadeHi_ = hi;
+    }
     modeCrossfade_.start(kModeCrossfadeMs, millis());
 }
 
@@ -240,7 +257,8 @@ void LumeController::changeEffectWithCrossfade(Segment* seg, const char* effectI
     // different one. First assignment (no current effect) or a no-op re-set just
     // appears via the output pipeline's snap-on-first-lit-frame — no blend.
     if (seg->getEffect() != nullptr && strcmp(seg->getEffectId(), effectId) != 0) {
-        beginModeCrossfade();
+        uint16_t lo = seg->getStart();
+        beginModeCrossfade(lo, lo + seg->getLength());
     }
     seg->setEffect(effectId);
 }
@@ -311,13 +329,6 @@ void LumeController::executeCommand(const Command& cmd) {
     }
     
     switch (cmd.type) {
-        case CommandType::SetEffect:
-            if (seg && cmd.data.effectId) {
-                changeEffectWithCrossfade(seg, cmd.data.effectId);
-                LOG_DEBUG(LogTag::LED, "Segment %d effect -> %s", cmd.segmentId, cmd.data.effectId);
-            }
-            break;
-            
         case CommandType::SetBrightness:
             if (seg) {
                 seg->setBrightness(cmd.data.value8);

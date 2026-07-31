@@ -31,6 +31,12 @@ void test_scale_and_lerp() {
     TEST_ASSERT_EQUAL_UINT16(0, lerp16(0, 65535, 0));         // frac 0 → a, exact
     TEST_ASSERT_UINT16_WITHIN(2, 65535, lerp16(0, 65535, 65535)); // frac max → ~b (fixed-point)
     TEST_ASSERT_UINT16_WITHIN(2, 32768, lerp16(0, 65535, 32768)); // halfway
+    // Full-range extremes in BOTH directions. delta × frac spans ±65535² here —
+    // the old int32 intermediate made these signed-overflow UB (values happened
+    // to come out right, UBSan didn't approve); the int64 intermediate is defined.
+    TEST_ASSERT_UINT16_WITHIN(2, 0, lerp16(65535, 0, 65535));     // descending, frac max
+    TEST_ASSERT_EQUAL_UINT16(65535, lerp16(65535, 0, 0));         // descending, frac 0
+    TEST_ASSERT_UINT16_WITHIN(2, 32767, lerp16(65535, 0, 32768)); // descending halfway
 }
 
 // Gamma is pinned at 0 and full, and monotonically non-decreasing across the
