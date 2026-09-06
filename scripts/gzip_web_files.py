@@ -26,7 +26,11 @@ import re
 import shutil
 from pathlib import Path
 
-ASSET_REF = re.compile(r"(?P<path>/assets/[\w.-]+)\?v=[0-9a-f]+")
+# Matches an /assets/ reference with OR WITHOUT an existing ?v= stamp: a
+# newly added <script src="/assets/new.js"> used to be silently skipped and
+# then served with the week-long max-age, pinning users to a stale copy.
+# Anchored on the closing quote so only whole attribute values match.
+ASSET_REF = re.compile(r"""(?P<path>/assets/[\w./-]+?)(?:\?v=[0-9a-f]+)?(?=["'])""")
 
 def stamp_asset_hashes(data_dir):
     """Rewrite ?v= stamps in data/*.html to each asset's current sha1[:8]."""
@@ -88,12 +92,20 @@ def gzip_web_files(source, target, env):
     else:
         print("✓ All files already compressed")
 
-# Register the callback to run before the filesystem image is built/uploaded.
-# buildfs is what CI (release workflow) runs to produce littlefs.bin, so it must
-# gzip too — otherwise the published FS image would ship uncompressed assets.
+# Register the callback to run before the filesystem IMAGE FILE is built.
+#
+# This MUST target the image file, not the "buildfs"/"uploadfs" aliases. An
+# alias's pre-actions run after the alias's dependency — the image — has
+# already been built, so `AddPreAction("buildfs", ...)` fires too late:
+# verified by deleting data/*.gz and running `pio run -t buildfs`, which
+# printed "Building FS image" BEFORE the stamp+gzip output. On a fresh
+# checkout (CI has no committed .gz — they are gitignored) that packed
+# uncompressed, unstamped assets into the published littlefs.bin.
+#
+# $BUILD_DIR/${ESP32_FS_IMAGE_NAME}.bin is the real target the espressif32
+# builder produces (platform builder main.py), and uploadfs/uploadfsota
+# depend on it too, so this one registration covers every path.
 if _PIO:
-    env.AddPreAction("buildfs", gzip_web_files)
-    env.AddPreAction("uploadfs", gzip_web_files)
-    env.AddPreAction("uploadfsota", gzip_web_files)
+    env.AddPreAction("$BUILD_DIR/${ESP32_FS_IMAGE_NAME}.bin", gzip_web_files)
 else:
     gzip_web_files(None, None, None)
