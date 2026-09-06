@@ -499,6 +499,10 @@ strip through this, with zero per-effect coupling (a new effect needs no viz cod
   viz mirrors the real strip in every mode.
 - Read-only and unsynchronized with the render loop by design: a torn pixel is one frame
   of viz noise. Intended polling cadence is ~10 Hz while a viz is visible.
+- **Auth-gated** like the other `/api/v2` reads (segments, info, controller): returns `401`
+  when an `authToken` is configured and the request omits it. No-op on the default
+  (tokenless) setup. Note the stock web UI does not send a token, so configuring one
+  currently disables the viz stream along with the rest of the v2 read surface.
 
 ---
 

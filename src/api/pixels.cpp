@@ -11,11 +11,26 @@ static String pixelsBodyBuffer;
 // GET /api/v2/pixels — live viz readback. Returns the strip's current
 // perceptual output (see LumeController::copyVizPixels for exactly what that
 // means and why it's NOT leds[]) as {"count":N,"rgb":"rrggbb..."} — one hex
-// triplet per pixel, physical strip order. Read-only, no auth (matches the
-// other GET endpoints); the web UI polls this while its channel viz is
-// visible, so it must stay allocation-light: one heap frame + one reserved
-// String (~9 KB total at MAX_LED_COUNT, transient).
+// triplet per pixel, physical strip order.
+//
+// Auth-gated like every other /api/v2 read (segments list/get, info,
+// controller). It shipped unauthenticated on the claim that it "matches the
+// other GETs" — but the unauthenticated ones are the v1 routes (/api/status,
+// /api/config, /api/nightlight) plus effects/palettes. On a device with an
+// authToken set this was the one v2 read leaking live state (the strip's
+// output at ~10 Hz) to anyone on the LAN. checkAuth is a pass-through when no
+// token is configured, so the default setup is unaffected.
+//
+// The web UI polls this while its channel viz is visible, so it stays
+// allocation-light. Peak transient at MAX_LED_COUNT (1000): a 3 KB pixel
+// frame + a ~6 KB reserved String + the ~6 KB copy AsyncWebServer makes of
+// that String in request->send() ≈ 15 KB, plus TCP buffers. Comfortable
+// against the C3's ~93 KB free heap, and only ~2.5 KB at the 160-LED default.
 void handleApiPixelsGet(AsyncWebServerRequest* request) {
+    if (!checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
     uint16_t ledCount = lume::controller.getLedCount();
     std::unique_ptr<uint8_t[]> px(new uint8_t[ledCount > 0 ? (size_t)ledCount * 3 : 1]);
     uint16_t n = lume::controller.copyVizPixels(px.get(), ledCount);
