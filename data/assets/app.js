@@ -401,22 +401,35 @@ let vizRaf = null;
 const VIZ_POLL_MS = 100;   // ~10 real frames/sec while live
 const VIZ_IDLE_MS = 600;   // retry cadence while there's nothing to stream
 const vizStream = { bytes: null, frames: 0, fpsAt: 0, fps: 0 };
+// Drop the stream and its rate counter. Called whenever the stream isn't live
+// so the first window after a resume measures only real streaming time —
+// previously `frames` carried across a pause (understating the next window)
+// and `fpsAt` stayed 0, making the first reading a rate-since-page-load.
+function vizStreamIdle() {
+  vizStream.bytes = null;
+  vizStream.frames = 0;
+  vizStream.fpsAt = 0;
+  vizStream.fps = 0;
+}
 function vizPoll() {
   if (document.hidden || engine.state.demo || !engine.selectedSegment()) {
-    vizStream.bytes = null;
+    vizStreamIdle();
     setTimeout(vizPoll, VIZ_IDLE_MS);
     return;
   }
   engine.fetchPixels().then((bytes) => {
     vizStream.bytes = bytes;
     if (bytes) {
-      vizStream.frames++;
       const now = performance.now();
+      if (!vizStream.fpsAt) vizStream.fpsAt = now;   // seed on the first frame
+      vizStream.frames++;
       if (now - vizStream.fpsAt >= 1000) {
         vizStream.fps = Math.round((vizStream.frames * 1000) / (now - vizStream.fpsAt)) || 0;
         vizStream.frames = 0;
         vizStream.fpsAt = now;
       }
+    } else {
+      vizStreamIdle();   // device unreachable → fall back to the stand-in cleanly
     }
     setTimeout(vizPoll, bytes ? VIZ_POLL_MS : VIZ_IDLE_MS);
   });
@@ -571,9 +584,16 @@ function vizTick(ts) {
         const c = colorForPixel(seg, eff, i, n, t);
         leds[i].style.background = bright < 0.999 ? mixWithBlack(c, bright) : c;
       }
+      // Repaint the glow from the swatch: if a live stream just dropped, the
+      // last strip-average glow would otherwise persist behind the stand-in
+      // indefinitely (renderVisualizer only repaints on an engine change event,
+      // which may never arrive while the device is unreachable).
+      $("#vizGlow").style.background =
+        `radial-gradient(ellipse at 50% 50%, ${segSwatchCssSolid(seg, eff)}, transparent 70%)`;
       $("#vizFps").textContent = 42 + Math.round(Math.sin(ts / 900) * 3);
     } else if (n) {
       for (let i = 0; i < n; i++) leds[i].style.background = "#050505";
+      $("#vizGlow").style.background = "none";   // powered off: no ghost glow
       $("#vizFps").textContent = "—";
     }
   }
