@@ -210,6 +210,18 @@ static void handleWifiDiagnosticScan() {
         }
         LOG_INFO(LogTag::WIFI, "Diagnostic scan: %d network(s) visible, %u broadcasting \"%s\"",
                  (int)n, (unsigned)matches, config.wifiSSID.c_str());
+        if (matches == 0) {
+            // The target wasn't found — log what the radio CAN hear. This is the
+            // line that separates "the AP is gone/renamed" (many networks listed,
+            // just not ours) from "this radio is deaf" (one or two weak entries,
+            // e.g. the external u.FL antenna knocked off), which the match-only
+            // log above cannot distinguish. Capped so a dense band can't spam.
+            const int16_t kMaxListed = 8;
+            for (int16_t i = 0; i < n && i < kMaxListed; i++) {
+                LOG_INFO(LogTag::WIFI, "  heard: \"%s\" ch %d rssi %d dBm",
+                         WiFi.SSID(i).c_str(), (int)WiFi.channel(i), (int)WiFi.RSSI(i));
+            }
+        }
         WiFi.scanDelete();
         return;
     }
