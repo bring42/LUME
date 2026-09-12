@@ -6,6 +6,7 @@
 #include "../protocols/sacn.h"
 #include "../protocols/mqtt.h"
 #include <WiFi.h>
+#include <esp_wifi.h>   // esp_wifi_scan_stop (cancel a diagnostic scan for a user connect)
 #include <atomic>
 
 // External globals
@@ -25,6 +26,84 @@ void requestWifiConnect() {
 // Access Point settings
 #define AP_SSID "LUME-Setup"
 #define AP_PASSWORD "ledcontrol"
+
+// Diagnostic-scan state, shared between the scan, the reconnect path and the
+// WiFi event handler. A WiFi.begin() issued while a scan runs ABORTS the scan
+// (ESP_ERR_WIFI_STATE), and the Arduino core then reports the truncated result
+// as a finished scan — which logs as "0 networks / one weak entry", the exact
+// deaf-radio signature this diagnostic exists to detect. So the scan and the
+// reconnect are gated against each other, and the IDF's own scan-done status
+// (captured in onWifiEvent) vetoes any result from a scan that didn't complete.
+static bool              diagScanPending = false;
+static unsigned long     diagScanStartMs = 0;
+static std::atomic<bool> diagScanEventSeen{false};  // SCAN_DONE arrived for this scan
+static std::atomic<bool> diagScanFailed{false};     // ...and reported non-zero status
+
+// --- WiFi observability -----------------------------------------------------
+// The IDF reports exactly why a connection attempt failed; without these logs
+// the firmware swallowed every outcome and a failing link just looked idle.
+// Pure logging: no state is mutated here (connect edges are still handled by
+// the handleWifiMaintenance() poll on the loop task). Runs on the WiFi/event
+// task — keep it to log lines only.
+
+// Human-readable names for the disconnect reasons we actually see in the field.
+static const char* wifiReasonName(uint8_t reason) {
+    switch (reason) {
+        case WIFI_REASON_AUTH_EXPIRE:            return "AUTH_EXPIRE";
+        case WIFI_REASON_AUTH_LEAVE:             return "AUTH_LEAVE";
+        case WIFI_REASON_ASSOC_EXPIRE:           return "ASSOC_EXPIRE";
+        case WIFI_REASON_ASSOC_LEAVE:            return "ASSOC_LEAVE";
+        case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: return "4WAY_HANDSHAKE_TIMEOUT (wrong password or weak signal)";
+        case WIFI_REASON_BEACON_TIMEOUT:         return "BEACON_TIMEOUT (lost the AP / weak signal)";
+        case WIFI_REASON_NO_AP_FOUND:            return "NO_AP_FOUND (SSID not visible from here)";
+        case WIFI_REASON_AUTH_FAIL:              return "AUTH_FAIL (wrong password)";
+        case WIFI_REASON_ASSOC_FAIL:             return "ASSOC_FAIL";
+        case WIFI_REASON_HANDSHAKE_TIMEOUT:      return "HANDSHAKE_TIMEOUT";
+        case WIFI_REASON_CONNECTION_FAIL:        return "CONNECTION_FAIL";
+        default:                                 return "(see esp_wifi_types.h)";
+    }
+}
+
+static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+    switch (event) {
+        case ARDUINO_EVENT_WIFI_STA_START:
+            LOG_INFO(LogTag::WIFI, "STA started");
+            break;
+        case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+            LOG_INFO(LogTag::WIFI, "Associated with AP (channel %u) — waiting for IP",
+                     (unsigned)info.wifi_sta_connected.channel);
+            break;
+        case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+            LOG_INFO(LogTag::WIFI, "Got IP: %s (RSSI %d dBm)",
+                     IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str(),
+                     (int)WiFi.RSSI());
+            break;
+        case ARDUINO_EVENT_WIFI_STA_LOST_IP:
+            LOG_WARN(LogTag::WIFI, "Lost IP (DHCP lease gone)");
+            break;
+        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+            LOG_WARN(LogTag::WIFI, "STA disconnected: reason %u %s",
+                     (unsigned)info.wifi_sta_disconnected.reason,
+                     wifiReasonName(info.wifi_sta_disconnected.reason));
+            break;
+        case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+            LOG_INFO(LogTag::WIFI, "Setup-AP client joined (%u client(s)) — STA retries pause while any client is parked here",
+                     (unsigned)WiFi.softAPgetStationNum());
+            break;
+        case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+            LOG_INFO(LogTag::WIFI, "Setup-AP client left (%u client(s) remain)",
+                     (unsigned)WiFi.softAPgetStationNum());
+            break;
+        case ARDUINO_EVENT_WIFI_SCAN_DONE:
+            // status 0 = the scan completed; non-zero = aborted/failed (e.g. by a
+            // connect). Read by handleWifiDiagnosticScan() on the loop task.
+            diagScanFailed.store(info.wifi_scan_done.status != 0);
+            diagScanEventSeen.store(true);
+            break;
+        default:
+            break;
+    }
+}
 
 // Run each time WiFi comes up (initial connect or reconnect): start OTA/mDNS
 // and (re)configure protocols that need the network. setupOTA() is idempotent,
@@ -70,6 +149,9 @@ static void onWifiConnected() {
 }
 
 void setupWiFi() {
+    // Observability first, so even the earliest events are captured.
+    WiFi.onEvent(onWifiEvent);
+
     // Always start AP mode for initial access
     WiFi.mode(WIFI_AP_STA);
     // No modem power-save: this is a mains-powered controller, and WiFi sleep makes
@@ -106,8 +188,97 @@ void setupWiFi() {
     lastWifiAttempt = millis();
 }
 
+// Diagnostic scan while the STA can't connect: every ~95 s, run an async scan
+// and log every BSSID broadcasting the target SSID (channel, RSSI, auth mode).
+// This is the device's own radio's view — it distinguishes "SSID not actually
+// visible from here" / "signal too weak" / "wrong auth mode" / "mesh node that
+// beacons but won't answer auth" in a way no router UI can. Same SoftAP-client
+// guard as the reconnect: a scan channel-hops the AP off the air (see #40).
+static const char* wifiAuthModeName(wifi_auth_mode_t m) {
+    switch (m) {
+        case WIFI_AUTH_OPEN:            return "OPEN";
+        case WIFI_AUTH_WEP:             return "WEP";
+        case WIFI_AUTH_WPA_PSK:         return "WPA_PSK";
+        case WIFI_AUTH_WPA2_PSK:        return "WPA2_PSK";
+        case WIFI_AUTH_WPA_WPA2_PSK:    return "WPA_WPA2_PSK";
+        case WIFI_AUTH_WPA2_ENTERPRISE: return "WPA2_ENTERPRISE";
+        case WIFI_AUTH_WPA3_PSK:        return "WPA3_PSK";
+        case WIFI_AUTH_WPA2_WPA3_PSK:   return "WPA2_WPA3_PSK";
+        default:                        return "?";
+    }
+}
+
+static void handleWifiDiagnosticScan() {
+    if (diagScanPending) {
+        int16_t n = WiFi.scanComplete();
+        if (n == WIFI_SCAN_RUNNING || (n >= 0 && !diagScanEventSeen.load())) {
+            // Still running — or the result count was posted before the scan-done
+            // event (carrying the status) reached onWifiEvent: wait a loop. Bounded,
+            // because the reconnect path holds off while a scan is pending and a
+            // lost event must never wedge it.
+            if (millis() - diagScanStartMs > 15000) {
+                LOG_WARN(LogTag::WIFI, "Diagnostic scan timed out — results discarded");
+                WiFi.scanDelete();
+                diagScanPending = false;
+            }
+            return;
+        }
+        diagScanPending = false;
+        if (n < 0) { LOG_WARN(LogTag::WIFI, "Diagnostic scan failed (%d)", n); return; }
+        if (diagScanFailed.load()) {
+            LOG_INFO(LogTag::WIFI, "Diagnostic scan was interrupted — results discarded (not a real reading)");
+            WiFi.scanDelete();
+            return;
+        }
+        uint8_t matches = 0;
+        for (int16_t i = 0; i < n; i++) {
+            if (WiFi.SSID(i) == config.wifiSSID) {
+                matches++;
+                LOG_INFO(LogTag::WIFI, "  %s: bssid %s ch %d rssi %d dBm auth %s",
+                         config.wifiSSID.c_str(), WiFi.BSSIDstr(i).c_str(),
+                         (int)WiFi.channel(i), (int)WiFi.RSSI(i),
+                         wifiAuthModeName(WiFi.encryptionType(i)));
+            }
+        }
+        LOG_INFO(LogTag::WIFI, "Diagnostic scan: %d network(s) visible, %u broadcasting \"%s\"",
+                 (int)n, (unsigned)matches, config.wifiSSID.c_str());
+        if (matches == 0) {
+            // The target wasn't found — log what the radio CAN hear. This is the
+            // line that separates "the AP is gone/renamed" (many networks listed,
+            // just not ours) from "this radio is deaf" (one or two weak entries,
+            // e.g. the external u.FL antenna knocked off), which the match-only
+            // log above cannot distinguish. Capped so a dense band can't spam.
+            const int16_t kMaxListed = 8;
+            for (int16_t i = 0; i < n && i < kMaxListed; i++) {
+                String ssid = WiFi.SSID(i);
+                ssid = ssid.length() ? ("\"" + ssid + "\"") : String("(hidden)");
+                LOG_INFO(LogTag::WIFI, "  heard: %s ch %d rssi %d dBm",
+                         ssid.c_str(), (int)WiFi.channel(i), (int)WiFi.RSSI(i));
+            }
+        }
+        WiFi.scanDelete();
+        return;
+    }
+
+    if (!wifiConnected && config.wifiSSID.length() > 0 &&
+        WiFi.softAPgetStationNum() == 0 &&
+        millis() - diagScanStartMs > 95000 &&
+        millis() - lastWifiAttempt > 10000) {
+        // Not while a connect attempt is still in flight (a scan disturbs it);
+        // the reconnect path in turn holds off while a scan is pending (see
+        // handleWifiMaintenance), so the two can no longer collide.
+        diagScanStartMs = millis();
+        diagScanPending = true;
+        diagScanFailed.store(false);
+        diagScanEventSeen.store(false);
+        LOG_INFO(LogTag::WIFI, "Starting diagnostic scan for \"%s\"...", config.wifiSSID.c_str());
+        WiFi.scanNetworks(true /*async*/, true /*include hidden*/);
+    }
+}
+
 // Helper function for WiFi reconnection and status monitoring
 void handleWifiMaintenance() {
+    handleWifiDiagnosticScan();
     // User-initiated connect: WiFi credentials were just saved. Fire immediately,
     // even with a client parked on the SoftAP — this is the one scan provisioning
     // NEEDS. The brief AP blip is deliberate; the alternative (waiting for the
@@ -115,6 +286,14 @@ void handleWifiMaintenance() {
     // visibly completes. disconnect() first so a switch away from a currently
     // connected network takes effect too.
     if (staConnectRequested.exchange(false) && config.wifiSSID.length() > 0) {
+        if (diagScanPending) {
+            // A user connect outranks the diagnostic: stop the scan so begin()
+            // isn't rejected mid-scan, and drop its partial results.
+            esp_wifi_scan_stop();
+            WiFi.scanDelete();
+            diagScanPending = false;
+            LOG_INFO(LogTag::WIFI, "Diagnostic scan cancelled for a user-initiated connect");
+        }
         LOG_INFO(LogTag::WIFI, "Credentials changed; connecting to %s", config.wifiSSID.c_str());
         WiFi.disconnect();
         WiFi.begin(config.wifiSSID.c_str(), config.wifiPassword.c_str());
@@ -131,10 +310,29 @@ void handleWifiMaintenance() {
     // returns.
     if (!wifiConnected && config.wifiSSID.length() > 0 &&
         WiFi.softAPgetStationNum() == 0) {
-        if (millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS) {
+        // Hold the retry while a diagnostic scan is pending: begin() would abort
+        // it. lastWifiAttempt is not reset, so the retry fires as soon as the
+        // scan (a few seconds, bounded at 15 s) finishes.
+        if (millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS && !diagScanPending) {
             lastWifiAttempt = millis();
-            LOG_INFO(LogTag::WIFI, "Attempting WiFi reconnection...");
+            LOG_INFO(LogTag::WIFI, "Attempting WiFi reconnection to %s...",
+                     config.wifiSSID.c_str());
             WiFi.begin(config.wifiSSID.c_str(), config.wifiPassword.c_str());
+        }
+    } else if (!wifiConnected && config.wifiSSID.length() > 0 &&
+               millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS) {
+        // Retry is due but deliberately held off: a client is parked on the
+        // setup AP, and a STA scan would channel-hop it off the air (see the
+        // block comment above). Was previously silent — the #1 "it just won't
+        // connect and says nothing" trap. Log it, rate-limited to the retry
+        // interval. lastWifiAttempt is intentionally NOT reset here, so the
+        // retry still fires the moment the AP client leaves.
+        static unsigned long lastSkipLog = 0;
+        if (millis() - lastSkipLog > WIFI_RETRY_INTERVAL_MS) {
+            lastSkipLog = millis();
+            LOG_INFO(LogTag::WIFI,
+                     "Reconnect to %s is due but paused: %u client(s) on the setup AP (a scan would drop them)",
+                     config.wifiSSID.c_str(), (unsigned)WiFi.softAPgetStationNum());
         }
     }
     
