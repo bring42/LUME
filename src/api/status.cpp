@@ -39,14 +39,14 @@ void handleApiStatus(AsyncWebServerRequest* request) {
     doc["version"] = FIRMWARE_VERSION;
     doc["buildHash"] = FIRMWARE_BUILD_HASH;
     doc["uptime"] = millis() / 1000;
-    // `wifi` is an object — the shape API_V2.md documents and both skins (and
+    // `wifi` is an object — the shape API_V2.md documents and the web UI (and
     // the mock dev server) already read; the old string ("Connected"/"AP Mode")
-    // never matched them. `ssid` is the *configured* SSID so the setup page can
+    // never matched it. `ssid` is the *configured* SSID so the setup page can
     // prefill and show connect progress while the device is still AP-only.
     JsonObject wifi = doc["wifi"].to<JsonObject>();
     wifi["connected"] = wifiConnected;
     wifi["ssid"] = config.wifiSSID;
-    // rssi only while connected: the skins treat its presence as "has signal"
+    // rssi only while connected: the UI treats its presence as "has signal"
     // (a literal 0 would render as a full-strength "0 dBm").
     if (wifiConnected) {
         wifi["rssi"] = WiFi.RSSI();

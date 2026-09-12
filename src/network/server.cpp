@@ -338,7 +338,7 @@ void setupServer() {
         if (LittleFS.exists(path)) {
             AsyncWebServerResponse* response =
                 request->beginResponse(LittleFS, path, contentTypeFromPath(path));
-            // HTML entry points (e.g. /euclid/index.html) must revalidate:
+            // HTML entry points (e.g. /index.html) must revalidate:
             // they carry the ?v= cache-busted asset URLs, so a cached page
             // would pin clients to an old asset set.
             if (path.endsWith(".html")) {

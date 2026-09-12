@@ -1,11 +1,12 @@
 /* ==========================================================================
    LUME — shared UI engine  (window.LumeEngine)
    --------------------------------------------------------------------------
-   ONE engine, many skins. Every skin (euclid, console-euclid, …) loads this
-   file first, then its own view script. The view NEVER talks to the network
+   ONE engine, strictly separated from the view. The page loads this file
+   first, then the view script (app.js). The view NEVER talks to the network
    directly — it calls engine methods and re-renders from `engine.state` on the
    "change" event. All device-API correctness lives here, in one place, so the
-   look-and-feel skins cannot drift from the real firmware contract again.
+   look-and-feel layer cannot drift from the real firmware contract again.
+   (See docs/ENGINE_API.md for the contract the view builds against.)
 
    Contract this engine enforces (see docs/API_V2.md):
      • Effects are SCHEMA-DRIVEN. Params are per-effect, discovered at runtime
