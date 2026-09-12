@@ -1385,6 +1385,45 @@ input, button, textarea{ font-family: inherit; color: inherit; }
 }
 .jack-input:disabled{ opacity: 0.4; }
 
+/* <select> wearing the jack-input skin: drop the native chrome, keep a chevron. */
+.jack-select{
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23E8DEC9' stroke-opacity='0.55' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px 14px;
+}
+:root[data-theme="light"] .jack-select{
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23232017' stroke-opacity='0.6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+}
+.jack-select option{
+  background: var(--c-panel);
+  color: var(--c-text);
+}
+
+/* "Restart to apply" strip — shown only while the persisted strip settings
+   differ from what the running firmware is bound to. */
+.hw-apply{
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: var(--hair) dashed var(--c-amber-dim);
+  border-radius: var(--radius-ctl);
+}
+.hw-apply.show{ display: flex; }
+.hw-apply-note{
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-amber);
+}
+
 .jack-eye{
   position: absolute;
   right: 10px;

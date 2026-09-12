@@ -7,6 +7,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include "constants.h"   // LED_GAMMA (seed for the persisted gamma default)
+#include "core/led_hardware.h"   // LedHardware (runtime strip type / order / pin)
 
 // RAII guard for Storage's NVS access. The single Preferences object is shared
 // across tasks (saveLastEffect from the web/AI task vs saveLedState from the
@@ -32,6 +33,7 @@ struct Config {
     String aiModel;               // AI model selection
     String authToken;             // Optional API auth token (empty = no auth)
     uint16_t ledCount;
+    lume::LedHardware ledHardware;   // strip chipset / colour order / data pin (applied at boot)
     uint8_t defaultBrightness;
     float gamma;                  // Perceptual-dimming exponent (see LED_GAMMA)
     float warmth;                 // Dim-to-warm strength [0..1] (see LED_WARMTH_*)
@@ -57,6 +59,7 @@ struct Config {
         aiModel(AI_MODEL_DEFAULT),
         authToken(""),
         ledCount(160),
+        ledHardware(lume::LedHardware::defaults()),
         defaultBrightness(128),
         gamma(LED_GAMMA),
         warmth(LED_WARMTH_DEFAULT),
@@ -100,8 +103,10 @@ public:
     // Export config to JSON (with optional API key masking)
     void configToJson(const Config& config, JsonDocument& doc, bool maskApiKey = true);
     
-    // Import config from JSON
-    bool configFromJson(Config& config, const JsonDocument& doc);
+    // Import config from JSON. Validates the LED hardware fields (ledType /
+    // ledColorOrder / ledPin) BEFORE touching `config`: returns false, with the
+    // offending field named in `error`, and leaves the config untouched.
+    bool configFromJson(Config& config, const JsonDocument& doc, String* error = nullptr);
 
 private:
     Preferences prefs;

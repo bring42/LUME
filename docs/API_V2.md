@@ -375,12 +375,15 @@ Lightweight metadata for UIs to discover firmware details and capability limits.
     "aiPrompts": true,
     "ota": true
   },
-  "controller": { "ledCount": 160, "power": true }
+  "controller": { "ledCount": 160, "ledType": "WS2812B", "ledColorOrder": "GRB", "ledPin": 2, "power": true }
 }
 ```
 
 `limits.maxLeds` is the compile-time `MAX_LED_COUNT` (default 1000). `features.sacn` and
 `features.mqtt` reflect the current config (whether each is enabled), not just build support.
+`controller.ledType` / `ledColorOrder` / `ledPin` are the strip hardware the output driver is
+**bound to this boot**; the persisted selection (which may differ until a restart) is in
+`GET /api/config`.
 
 ---
 
@@ -416,6 +419,17 @@ Get device configuration (passwords/API keys masked).
 {
   "wifiSSID": "MyNetwork",
   "ledCount": 160,
+  "ledType": "WS2812B",
+  "ledColorOrder": "GRB",
+  "ledPin": 2,
+  "ledActive":  { "ledType": "WS2812B", "ledColorOrder": "GRB", "ledPin": 2, "ledCount": 160 },
+  "ledOptions": {
+    "types": [ { "id": "WS2812B", "name": "WS2812B / WS2812 (800 kHz)" },
+               { "id": "SK6812_RGBW", "name": "SK6812 RGBW", "rgbw": true }, "..." ],
+    "colorOrders": [ "RGB", "RBG", "GRB", "GBR", "BRG", "BGR" ],
+    "pins": [ 0, 1, 2, "..." ],
+    "strappingPins": [ 0, 3, 45, 46 ]
+  },
   "aiApiKey": "****",
   "aiApiKeySet": true,
   "aiModel": "claude-haiku-4-5",
@@ -425,6 +439,23 @@ Get device configuration (passwords/API keys masked).
   "mqttPort": 1883
 }
 ```
+
+**LED hardware** — the strip chipset, colour byte order and data pin are runtime settings
+(persisted in NVS, no reflash):
+
+- `ledType` — one of `ledOptions.types[].id`: `WS2812B` (also WS2812 / WS2852 / GS1903),
+  `WS2811`, `WS2813`, `WS2815`, `SK6812`, `SK6812_RGBW`, `SK6822` (also APA106),
+  `WS2811_400`, `UCS1903`, `UCS1904`, `SM16703`, `TM1809`, `PL9823`. Bit timings mirror FastLED's
+  `chipsets.h`. `rgbw: true` entries drive 4-byte pixels; white is derived from RGB
+  (FastLED's default Rgbw mode) — the pipeline is RGB-only upstream.
+- `ledColorOrder` — the byte order on the wire (`GRB` for WS2812B, `RGB` for most WS2811).
+- `ledPin` — must be one of `ledOptions.pins`: the GPIOs this chip may drive, excluding the
+  flash/PSRAM bus, the native-USB pair and unbonded numbers. Strapping pins are listed (they
+  work once booted) and flagged in `strappingPins`.
+- `ledActive` — what the running firmware is **actually bound to**; differs from the persisted
+  values above until the next restart (`POST /api/restart`).
+- `ledOptions` is per build/chip (the S3 and C3 pin lists differ). A UI should populate its
+  controls from it rather than hardcoding.
 
 ### POST /api/config
 
@@ -436,6 +467,9 @@ Update device configuration.
   "wifiSSID": "NewNetwork",
   "wifiPassword": "newpass",
   "ledCount": 160,
+  "ledType": "SK6812",
+  "ledColorOrder": "GRB",
+  "ledPin": 4,
   "aiApiKey": "sk-ant-...",
   "aiModel": "claude-haiku-4-5",
   "sacnEnabled": true,
@@ -448,8 +482,18 @@ Update device configuration.
 - Omit password fields to leave unchanged.
 - Protocol changes (sACN/MQTT) are re-applied through the bus via a `ReconfigureProtocols`
   command on the render loop — not live from the web task.
-- `ledCount` changes are deferred and take effect on reboot (P0.8). WiFi changes restart the
-  device.
+- `ledCount`, `ledType`, `ledColorOrder` and `ledPin` are deferred and take effect on reboot
+  (P0.8 — the output driver binds pins/peripherals once, at boot). Use `POST /api/restart`.
+  WiFi changes make the device try the new network immediately.
+- An unknown `ledType`/`ledColorOrder`, or a `ledPin` outside `ledOptions.pins`, is rejected
+  with **400** `{"error": "ledPin: not a usable LED data pin on this chip"}` before *any*
+  field of the request is applied.
+
+### POST /api/restart
+
+Reboot the device so boot-time settings (LED hardware, `ledCount`) take effect. Requires auth
+when a token is configured. Replies **202** `{"status":"restarting"}` first; the reboot runs
+from the loop task ~250 ms later (a pending segment-layout save is flushed on the way out).
 
 ### POST /api/pixels
 

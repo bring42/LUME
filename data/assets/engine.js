@@ -420,6 +420,17 @@
       ];
       state.selectedId = 0;
       state.info = { firmware: { name: "LUME", version: "demo", buildHash: "demo" }, limits: { maxLeds: 1000, maxSegments: 8 }, features: {} };
+      state.config = {
+        ledCount: 300, ledType: "WS2812B", ledColorOrder: "GRB", ledPin: 2,
+        ledActive: { ledCount: 300, ledType: "WS2812B", ledColorOrder: "GRB", ledPin: 2 },
+        ledOptions: {
+          types: [{ id: "WS2812B", name: "WS2812B / WS2812 (800 kHz)" }, { id: "WS2811", name: "WS2811 (800 kHz, 12 V)" },
+                  { id: "SK6812", name: "SK6812 (RGB)" }, { id: "SK6812_RGBW", name: "SK6812 RGBW", rgbw: true }],
+          colorOrders: ["RGB", "RBG", "GRB", "GBR", "BRG", "BGR"],
+          pins: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 21, 38, 45, 46, 47, 48],
+          strappingPins: [0, 3, 45, 46]
+        }
+      };
     }
 
     /* ---- bootstrap ---- */
@@ -798,6 +809,14 @@
     }
 
     /* ---- config (settings view) ---- */
+    // Reboot the device (POST /api/restart). Boot-time settings — strip type /
+    // colour order / data pin and ledCount — only take effect on the way back
+    // up; nothing else needs this. Resolves { ok } like saveConfig.
+    function restart() {
+      if (state.demo) return Promise.resolve({ ok: true, demo: true });
+      return writeJson("/api/restart", "POST", {}).then(function () { return { ok: true }; },
+        function (err) { return { ok: false, status: err.status }; });
+    }
     function getConfig() {
       return apiFetch("/api/config").then(function (c) { state.config = c; notify(); return c; },
         function () { return null; });
@@ -954,6 +973,7 @@
       sendPrompt: sendPrompt,
       getConfig: getConfig,
       saveConfig: saveConfig,
+      restart: restart,
       getGamma: getGamma,
       setGamma: setGamma,
       getWarmth: getWarmth,

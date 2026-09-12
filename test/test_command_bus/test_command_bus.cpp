@@ -608,7 +608,7 @@ struct MockOutput : ILedOutput {
     uint8_t lastBrightness = 0;
     CRGB lastCorrection = CRGB(255, 255, 255);
     CRGB lastTemperature = CRGB(255, 255, 255);
-    void begin(CRGB*, uint16_t) override { begins++; }
+    void begin(CRGB*, uint16_t, const LedHardware&) override { begins++; }
     void show() override { shows++; }
     void setBrightness(uint8_t b) override { lastBrightness = b; }
     void setCorrection(CRGB c) override { lastCorrection = c; }

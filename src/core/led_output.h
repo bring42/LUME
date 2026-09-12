@@ -2,6 +2,7 @@
 #define LUME_LED_OUTPUT_H
 
 #include <FastLED.h>  // CRGB
+#include "led_hardware.h"
 
 namespace lume {
 
@@ -18,8 +19,10 @@ class ILedOutput {
 public:
     virtual ~ILedOutput() = default;
 
-    // Bind the controller-owned pixel buffer + length (once, at startup).
-    virtual void begin(CRGB* leds, uint16_t count) = 0;
+    // Bind the controller-owned pixel buffer + length to the selected hardware
+    // (chipset / colour order / data pin) — once, at startup. Changing the
+    // hardware later means a reboot: drivers bind pins and peripherals here.
+    virtual void begin(CRGB* leds, uint16_t count, const LedHardware& hw) = 0;
 
     // Push the current buffer contents to the physical strip.
     virtual void show() = 0;

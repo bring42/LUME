@@ -492,6 +492,12 @@ void handleApiV2Info(AsyncWebServerRequest* request) {
     
     JsonObject controllerInfo = doc["controller"].to<JsonObject>();
     controllerInfo["ledCount"] = lume::controller.getLedCount();
+    // The hardware the output driver is bound to (what's actually driving the
+    // wire this boot — the persisted selection lives in GET /api/config).
+    const lume::LedHardware& hw = lume::controller.getLedHardware();
+    controllerInfo["ledType"] = lume::ledChipsetKey(hw.chipset);
+    controllerInfo["ledColorOrder"] = lume::ledColorOrderKey(hw.order);
+    controllerInfo["ledPin"] = hw.pin;
     controllerInfo["power"] = lume::controller.getTargetPower();
     
     String output;

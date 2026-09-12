@@ -188,6 +188,8 @@ void setupServer() {
         NULL,
         handleApiConfigPost
     );
+    // Reboot so boot-time settings (LED hardware, ledCount) take effect.
+    server.on("/api/restart", HTTP_POST, handleApiRestart);
     
     // Direct pixel control endpoint
     server.on("/api/pixels", HTTP_POST,

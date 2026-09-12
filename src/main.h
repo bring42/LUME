@@ -42,6 +42,11 @@ void sendUnauthorized(AsyncWebServerRequest* request);
 bool beginBody(AsyncWebServerRequest* request);
 void endBody(AsyncWebServerRequest* request);
 
+// Deferred reboot: set from a web handler (POST /api/restart), honoured by the
+// loop task at the end of its next pass — after the response has gone out and
+// with no render/protocol code mid-frame.
+void requestRestart();
+
 // ===========================================================================
 // API Handler Functions - Main Routes
 // ===========================================================================
