@@ -46,9 +46,9 @@ public:
     
     // Set the LED range for this segment. Points the view at the fixed inline
     // pad (any borrowed workbuffer is dropped — the caller re-borrows if needed).
-    void setRange(CRGB* leds, uint16_t start, uint16_t length, bool reversed = false) {
+    void setRange(CRGB16* canvas, uint16_t start, uint16_t length, bool reversed = false) {
         externalScratchpad_ = false;
-        view = SegmentView(leds, start, length, reversed, scratchpad, SCRATCHPAD_SIZE);
+        view = SegmentView(canvas, start, length, reversed, scratchpad, SCRATCHPAD_SIZE);
         active = true;
         // A range change (esp. a live resize) re-points the view at the inline
         // pad; reset effect state so the effect re-inits for the new pixel span
@@ -275,7 +275,7 @@ public:
         // remap-safe (P1.4) — the same reason effects never touch a raw pointer.
         if (brightness < 255) {
             for (uint16_t i = 0; i < view.size(); i++) {
-                view[i].nscale8(brightness);
+                view[i] = scale(view[i], brightness);
             }
         }
     }

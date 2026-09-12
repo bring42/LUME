@@ -264,11 +264,21 @@ function renderTabs() {
     tab.className = "strip-tab" + (seg.id === engine.state.selectedId ? " active" : "");
     tab.type = "button";
     tab.innerHTML = `
-      <div class="tab-id"><span>CH ${seg.id + 1}</span><span>${seg.length}px</span></div>
+      <div class="tab-id">
+        <span>CH ${seg.id + 1} · ${seg.length}px</span>
+        <span class="tab-cog" role="button" tabindex="-1" aria-label="Channel settings">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+        </span>
+      </div>
       <div class="tab-name">${eff ? eff.name : seg.effect}</div>
       <div class="tab-bar"><i style="background:${segSwatchCss(seg)}"></i></div>
     `;
     tab.addEventListener("click", () => engine.selectSegment(seg.id));
+    tab.querySelector(".tab-cog").addEventListener("click", (e) => {
+      e.stopPropagation();
+      engine.selectSegment(seg.id);
+      openSegPopover(seg.id);
+    });
     wrap.appendChild(tab);
   });
 
@@ -329,9 +339,30 @@ function deleteActiveChannel() {
   const seg = engine.selectedSegment();
   if (!seg) return;
   engine.deleteSegment(seg.id);
+  closeSegPopover();
   showToast(`CH ${seg.id + 1} removed`);
 }
 $("#deleteChannelBtn").addEventListener("click", deleteActiveChannel);
+
+/* Per-channel settings popover — opened by the ⋯ on a tab. Holds the channel's
+   range editor + remove (moved out of the Controls card). The inputs keep their
+   ids, so the range/delete wiring below is unchanged; the popover always targets
+   the selected channel (the ⋯ selects it before opening). */
+function openSegPopover(segId) {
+  const seg = engine.segmentById(segId);
+  if (!seg) return;
+  const eff = engine.effectById(seg.effect);
+  $("#segPopTitle").textContent = "CH " + (seg.id + 1);
+  $("#segPopSub").textContent = eff ? eff.name : String(seg.effect);
+  $("#segPopBackdrop").classList.add("show");
+  $("#segPopover").classList.add("show");
+}
+function closeSegPopover() {
+  $("#segPopBackdrop").classList.remove("show");
+  $("#segPopover").classList.remove("show");
+}
+$("#segPopBackdrop").addEventListener("click", closeSegPopover);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSegPopover(); });
 
 // Editable segment boundaries. Commit on change (blur / Enter); the engine
 // clamps to the strip and PUTs {start}/{length}. Enter blurs to commit.
@@ -915,6 +946,10 @@ function formatUptime(seconds) {
 }
 
 let settingsLoaded = false;
+// True once the user types in the SSID field; blocks the status-poll prefill
+// from overwriting their input. Cleared on a successful save (the configured
+// SSID is then what they typed, so tracking may resume).
+let wifiSsidEdited = false;
 function loadSettingsView() {
   renderSettingsFromState();
   if (settingsLoaded) return;
@@ -943,7 +978,13 @@ function renderSettingsFromState() {
       if (t) $("#dUptime").textContent = t;
     }
     if (status.ip) $("#dIp").textContent = status.ip;
-    if (status.wifi && status.wifi.ssid) $("#wifiSsid").value = status.wifi.ssid;
+    // Prefill the configured SSID only until the user edits the field. This
+    // re-runs on every status poll, and a focus check alone is not enough:
+    // mobile blurs the input when the keyboard closes (or the user taps the
+    // password field), and the next poll would stomp the typed SSID.
+    if (status.wifi && status.wifi.ssid && !wifiSsidEdited) {
+      $("#wifiSsid").value = status.wifi.ssid;
+    }
     if (status.wifi && status.wifi.rssi != null) {
       $("#dRssi").textContent = status.wifi.rssi + " dBm";
       const pct = clamp((status.wifi.rssi + 90) / 60, 0, 1);
@@ -1012,18 +1053,22 @@ $("#ledCount").addEventListener("change", (e) => {
   });
 });
 
-// WiFi changes restart the device — require an explicit confirm, and never
-// send a blank password (omit it to keep the current one).
+// WiFi changes make the device try the new network immediately (no restart) —
+// require an explicit confirm, and never send a blank password (omit it to
+// keep the current one). Key is "wifiSSID": the exact spelling the firmware
+// parses (case-sensitive).
+$("#wifiSsid").addEventListener("input", () => { wifiSsidEdited = true; });
 $("#wifiSave").addEventListener("click", () => {
   const ssid = $("#wifiSsid").value.trim();
   const pass = $("#wifiPass").value;
   if (!ssid) { showToast("SSID cannot be empty"); return; }
-  const proceed = window.confirm("Apply Wi-Fi settings and restart the device now?");
+  const proceed = window.confirm("Apply Wi-Fi settings? The device will try to join this network now (you may briefly drop off the setup AP).");
   if (!proceed) return;
-  const body = { wifiSsid: ssid };
+  const body = { wifiSSID: ssid };
   if (pass) body.wifiPassword = pass;
   engine.saveConfig(body).then((res) => {
-    showToast(res.ok ? "Wi-Fi settings applied — device restarting" : "Failed to save Wi-Fi settings");
+    if (res.ok) wifiSsidEdited = false;
+    showToast(res.ok ? "Wi-Fi settings saved — device connecting…" : "Failed to save Wi-Fi settings");
   });
 });
 
@@ -1062,18 +1107,18 @@ $("#sacnUniverse").addEventListener("change", (e) => {
   });
 });
 
-// OTA: real pull-based update, with the firmware and the web UI (filesystem) as
-// two INDEPENDENT actions (mirroring `pio run -t upload` vs `-t uploadfs`). One
-// unified check reveals what's available; each action then runs its own
-// confirm → progress → reboot. The device does the work asynchronously (engine
-// polls /api/firmware/status); this just drives the buttons/status/progress.
+// OTA: real pull-based update. Firmware and web UI (filesystem) are one
+// versioned release and update ATOMICALLY — a single check reveals whether
+// anything is behind, and one "Install Update" flashes whatever's stale (fs +
+// app) and reboots once. No half-updates. The device does the work
+// asynchronously (engine polls /api/firmware/status); this drives the button,
+// status text, and progress bar.
 (function wireOta() {
   const btn = $("#otaBtn");
   if (!btn) return;
   const statusEl = $("#otaStatus");
   const actions = $("#otaActions");
-  const btnApp = $("#otaBtnApp");
-  const btnFs = $("#otaBtnFs");
+  const btnUpdate = $("#otaBtnUpdate");
   const wrap = $("#otaProgressWrap");
   const fill = $("#otaProgressFill");
   let busy = false;
@@ -1085,29 +1130,7 @@ $("#sacnUniverse").addEventListener("change", (e) => {
   function showActions(show) { if (actions) actions.style.display = show ? "flex" : "none"; }
   function setBusy(on) {
     busy = on;
-    btn.disabled = on; if (btnApp) btnApp.disabled = on; if (btnFs) btnFs.disabled = on;
-  }
-
-  // Run one independent apply action (app or fs). `apply` is the engine method.
-  function runApply(kind, apply, label) {
-    setBusy(true);
-    if (statusEl) statusEl.textContent = "Installing " + label + "…";
-    setProgress(0);
-    apply((st) => {
-      if (!st) return;
-      if (st.percent != null) setProgress(st.percent);
-      if (statusEl) statusEl.textContent = "Installing " + label +
-        (st.stage ? " (" + st.stage + ")" : "") + "… " + (st.percent || 0) + "%";
-    }).then((final) => {
-      if (!final || final.phase === "rebooting") {
-        if (statusEl) statusEl.textContent = label + " installed — device rebooting. Reload in ~30 s.";
-        setProgress(100);
-        showToast(label + " updated — rebooting");
-      } else {
-        if (statusEl) statusEl.textContent = label + " update failed" + (final.error ? ": " + final.error : "");
-        setProgress(null); setBusy(false);
-      }
-    });
+    btn.disabled = on; if (btnUpdate) btnUpdate.disabled = on;
   }
 
   btn.addEventListener("click", () => {
@@ -1123,32 +1146,40 @@ $("#sacnUniverse").addEventListener("change", (e) => {
         if (statusEl) statusEl.textContent = "Check failed" + (s && s.error ? ": " + s.error : "");
         return;
       }
-      if (!s.appAvailable && !s.fsAvailable) {
+      if (!s.updateAvailable) {
         if (statusEl) statusEl.textContent = "Up to date (v" + (s.current || "?") + "). Last checked just now.";
         return;
       }
       if (statusEl) statusEl.textContent = "Update available: v" + s.latest +
-        (s.notes ? " — " + s.notes : "") + ". Choose what to install.";
-      if (btnApp) btnApp.disabled = !s.appAvailable;
-      if (btnFs) btnFs.disabled = !s.fsAvailable;
+        (s.notes ? " — " + s.notes : "") + ".";
       showActions(true);
     });
   });
 
-  if (btnApp) btnApp.addEventListener("click", () => {
-    if (busy || btnApp.disabled) return;
-    if (!window.confirm("Update the device FIRMWARE now?\n\nThe device will reboot and be " +
-      "briefly offline. Firmware updates are A/B-protected — a failed download can't brick it. " +
-      "Do NOT power it off during the update.")) return;
-    runApply("app", engine.updateFirmware, "Firmware");
-  });
+  if (btnUpdate) btnUpdate.addEventListener("click", () => {
+    if (busy || btnUpdate.disabled) return;
+    if (!window.confirm("Install the update now?\n\nThis flashes the firmware and web UI together, then " +
+      "the device reboots and is briefly offline. Firmware is A/B-protected — a failed download can't " +
+      "brick it. Do NOT power it off during the update.")) return;
 
-  if (btnFs) btnFs.addEventListener("click", () => {
-    if (busy || btnFs.disabled) return;
-    if (!window.confirm("Update the WEB UI (filesystem) now?\n\nThe device will reboot and be " +
-      "briefly offline. If interrupted, the UI may need re-flashing (recoverable). " +
-      "Do NOT power it off during the update.")) return;
-    runApply("fs", engine.updateWebUi, "Web UI");
+    setBusy(true);
+    if (statusEl) statusEl.textContent = "Installing update…";
+    setProgress(0);
+    engine.applyUpdate((st) => {
+      if (!st) return;
+      if (st.percent != null) setProgress(st.percent);
+      if (statusEl) statusEl.textContent = "Installing update" +
+        (st.stage ? " (" + st.stage + ")" : "") + "… " + (st.percent || 0) + "%";
+    }).then((final) => {
+      if (!final || final.phase === "rebooting") {
+        if (statusEl) statusEl.textContent = "Update installed — device rebooting. Reload in ~30 s.";
+        setProgress(100);
+        showToast("Update installed — rebooting");
+      } else {
+        if (statusEl) statusEl.textContent = "Update failed" + (final.error ? ": " + final.error : "");
+        setProgress(null); setBusy(false);
+      }
+    });
   });
 })();
 
@@ -1340,10 +1371,140 @@ engine.on("change", renderAll);
 engine.on("connection", renderLinkStatus);
 
 /* ---------------------------------------------------------------------
+   Modules — collapsible + drag-reorderable main-view panels.
+   Every main-view block carries data-module + a .module-head (which is
+   both the drag handle and the collapse toggle host). Order and collapse
+   state persist in localStorage so a user's layout survives reloads.
+   Pure DOM sugar — no device wiring here; all element IDs are untouched
+   so the engine bindings keep working regardless of order.
+   -------------------------------------------------------------------- */
+
+function initModules() {
+  const view = $("#viewMain");
+  if (!view) return;
+
+  const KEY_ORDER = "lume.console.moduleOrder";
+  const KEY_COLLAPSED = "lume.console.moduleCollapsed";
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} },
+  };
+
+  const modules = () => $$("#viewMain > [data-module]");
+
+  // Restore saved order. Saved modules are re-appended in order; any module
+  // not in the saved list (e.g. one added in a future version) is left where
+  // it is and so surfaces ahead of the restored ones until reordered.
+  const savedOrder = store.get(KEY_ORDER);
+  if (Array.isArray(savedOrder)) {
+    const byId = new Map(modules().map((m) => [m.dataset.module, m]));
+    savedOrder.forEach((id) => { const el = byId.get(id); if (el) view.appendChild(el); });
+  }
+  const saveOrder = () => store.set(KEY_ORDER, modules().map((m) => m.dataset.module));
+
+  // Restore + wire collapse state.
+  const savedCollapsed = store.get(KEY_COLLAPSED);
+  const collapsed = new Set(Array.isArray(savedCollapsed) ? savedCollapsed : []);
+  const saveCollapsed = () => store.set(KEY_COLLAPSED, Array.from(collapsed));
+
+  let dragEl = null;
+
+  modules().forEach((mod) => {
+    const id = mod.dataset.module;
+    const head = mod.querySelector(".module-head");
+    const btn = mod.querySelector(".module-collapse");
+
+    if (collapsed.has(id)) {
+      mod.classList.add("is-collapsed");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    }
+
+    if (btn) btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const nowCollapsed = mod.classList.toggle("is-collapsed");
+      btn.setAttribute("aria-expanded", nowCollapsed ? "false" : "true");
+      if (nowCollapsed) collapsed.add(id); else collapsed.delete(id);
+      saveCollapsed();
+    });
+
+    if (head) {
+      head.setAttribute("draggable", "true");
+      head.addEventListener("dragstart", (e) => {
+        dragEl = mod;
+        mod.classList.add("is-dragging");
+        view.classList.add("modules-dragging");
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = "move";
+          try { e.dataTransfer.setData("text/plain", id); } catch (_) {}
+        }
+      });
+      head.addEventListener("dragend", () => {
+        mod.classList.remove("is-dragging");
+        view.classList.remove("modules-dragging");
+        dragEl = null;
+        saveOrder();
+      });
+    }
+  });
+
+  view.addEventListener("dragover", (e) => {
+    if (!dragEl) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    const target = e.target.closest("[data-module]");
+    if (!target || target === dragEl || target.parentElement !== view) return;
+    const rect = target.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height / 2;
+    view.insertBefore(dragEl, before ? target : target.nextElementSibling);
+  });
+  view.addEventListener("drop", (e) => { if (dragEl) e.preventDefault(); });
+}
+
+/* ---------------------------------------------------------------------
+   Theme — Auto / Light / Dark. The <head> inline script sets the initial
+   resolved data-theme before first paint (no flash); this wires the
+   Settings control, persists the preference, and re-resolves "auto" live
+   when the system scheme changes.
+   -------------------------------------------------------------------- */
+
+function initTheme() {
+  const KEY = "lume.console.theme";
+  const root = document.documentElement;
+  const mq = window.matchMedia("(prefers-color-scheme: light)");
+  const store = {
+    get() { try { return localStorage.getItem(KEY); } catch (_) { return null; } },
+    set(v) { try { localStorage.setItem(KEY, v); } catch (_) {} },
+  };
+
+  let pref = store.get() || "auto"; // "auto" | "light" | "dark"
+  const btns = $$("#themeSeg .theme-seg-btn");
+
+  const resolve = (p) => (p === "auto" ? (mq.matches ? "light" : "dark") : p);
+  const apply = () => {
+    root.setAttribute("data-theme", resolve(pref));
+    btns.forEach((b) => b.classList.toggle("active", b.dataset.themeChoice === pref));
+  };
+
+  btns.forEach((b) => b.addEventListener("click", () => {
+    pref = b.dataset.themeChoice;
+    store.set(pref);
+    apply();
+  }));
+
+  const onSystemChange = () => { if (pref === "auto") apply(); };
+  if (mq.addEventListener) mq.addEventListener("change", onSystemChange);
+  else if (mq.addListener) mq.addListener(onSystemChange); // older Safari
+
+  apply();
+}
+
+/* ---------------------------------------------------------------------
    Bootstrap
    -------------------------------------------------------------------- */
 
 requestAnimationFrame(() => {
+  initTheme();
+  initModules();
   engine.start().then(() => {
     if (engine.state.demo) {
       showToast("Demo mode — no device found, using sample data");

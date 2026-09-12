@@ -164,5 +164,7 @@ Add or extend a `test_<area>` suite (and the stubs in `test/stubs/`) when you ch
 
 ## Known Residuals
 
-Scenes are not implemented (P1.6): the backend was removed and the UI route 404s — implement or
-remove, don't assume it works.
+None outstanding. The last one — the day-one scene half-build (Storage backend + 404'ing UI),
+orphaned by the mid-project core swap — was removed in #27, not wired. Presets/scenes remain a
+deferred future feature to be rebuilt on the command/`EffectSpec` model; no scene code exists
+today, so don't assume any does.

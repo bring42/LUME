@@ -1,8 +1,9 @@
 #ifndef LUME_SEGMENT_VIEW_H
 #define LUME_SEGMENT_VIEW_H
 
-#include <FastLED.h>
+#include <FastLED.h>       // CRGB / CHSV (effect-facing colour inputs)
 #include "region.h"
+#include "render16.h"      // CRGB16 — the 16-bit render backing (premium substrate)
 
 namespace lume {
 
@@ -57,7 +58,7 @@ constexpr size_t MAX_EFFECT_STATE =
  * - Debug bounds checking
  */
 struct SegmentView {
-    CRGB* base;           // Pointer to controller's LED array base
+    CRGB16* base;         // Pointer to controller's 16-bit canvas base
     Region region;        // Which pixels this segment covers (P1.3)
     bool reversed;        // Run effect in reverse direction?
     uint8_t* scratchpad;  // Pointer to the segment's active scratchpad
@@ -68,24 +69,25 @@ struct SegmentView {
         : base(nullptr), region(), reversed(false)
         , scratchpad(nullptr), scratchpadCapacity(0) {}
 
-    // Construct view from LED array base. `scratchCap` is the size of the buffer
-    // at `scratch`; it defaults to the fixed per-segment pad (SCRATCHPAD_SIZE),
-    // but a 2D/large-state segment may point at a bigger borrowed buffer (P1.5).
-    SegmentView(CRGB* ledArray, uint16_t startIdx, uint16_t len, bool rev = false,
+    // Construct view from the 16-bit canvas base. `scratchCap` is the size of the
+    // buffer at `scratch`; it defaults to the fixed per-segment pad
+    // (SCRATCHPAD_SIZE), but a 2D/large-state segment may point at a bigger
+    // borrowed buffer (P1.5).
+    SegmentView(CRGB16* canvas, uint16_t startIdx, uint16_t len, bool rev = false,
                 uint8_t* scratch = nullptr, uint16_t scratchCap = SCRATCHPAD_SIZE)
-        : base(ledArray)
+        : base(canvas)
         , region(startIdx, len)
         , reversed(rev)
         , scratchpad(scratch)
         , scratchpadCapacity(scratch ? scratchCap : 0) {}
 
     // Indexed access - handles reversal transparently
-    CRGB& operator[](uint16_t i) {
+    CRGB16& operator[](uint16_t i) {
         uint16_t idx = reversed ? (region.length - 1 - i) : i;
         return base[region.start + idx];
     }
 
-    const CRGB& operator[](uint16_t i) const {
+    const CRGB16& operator[](uint16_t i) const {
         uint16_t idx = reversed ? (region.length - 1 - i) : i;
         return base[region.start + idx];
     }
@@ -99,33 +101,45 @@ struct SegmentView {
     // operator[] already applies reversal, so the primitives address the segment
     // in logical order (index 0 = first pixel the effect sees).
 
-    void fill(CRGB color) {
+    // Convert an 8-bit effect colour (params, CHSV) to the 16-bit canvas domain.
+    static CRGB16 c16(const CRGB& c) { return CRGB16::fromRGB8(c.r, c.g, c.b); }
+
+    void fill(CRGB16 color) {
         for (uint16_t i = 0; i < region.length; i++) (*this)[i] = color;
     }
+    void fill(const CRGB& color) { fill(c16(color)); }
 
-    void fill(CRGB color, uint16_t offset, uint16_t count) {
+    void fill(CRGB16 color, uint16_t offset, uint16_t count) {
         if (offset >= region.length) return;
         uint16_t actualCount = min(count, (uint16_t)(region.length - offset));
         for (uint16_t i = 0; i < actualCount; i++) (*this)[offset + i] = color;
     }
-
-    void clear() {
-        for (uint16_t i = 0; i < region.length; i++) (*this)[i] = CRGB::Black;
+    void fill(const CRGB& color, uint16_t offset, uint16_t count) {
+        fill(c16(color), offset, count);
     }
 
+    void clear() {
+        for (uint16_t i = 0; i < region.length; i++) (*this)[i] = CRGB16();
+    }
+
+    // Fade toward black: amount 0 = unchanged, 255 = black.
     void fade(uint8_t amount) {
-        for (uint16_t i = 0; i < region.length; i++) (*this)[i].fadeToBlackBy(amount);
+        uint8_t keep = 255 - amount;
+        for (uint16_t i = 0; i < region.length; i++) (*this)[i] = scale((*this)[i], keep);
     }
 
     // Logical gradient: index 0 is startColor, index size()-1 is endColor. Because
     // operator[] applies any reversal, we no longer swap the endpoints by hand.
-    void gradient(CRGB startColor, CRGB endColor) {
+    void gradient(CRGB16 startColor, CRGB16 endColor) {
         if (region.length == 0) return;
         if (region.length == 1) { (*this)[0] = startColor; return; }
         for (uint16_t i = 0; i < region.length; i++) {
-            uint8_t frac = (uint8_t)((uint16_t)i * 255 / (region.length - 1));
-            (*this)[i] = blend(startColor, endColor, frac);
+            uint16_t frac = (uint16_t)((uint32_t)i * 65535 / (region.length - 1));
+            (*this)[i] = blend16(startColor, endColor, frac);
         }
+    }
+    void gradient(const CRGB& startColor, const CRGB& endColor) {
+        gradient(c16(startColor), c16(endColor));
     }
 
     // Logical rainbow: index 0 is startHue, advancing by deltaHue. operator[]
@@ -133,8 +147,28 @@ struct SegmentView {
     void rainbow(uint8_t startHue, uint8_t deltaHue = 5) {
         uint8_t hue = startHue;
         for (uint16_t i = 0; i < region.length; i++) {
-            (*this)[i] = CHSV(hue, 255, 255);
+            (*this)[i] = c16(CRGB(CHSV(hue, 255, 255)));
             hue += deltaHue;
+        }
+    }
+
+    // --- Subpixel motion (Wu point) ---
+    // Draw an anti-aliased point at a 16.16 fixed-point position (in logical pixel
+    // units): the integer part picks the near LED, the 16-bit fraction splits the
+    // colour's brightness across it and its neighbour, and the result is ADDED
+    // (saturating) to whatever is already there. This is THE premium-motion
+    // primitive — a moving point tracks position in fixed point and eases across
+    // the strip instead of jumping whole LEDs. Writes through operator[], so it is
+    // remap-safe; a point straddling the far edge contributes only its in-range
+    // half (no wrap). Clear or fade the canvas first, then add points/trails.
+    void addWuPoint(uint32_t posFixed, CRGB16 color) {
+        uint16_t i = (uint16_t)(posFixed >> 16);
+        uint16_t f = (uint16_t)(posFixed & 0xFFFF);   // fraction toward the next pixel
+        if (i < region.length) {
+            (*this)[i] = addSat((*this)[i], scale16(color, (uint16_t)(65535u - f)));
+        }
+        if ((uint32_t)i + 1 < region.length) {
+            (*this)[i + 1] = addSat((*this)[i + 1], scale16(color, f));
         }
     }
 

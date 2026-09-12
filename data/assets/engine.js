@@ -57,28 +57,11 @@
     };
   }
 
-  var FALLBACK_EFFECTS = [
-    fx("solid", "Solid Color", "Solid", [C("color", "Color", "#ff0000")]),
-    fx("gradient", "Gradient", "Solid", [C("colorStart", "Start Color", "#0000ff"), C("colorEnd", "End Color", "#ff0000")]),
-    fx("breathe", "Breathe", "Animated", [C("color", "Color", "#0000ff"), I("speed", "Speed", 128, 1, 255)]),
-    fx("candle", "Candle", "Animated", [C("color", "Color", "#ff8c28"), I("speed", "Flicker Speed", 128, 1, 255), I("intensity", "Flicker Intensity", 128, 1, 255)]),
-    fx("colorwaves", "Color Waves", "Animated", [P("palette", "Palette"), I("speed", "Speed", 128, 1, 255)]),
-    fx("comet", "Comet", "Moving", [C("colorHead", "Head Color", "#ffffff"), C("colorTail", "Tail Color", "#0000ff"), I("speed", "Speed", 128, 1, 255), I("intensity", "Tail Length", 120, 1, 255), E("direction", "Direction", "Up|Down", 0)]),
-    fx("fire", "Fire", "Animated", [I("cooling", "Cooling", 55, 20, 100), I("sparking", "Sparking", 120, 50, 200), B("reversed", "Reversed", false)]),
-    fx("fireup", "Fire Up", "Animated", [I("speed", "Sparking", 120, 1, 255), I("intensity", "Cooling", 55, 1, 255)]),
-    fx("meteor", "Meteor", "Moving", [C("color", "Meteor Color", "#ffffff"), I("speed", "Fall Speed", 128, 1, 255)]),
-    fx("noise", "Noise", "Animated", [P("palette", "Palette"), I("speed", "Speed", 128, 1, 255)]),
-    fx("pacifica", "Pacifica", "Animated", [I("speed", "Wave Speed", 128, 1, 255)]),
-    fx("pride", "Pride", "Animated", [I("speed", "Scroll Speed", 128, 1, 255)]),
-    fx("pulse", "Pulse", "Animated", [C("color", "Color", "#ff0000"), I("speed", "Speed", 128, 1, 255)]),
-    fx("rain", "Rain", "Moving", [C("color", "Drop Color", "#0000ff"), I("speed", "Fall Speed", 128, 1, 255), I("intensity", "Drop Density", 128, 1, 255)]),
-    fx("rainbow", "Rainbow", "Animated", [I("speed", "Speed", 128, 1, 255), I("density", "Density", 85, 1, 255)]),
-    fx("scanner", "Scanner", "Moving", [C("color", "Color", "#ff0000"), I("speed", "Speed", 128, 1, 255), I("intensity", "Tail Length", 80, 1, 255)]),
-    fx("sinelon", "Sinelon", "Moving", [P("palette", "Palette"), I("speed", "Speed", 128, 1, 255)]),
-    fx("sparkle", "Sparkle", "Animated", [C("color", "Background Color", "#0000ff"), I("speed", "Sparkle Density", 128, 1, 255)]),
-    fx("twinkle", "Twinkle", "Animated", [C("color", "Color", "#ffffff"), I("speed", "Twinkle Rate", 128, 1, 255)]),
-    fx("wave", "Wave", "Moving", [C("color", "Wave Color", "#0000ff"), I("speed", "Wave Speed", 128, 1, 255), I("intensity", "Wave Width", 160, 1, 255), E("direction", "Direction", "Up|Down|Center", 0)])
-  ];
+  // Demo/fallback effect catalog (used only when no device answers GET
+  // /api/v2/effects). Emptied during the premium-modes rebuild — the old 20
+  // built-ins were purged; this repopulates mode-by-mode as each premium mode
+  // (Curator, Hearth, Breathe, …) lands. The live list always comes from the device.
+  var FALLBACK_EFFECTS = [];
 
   // All 12 built-in palettes (firmware PALETTE_NAMES, exposed in PR #27). The
   // live list still comes from GET /api/v2/palettes; this is the demo/fallback.
@@ -883,7 +866,10 @@
       });
     }
 
-    // Two independent apply actions (mirror `pio run -t upload` / `-t uploadfs`).
+    // The normal path: one atomic update that flashes whatever is behind
+    // (filesystem + firmware) and reboots once — the device can't half-update.
+    function applyUpdate(onProgress)    { return applyTarget("/api/firmware/update", onProgress); }
+    // Low-level per-image applies, kept for recovery/debug.
     function updateFirmware(onProgress) { return applyTarget("/api/firmware/update/app", onProgress); }
     function updateWebUi(onProgress)    { return applyTarget("/api/firmware/update/fs", onProgress); }
 
@@ -921,6 +907,7 @@
       getWarmth: getWarmth,
       setWarmth: setWarmth,
       checkFirmware: checkFirmware,
+      applyUpdate: applyUpdate,
       updateFirmware: updateFirmware,
       updateWebUi: updateWebUi,
       firmwareStatus: firmwareStatus,

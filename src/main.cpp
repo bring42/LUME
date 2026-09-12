@@ -220,8 +220,8 @@ void setup() {
                     mainSegment->setEffect(lastEffect.c_str());
                     LOG_INFO(LogTag::LED, "Restored last effect: %s", lastEffect.c_str());
                 } else {
-                    mainSegment->setEffect("rainbow");
-                    LOG_INFO(LogTag::LED, "No saved effect, using default: rainbow");
+                    mainSegment->setEffect("curator");
+                    LOG_INFO(LogTag::LED, "No saved effect, using default: curator");
                 }
             }
         }

@@ -863,7 +863,7 @@
         $("#dmx-toggle").checked = !!cfg.sacnEnabled;
         $("#dmx-toggle-label").textContent = cfg.sacnEnabled ? "ENABLED" : "DISABLED";
       }
-      if (cfg.wifiSsid != null) $("#wifi-ssid").value = cfg.wifiSsid;
+      if (cfg.wifiSSID != null) $("#wifi-ssid").value = cfg.wifiSSID;
       settingsLoaded = true;
     });
   }
@@ -944,12 +944,13 @@
     var ssid = $("#wifi-ssid").value.trim();
     var password = $("#wifi-password").value;
     if (!ssid) { toast("SSID required"); return; }
-    var msg = "Changing Wi-Fi credentials will restart the device. Continue?";
+    var msg = "Apply Wi-Fi credentials? The device will try to join this network now.";
     if (!window.confirm(msg)) return;
-    var body = { wifiSsid: ssid };
+    // "wifiSSID" is the exact spelling the firmware parses (case-sensitive).
+    var body = { wifiSSID: ssid };
     if (password) body.wifiPassword = password; // omit when blank — keep current password
     engine.saveConfig(body).then(function (res) {
-      toast(res && res.ok ? "Network settings saved — device restarting" : "Failed to save network settings");
+      toast(res && res.ok ? "Network settings saved — device connecting…" : "Failed to save network settings");
       $("#wifi-password").value = "";
     });
   });

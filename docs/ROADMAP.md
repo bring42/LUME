@@ -38,7 +38,10 @@ transport HAL + normalized-coordinate canvas), `docs/rfcs/0001-command-bus.md`,
 
 ## What's left (no P0s remain)
 
-- **P1.6 Scenes** — dead backend + a UI that 404s; decide implement-or-remove.
+- **Presets (formerly "Scenes")** — deferred future feature, not started. The day-one
+  scene half-build (Storage backend + 404'ing UI) was orphaned by the mid-project core
+  swap and removed in #27; a real version gets rebuilt on the command/`EffectSpec` model
+  (+ eased crossfades once the easing engine lands). No scene code exists today.
 - **P2/P3 cleanups** — `removeSegment` copy-by-value scratchpad aliasing is now
   defused in place (each shifted survivor re-binds its view to its own inline pad via
   `Segment::rebindScratchpad`, regression-tested in `test_command_bus`); making

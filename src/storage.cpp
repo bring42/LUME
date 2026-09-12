@@ -156,7 +156,7 @@ bool Storage::loadLastEffect(String& effectId) {
         return false;
     }
     
-    effectId = prefs.getString("lasteffect", "rainbow");  // Default to rainbow
+    effectId = prefs.getString("lasteffect", "curator");  // Default to curator (premium)
     prefs.end();
     return true;
 }
