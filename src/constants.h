@@ -7,12 +7,15 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // ⚠️  LED CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
-// Settings used to configure FastLED in controller.cpp
-// Customize these for your specific hardware setup
+// The LED hardware (strip chipset, colour byte order, data pin) is a RUNTIME
+// setting: persisted in NVS, editable from the web UI / POST /api/config, and
+// applied at boot (see core/led_hardware.h + core/fastled_output.h). The values
+// below are only the compile-time DEFAULTS — what a factory-fresh board runs,
+// and what an invalid persisted value falls back to.
 
-// Pick a free GPIO for the LED data line (board-dependent):
-//   ESP32-C3: safe 0-1, 4-7, 10, 18-21; avoid 2-3, 8-9 (strapping), 11-17 (flash)
-//   ESP32-S3: most GPIOs are free; avoid 0/3/45/46 (strapping) and 26-32 (flash)
+// Default data pin (board-dependent):
+//   ESP32-C3: safe 0-1, 4-7, 10, 20-21; avoid 2-3, 8-9 (strapping), 11-17 (flash), 18-19 (USB)
+//   ESP32-S3: most GPIOs are free; avoid 0/3/45/46 (strapping), 19-20 (USB), 26-37 (flash/PSRAM)
 // Override per-env with -DLUME_LED_DATA_PIN=<gpio> in platformio.ini's build_flags
 // (e.g. the C3 boards need a non-strapping pin; GPIO2 is fine on S3/T-Display S3).
 #ifdef LUME_LED_DATA_PIN
@@ -20,8 +23,11 @@
 #else
 #define LED_DATA_PIN                2               // GPIO2 (T-Display S3: broken out, not a strapping pin)
 #endif
-// Strip type + byte order. Guarded so a board env (or local build) can retarget
-// other hardware via build_flags without editing the defaults, e.g.:
+// Default strip type + byte order. The names are lume::LedChipset /
+// lume::LedColorOrder enumerators (core/led_hardware.h lists them: WS2812B,
+// WS2811, WS2813, WS2815, SK6812, SK6812_RGBW, SK6822, WS2811_400, UCS1903,
+// UCS1904, SM16703, TM1809, PL9823; RGB, RBG, GRB, GBR, BRG, BGR). Guarded so a
+// board env (or local build) can change the factory default via build_flags:
 //   build_flags = -DLED_STRIP_TYPE=SM16703 -DLED_COLOR_MODE=BRG
 #ifndef LED_STRIP_TYPE
 #define LED_STRIP_TYPE              WS2812B         // Common addressable RGB LED

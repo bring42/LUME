@@ -266,6 +266,33 @@
             <input type="number" class="jack-input" id="ledCount" value="300" min="1" max="1000" />
           </div>
         </div>
+        <!-- Strip hardware: chipset / colour order / data pin. Options come from
+             GET /api/config (ledOptions) so the list always matches this
+             firmware + chip. All three (and LED Count) bind at boot. -->
+        <div class="jack-field">
+          <span class="jack-label">Strip Type</span>
+          <div class="jack-input-wrap">
+            <select class="jack-input jack-select" id="ledType" aria-label="LED strip type"></select>
+          </div>
+        </div>
+        <div class="row-2">
+          <div class="jack-field">
+            <span class="jack-label">Color Order</span>
+            <div class="jack-input-wrap">
+              <select class="jack-input jack-select" id="ledColorOrder" aria-label="LED color order"></select>
+            </div>
+          </div>
+          <div class="jack-field">
+            <span class="jack-label">Data Pin</span>
+            <div class="jack-input-wrap">
+              <select class="jack-input jack-select" id="ledPin" aria-label="LED data pin"></select>
+            </div>
+          </div>
+        </div>
+        <div class="hw-apply" id="ledHwApply">
+          <span class="hw-apply-note" id="ledHwApplyNote">Strip settings apply after a restart</span>
+          <button class="btn" id="ledRestart" type="button">Restart device</button>
+        </div>
         <div class="row-3">
           <div class="readout-cell">
             <div class="rl">Firmware</div>

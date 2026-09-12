@@ -1094,10 +1094,88 @@ function renderSettingsFromState() {
       $("#sacnLed").classList.toggle("on", !!config.sacnEnabled);
     }
     if (config.sacnUniverse) $("#sacnUniverse").value = config.sacnUniverse;
+    renderLedHardware(config);
   }
 
   renderTuningFromState();
 }
+
+/* ---------------------------------------------------------------------
+   Strip hardware — chipset / colour order / data pin. The option lists come
+   from the device (config.ledOptions) so the UI never hardcodes what a given
+   firmware/chip can drive. Persisted values bind at boot; while they differ
+   from what the running firmware reports (config.ledActive) the "restart to
+   apply" strip is shown.
+   -------------------------------------------------------------------- */
+
+function fillSelect(sel, items, current) {
+  // Rebuild only when the option set changed (keeps focus/scroll otherwise).
+  const sig = items.map((i) => i.value).join(",");
+  if (sel.dataset.sig !== sig) {
+    sel.innerHTML = "";
+    for (const it of items) {
+      const o = document.createElement("option");
+      o.value = it.value;
+      o.textContent = it.label;
+      sel.appendChild(o);
+    }
+    sel.dataset.sig = sig;
+  }
+  if (current != null && document.activeElement !== sel) sel.value = String(current);
+}
+
+function renderLedHardware(config) {
+  const opts = config.ledOptions;
+  if (opts) {
+    const strapping = new Set(opts.strappingPins || []);
+    fillSelect($("#ledType"), (opts.types || []).map((t) => ({ value: t.id, label: t.name })), config.ledType);
+    fillSelect($("#ledColorOrder"), (opts.colorOrders || []).map((o) => ({ value: o, label: o })), config.ledColorOrder);
+    fillSelect($("#ledPin"), (opts.pins || []).map((p) => ({
+      value: p, label: "GPIO " + p + (strapping.has(p) ? " · strapping" : "")
+    })), config.ledPin);
+  }
+
+  // Pending-restart notice: persisted vs bound. ledCount rides along since it
+  // binds at boot too.
+  const active = config.ledActive;
+  const pending = [];
+  if (active) {
+    if (config.ledType != null && config.ledType !== active.ledType) pending.push("strip type");
+    if (config.ledColorOrder != null && config.ledColorOrder !== active.ledColorOrder) pending.push("color order");
+    if (config.ledPin != null && +config.ledPin !== +active.ledPin) pending.push("data pin");
+    if (config.ledCount != null && +config.ledCount !== +active.ledCount) pending.push("LED count");
+  }
+  const strip = $("#ledHwApply");
+  strip.classList.toggle("show", pending.length > 0);
+  if (pending.length) $("#ledHwApplyNote").textContent = "Restart to apply: " + pending.join(", ");
+}
+
+function saveLedHardware(field, value, label) {
+  const body = {};
+  body[field] = value;
+  engine.saveConfig(body).then((res) => {
+    if (res.ok) {
+      showToast(label + " saved — restart to apply");
+      renderSettingsFromState();
+    } else {
+      showToast("Device rejected the " + label.toLowerCase());
+      engine.getConfig().then(renderSettingsFromState);   // snap the select back
+    }
+  });
+}
+$("#ledType").addEventListener("change", (e) => saveLedHardware("ledType", e.target.value, "Strip type"));
+$("#ledColorOrder").addEventListener("change", (e) => saveLedHardware("ledColorOrder", e.target.value, "Color order"));
+$("#ledPin").addEventListener("change", (e) => saveLedHardware("ledPin", +e.target.value, "Data pin"));
+
+$("#ledRestart").addEventListener("click", () => {
+  if (!window.confirm("Restart the device now? LEDs go dark for a few seconds while it reboots.")) return;
+  engine.restart().then((res) => {
+    showToast(res.ok ? "Restarting… back in a few seconds" : "Failed to restart");
+    // The status poll re-syncs when the device is back; refresh the pending
+    // notice then (ledActive catches up to the persisted values).
+    if (res.ok) setTimeout(() => engine.getConfig().then(renderSettingsFromState), 8000);
+  });
+});
 
 /* ---------------------------------------------------------------------
    Feel / Tuning — reflects the current durations (engine.TRANSITION,
@@ -1132,7 +1210,8 @@ $("#ledCount").addEventListener("change", (e) => {
   const v = clamp(Math.round(+e.target.value) || 1, 1, 1000);
   e.target.value = v;
   engine.saveConfig({ ledCount: v }).then((res) => {
-    showToast(res.ok ? "LED count saved" : "Failed to save LED count");
+    showToast(res.ok ? "LED count saved — restart to apply" : "Failed to save LED count");
+    renderSettingsFromState();   // refresh the "restart to apply" notice
   });
 });
 

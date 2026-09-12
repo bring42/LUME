@@ -50,8 +50,16 @@ public:
     
     // --- Initialization ---
 
-    // Initialize with LED count (uses LED_DATA_PIN from constants.h)
-    void begin(uint16_t count);
+    // Initialize with LED count and the hardware selection (chipset / colour
+    // order / data pin) the output driver binds to. Hardware is bound ONCE:
+    // changing it later takes a reboot (drivers own pins and peripherals).
+    void begin(uint16_t count, const LedHardware& hw);
+    // Compile-time defaults (constants.h) — host tests and legacy callers.
+    void begin(uint16_t count) { begin(count, LedHardware::defaults()); }
+
+    // The hardware the output driver was bound to at begin(). The API reports
+    // it next to the persisted config so a UI can flag "restart to apply".
+    const LedHardware& getLedHardware() const { return hardware_; }
 
     // Swap the LED-output driver (RFC 0001 §6). Defaults to FastLED; call before
     // begin() to inject a different ILedOutput (ESP-IDF led_strip, emulator, a
@@ -360,6 +368,7 @@ private:
 
     // LED output driver (RFC 0001 §6). Defaults to a FastLED impl in the ctor.
     ILedOutput* output_;
+    LedHardware hardware_;   // what output_ was bound to at begin()
 
     // Segments
     Segment segments[MAX_SEGMENTS];

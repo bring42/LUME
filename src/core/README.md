@@ -54,9 +54,14 @@ void effectSolid(SegmentView& view, const ParamValues& params,
 runtime values effects read by slot. `param_codec.h` is the single schema-aware
 (de)serializer shared by the API and persistence (P1.1).
 
-### Output HAL ([led_output.h](led_output.h), [fastled_output.h](fastled_output.h))
+### Output HAL ([led_output.h](led_output.h), [fastled_output.h](fastled_output.h), [led_hardware.h](led_hardware.h))
 The controller presents finished frames through the `ILedOutput` interface; `FastLedOutput`
-(RMT) is the default backend (RFC 0001 §6).
+(RMT) is the default backend (RFC 0001 §6). The strip hardware it binds — chipset, colour
+order, data pin — is a runtime `LedHardware` (persisted config, applied at boot): on the ESP32
+FastLED's `RmtController` takes pin and bit timings as constructor arguments, so
+`led_hardware.h` is a plain catalog (FastLED's timings in ns + a per-chip usable-pin policy)
+and `FastLedOutput` builds one small `CPixelLEDController` per colour order from it — no
+per-pin/per-chipset template explosion.
 
 ## Architecture
 

@@ -10,10 +10,13 @@
  * 
  * Hardware:
  * - LILYGO T-Display S3
- * - WS2812B LED strip (default 160 LEDs on GPIO 2, see LED_DATA_PIN)
+ * - Addressable LED strip. Chipset / colour order / data pin are runtime
+ *   settings (web UI → Device, or POST /api/config), applied at boot; the
+ *   factory defaults are WS2812B, GRB, GPIO 2 (constants.h).
  */
 
 #include <Arduino.h>
+#include <atomic>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
@@ -85,6 +88,12 @@ bool beginBody(AsyncWebServerRequest* request) {
 
 void endBody(AsyncWebServerRequest* request) {
     g_bodyGuard.end(request);
+}
+
+static std::atomic<bool> g_restartRequested{false};
+
+void requestRestart() {
+    g_restartRequested.store(true);
 }
 
 bool checkAuth(AsyncWebServerRequest* request) {
@@ -176,14 +185,15 @@ void setup() {
     String devModel = DEV_AI_MODEL;
     if (devModel.length() > 0) config.aiModel = devModel;
     normalizeAiModel(config.aiModel);   // a secrets.h copied from an older example may hold a retired id
-    // Note: LED pin is configured in constants.h (LED_DATA_PIN)
+    // Note: strip type / colour order / data pin are runtime settings (NVS via
+    // the web UI); secrets.h only overrides the count and brightness.
     config.ledCount = DEV_LED_COUNT;
     config.defaultBrightness = DEV_DEFAULT_BRIGHTNESS;
 #endif
     
     // Initialize v2 LED controller
     LOG_INFO(LogTag::LED, "Initializing LED controller...");
-    lume::controller.begin(config.ledCount);
+    lume::controller.begin(config.ledCount, config.ledHardware);
     lume::controller.setBrightness(config.defaultBrightness);
     lume::controller.setGamma(config.gamma);  // seed runtime gamma from persisted config
     lume::controller.setWarmth(config.warmth);  // seed dim-to-warm from persisted config
@@ -282,6 +292,19 @@ void loop() {
         lume::controller.serializeSegments(stateDoc);
         storage.saveLedState(stateDoc);
         LOG_DEBUG(LogTag::STORAGE, "Segment layout persisted");
+    }
+
+    // Deferred reboot (POST /api/restart): boot-time settings such as the LED
+    // hardware and ledCount apply on the way back up. Persist the segment
+    // layout first, unconditionally — the debounced save above may not be due
+    // yet for a change made seconds ago, and it would otherwise be lost.
+    if (g_restartRequested.load()) {
+        JsonDocument stateDoc;
+        lume::controller.serializeSegments(stateDoc);
+        storage.saveLedState(stateDoc);
+        LOG_INFO(LogTag::MAIN, "Restart requested via API; rebooting");
+        delay(250);   // let the 202 leave the socket
+        ESP.restart();
     }
 
     // Reset watchdog - proves loop is still running

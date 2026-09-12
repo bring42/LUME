@@ -47,14 +47,16 @@ LumeController::LumeController()
     , segmentsDirty_(false)
     , suppressDirty_(false)
     , lastSegmentChange_(0)
-    , output_(&g_fastLedOutput) {
+    , output_(&g_fastLedOutput)
+    , hardware_(LedHardware::defaults()) {
 
     memset(leds, 0, sizeof(leds));
     memset(protocols_, 0, sizeof(protocols_));
 }
 
-void LumeController::begin(uint16_t count) {
+void LumeController::begin(uint16_t count, const LedHardware& hw) {
     ledCount = min(count, (uint16_t)MAX_LED_COUNT);
+    hardware_ = hw;
     
     // Initialize command queue
     if (!commandQueue.begin()) {
@@ -62,7 +64,7 @@ void LumeController::begin(uint16_t count) {
     }
     
     // Initialize the LED output driver (FastLED by default; see RFC 0001 §6).
-    output_->begin(leds, ledCount);
+    output_->begin(leds, ledCount, hardware_);
     // The 16-bit pipeline owns all brightness/gamma/correction/dither, so the
     // driver's own scaling is pinned to identity (255) once and never touched
     // again — master brightness is applied per-pixel in renderOutput16().

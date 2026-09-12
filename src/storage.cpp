@@ -1,5 +1,6 @@
 #include "storage.h"
 #include "constants.h"  // MAX_LED_COUNT (ledCount clamp, P0.2)
+#include "logging.h"
 
 const char* Storage::NAMESPACE_CONFIG = "config";
 const char* Storage::NAMESPACE_LED = "ledstate";
@@ -55,6 +56,29 @@ bool Storage::loadConfig(Config& config) {
     config.authToken = prefs.getString("authtoken", "");
     // Clamp on load too, in case NVS holds an out-of-range value (P0.2).
     config.ledCount = constrain((int)prefs.getUShort("ledcount", 160), 1, (int)MAX_LED_COUNT);
+    // LED hardware: stored as the catalog KEYS (not enum ordinals) so a future
+    // reorder of the catalog can't silently retarget a strip. Unknown/invalid
+    // values fall back to the compile-time defaults field-by-field.
+    {
+        lume::LedHardware hw = lume::LedHardware::defaults();
+        String type = prefs.getString("ledtype", "");
+        if (type.length() > 0 && !lume::parseLedChipset(type.c_str(), hw.chipset)) {
+            LOG_WARN(LogTag::STORAGE, "Unknown LED type '%s' in NVS; using %s",
+                     type.c_str(), lume::ledChipsetKey(hw.chipset));
+        }
+        String order = prefs.getString("ledorder", "");
+        if (order.length() > 0 && !lume::parseLedColorOrder(order.c_str(), hw.order)) {
+            LOG_WARN(LogTag::STORAGE, "Unknown LED colour order '%s' in NVS; using %s",
+                     order.c_str(), lume::ledColorOrderKey(hw.order));
+        }
+        int pin = prefs.getUChar("ledpin", hw.pin);
+        if (lume::isUsableLedPin(pin)) {
+            hw.pin = (uint8_t)pin;
+        } else {
+            LOG_WARN(LogTag::STORAGE, "LED pin %d in NVS not usable on this chip; using GPIO %u", pin, hw.pin);
+        }
+        config.ledHardware = hw;
+    }
     config.defaultBrightness = prefs.getUChar("brightness", 128);
     // Clamp on load too, in case NVS holds an out-of-range value.
     config.gamma = constrain(prefs.getFloat("gamma", LED_GAMMA), LED_GAMMA_MIN, LED_GAMMA_MAX);
@@ -89,6 +113,9 @@ bool Storage::saveConfig(const Config& config) {
     prefs.putString("ai_model", config.aiModel);
     prefs.putString("authtoken", config.authToken);
     prefs.putUShort("ledcount", config.ledCount);
+    prefs.putString("ledtype", lume::ledChipsetKey(config.ledHardware.chipset));
+    prefs.putString("ledorder", lume::ledColorOrderKey(config.ledHardware.order));
+    prefs.putUChar("ledpin", config.ledHardware.pin);
     prefs.putUChar("brightness", config.defaultBrightness);
     prefs.putFloat("gamma", config.gamma);
     prefs.putFloat("warmth", config.warmth);
@@ -184,6 +211,9 @@ void Storage::configToJson(const Config& config, JsonDocument& doc, bool maskApi
     doc["authToken"] = config.authToken.length() > 0 ? "****" : "";
     doc["authEnabled"] = config.authToken.length() > 0;
     doc["ledCount"] = config.ledCount;
+    doc["ledType"] = lume::ledChipsetKey(config.ledHardware.chipset);
+    doc["ledColorOrder"] = lume::ledColorOrderKey(config.ledHardware.order);
+    doc["ledPin"] = config.ledHardware.pin;
     doc["defaultBrightness"] = config.defaultBrightness;
     doc["gamma"] = config.gamma;
     doc["warmth"] = config.warmth;
@@ -202,7 +232,33 @@ void Storage::configToJson(const Config& config, JsonDocument& doc, bool maskApi
     doc["mqttTopicPrefix"] = config.mqttTopicPrefix;
 }
 
-bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
+bool Storage::configFromJson(Config& config, const JsonDocument& doc, String* error) {
+    // LED hardware is validated up front, before ANY field is applied: a bad
+    // strip type must not leave half a request applied in RAM with nothing
+    // persisted. The pin is checked against this chip's usable-pin policy
+    // (never the flash/USB pins). All three apply on the next reboot.
+    lume::LedHardware hw = config.ledHardware;
+    if (!doc["ledType"].isNull()) {
+        if (!doc["ledType"].is<const char*>() || !lume::parseLedChipset(doc["ledType"].as<const char*>(), hw.chipset)) {
+            if (error) *error = "ledType: unknown strip type";
+            return false;
+        }
+    }
+    if (!doc["ledColorOrder"].isNull()) {
+        if (!doc["ledColorOrder"].is<const char*>() || !lume::parseLedColorOrder(doc["ledColorOrder"].as<const char*>(), hw.order)) {
+            if (error) *error = "ledColorOrder: expected one of RGB RBG GRB GBR BRG BGR";
+            return false;
+        }
+    }
+    if (!doc["ledPin"].isNull()) {
+        if (!doc["ledPin"].is<int>() || !lume::isUsableLedPin(doc["ledPin"].as<int>())) {
+            if (error) *error = "ledPin: not a usable LED data pin on this chip";
+            return false;
+        }
+        hw.pin = (uint8_t)doc["ledPin"].as<int>();
+    }
+    config.ledHardware = hw;
+
     // Only update fields that are present
     // "wifiSSID" is the one canonical key, and the spelling is load-bearing:
     // ArduinoJson is case-sensitive, and a UI sending anything else (PR #29

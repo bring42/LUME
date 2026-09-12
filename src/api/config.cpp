@@ -17,7 +17,40 @@ static String configBodyBuffer;
 void handleApiConfig(AsyncWebServerRequest* request) {
     JsonDocument doc;
     storage.configToJson(config, doc, true);
-    
+
+    // The selectable LED hardware for THIS build/chip, so the UI never has to
+    // hardcode the catalog: strip types (with the RGBW flag), colour orders and
+    // the data pins this chip may drive (strapping pins flagged, not hidden).
+    JsonObject options = doc["ledOptions"].to<JsonObject>();
+    JsonArray types = options["types"].to<JsonArray>();
+    size_t n;
+    const lume::LedChipsetInfo* cat = lume::ledChipsetCatalog(n);
+    for (size_t i = 0; i < n; i++) {
+        JsonObject t = types.add<JsonObject>();
+        t["id"] = cat[i].key;
+        t["name"] = cat[i].name;
+        if (cat[i].rgbw) t["rgbw"] = true;
+    }
+    JsonArray orders = options["colorOrders"].to<JsonArray>();
+    for (uint8_t i = 0; i < (uint8_t)lume::LedColorOrder::COUNT; i++) {
+        orders.add(lume::ledColorOrderKey((lume::LedColorOrder)i));
+    }
+    JsonArray pins = options["pins"].to<JsonArray>();
+    JsonArray strapping = options["strappingPins"].to<JsonArray>();
+    for (int pin = 0; pin < 64; pin++) {
+        if (!lume::isUsableLedPin(pin)) continue;
+        pins.add(pin);
+        if (lume::isStrappingLedPin(pin)) strapping.add(pin);
+    }
+    // What the output driver is ACTUALLY bound to right now (differs from the
+    // persisted values above until the next reboot) — lets the UI say so.
+    const lume::LedHardware& active = lume::controller.getLedHardware();
+    JsonObject act = doc["ledActive"].to<JsonObject>();
+    act["ledType"] = lume::ledChipsetKey(active.chipset);
+    act["ledColorOrder"] = lume::ledColorOrderKey(active.order);
+    act["ledPin"] = active.pin;
+    act["ledCount"] = lume::controller.getLedCount();
+
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);
@@ -65,16 +98,27 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
         // while the provisioning phone sits on the SoftAP.
         String prevWifiSsid = config.wifiSSID;
         String prevWifiPass = config.wifiPassword;
-        storage.configFromJson(config, doc);
+        String fieldError;
+        if (!storage.configFromJson(config, doc, &fieldError)) {
+            // Rejected before anything was applied (LED hardware validation).
+            JsonDocument errDoc;
+            errDoc["error"] = fieldError;
+            String body;
+            serializeJson(errDoc, body);
+            request->send(400, "application/json", body);
+            return;
+        }
         bool wifiCredsChanged = (config.wifiSSID != prevWifiSsid ||
                                  config.wifiPassword != prevWifiPass);
 
         // Save to storage
         if (storage.saveConfig(config)) {
-            // ledCount is NOT applied live: it's bound to FastLED at boot via
-            // controller.begin(config.ledCount), so changing it live raced the
-            // render loop and never re-ran addLeds anyway (P0.8). It now takes
-            // effect on the next reboot, from the value just persisted above.
+            // ledCount and the LED hardware (ledType / ledColorOrder / ledPin)
+            // are NOT applied live: they're bound to FastLED at boot via
+            // controller.begin(count, hardware) — FastLED's controller list has
+            // no remove, and re-binding live raced the render loop (P0.8). They
+            // take effect on the next reboot (POST /api/restart), from the
+            // values just persisted above.
 
             // sACN/MQTT are NOT reconfigured from this (AsyncTCP) task either —
             // stop()/setConfig() tore down sockets / swapped Strings that
@@ -104,4 +148,15 @@ void handleApiConfigPost(AsyncWebServerRequest* request, uint8_t* data, size_t l
             request->send(500, "application/json", "{\"error\":\"Failed to save\"}");
         }
     }
+}
+
+void handleApiRestart(AsyncWebServerRequest* request) {
+    if (!checkAuth(request)) {
+        sendUnauthorized(request);
+        return;
+    }
+    // Reply first, reboot from the loop task: ESP.restart() on this (AsyncTCP)
+    // task would tear the socket down under the response.
+    request->send(202, "application/json", "{\"status\":\"restarting\"}");
+    requestRestart();
 }
