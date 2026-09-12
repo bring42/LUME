@@ -421,12 +421,15 @@ function vizPoll() {
     vizStream.bytes = bytes;
     if (bytes) {
       const now = performance.now();
-      if (!vizStream.fpsAt) vizStream.fpsAt = now;   // seed on the first frame
-      vizStream.frames++;
-      if (now - vizStream.fpsAt >= 1000) {
-        vizStream.fps = Math.round((vizStream.frames * 1000) / (now - vizStream.fpsAt)) || 0;
-        vizStream.frames = 0;
-        vizStream.fpsAt = now;
+      if (!vizStream.fpsAt) {
+        vizStream.fpsAt = now;   // the first frame OPENS the window (counting it read ~10% high)
+      } else {
+        vizStream.frames++;
+        if (now - vizStream.fpsAt >= 1000) {
+          vizStream.fps = Math.round((vizStream.frames * 1000) / (now - vizStream.fpsAt)) || 0;
+          vizStream.frames = 0;
+          vizStream.fpsAt = now;
+        }
       }
     } else {
       vizStreamIdle();   // device unreachable → fall back to the stand-in cleanly
@@ -577,7 +580,7 @@ function vizTick(ts) {
       }
       $("#vizGlow").style.background =
         `radial-gradient(ellipse at 50% 50%, rgb(${(ar / n) | 0},${(ag / n) | 0},${(ab / n) | 0}), transparent 70%)`;
-      $("#vizFps").textContent = vizStream.fps;
+      $("#vizFps").textContent = vizStream.fps || "—";   // "—" until the first 1 s window closes
     } else if (powered && n && eff) {
       // Stand-in (demo mode / device unreachable): procedural approximation.
       for (let i = 0; i < n; i++) {
