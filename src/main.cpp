@@ -173,7 +173,9 @@ void setup() {
     if (devSsid.length() > 0) config.wifiSSID = devSsid;
     if (devPass.length() > 0) config.wifiPassword = devPass;
     if (devKey.length() > 0) config.aiApiKey = devKey;
-    config.aiModel = DEV_AI_MODEL;
+    String devModel = DEV_AI_MODEL;
+    if (devModel.length() > 0) config.aiModel = devModel;
+    normalizeAiModel(config.aiModel);   // a secrets.h copied from an older example may hold a retired id
     // Note: LED pin is configured in constants.h (LED_DATA_PIN)
     config.ledCount = DEV_LED_COUNT;
     config.defaultBrightness = DEV_DEFAULT_BRIGHTNESS;
