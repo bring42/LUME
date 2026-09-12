@@ -254,8 +254,22 @@ public:
     // while the loop writes smooth_; reads are unsynchronized by design — a
     // torn pixel is one frame of viz noise, and a lock here would stall
     // rendering (read-only, so P0.1's single-writer rule is untouched).
+    //
+    // Raw sources are the exception: sACN and the /api/pixels direct path
+    // bypass the 16-bit pipeline and write source-domain bytes straight into
+    // leds[] — smooth_ then holds a stale ghost of the last native effect. In
+    // that mode (pipeline16_ false) serve leds[] instead: those bytes never
+    // passed gamma/correction, so they're already screen-appropriate.
     uint16_t copyVizPixels(uint8_t* out, uint16_t maxPixels) const {
         uint16_t n = ledCount < maxPixels ? ledCount : maxPixels;
+        if (!pipeline16_) {
+            for (uint16_t i = 0; i < n; i++) {
+                out[i * 3 + 0] = leds[i].r;
+                out[i * 3 + 1] = leds[i].g;
+                out[i * 3 + 2] = leds[i].b;
+            }
+            return n;
+        }
         for (uint16_t i = 0; i < n; i++) {
             out[i * 3 + 0] = (uint8_t)(smooth_[i].r >> 8);
             out[i * 3 + 1] = (uint8_t)(smooth_[i].g >> 8);
@@ -318,6 +332,10 @@ private:
     // strip; unchanged segments blend frozen→live but for slow modes that's nil.
     CRGB16 outgoing_[MAX_LED_COUNT];
     Transition modeCrossfade_;
+    // Blend window [fadeLo_, fadeHi_): only the changed segment's pixels blend
+    // against the frozen frame; everything else stays live (see beginModeCrossfade).
+    uint16_t fadeLo_ = 0;
+    uint16_t fadeHi_ = 0;
     static constexpr uint32_t kModeCrossfadeMs = 2000;
 
     // How fast the smoothed output approaches its target, per show(): larger =
@@ -332,9 +350,9 @@ private:
 
     // The output IIR normally eases from its previous state. On the very first
     // rendered frame there is no previous state (smooth_ is black), and easing up
-    // from black would dwell in the bottom codes where all channels floor to
-    // LED_MIN_OUTPUT and a WS2812B reads green. Snap to the target that first
-    // frame instead, so boot lands straight on the composed colour.
+    // from black would drag the whole strip through the muddy bottom codes.
+    // Snap to the target that first frame instead, so boot lands straight on
+    // the composed colour.
     bool outputSeeded_;
 
     // Direct-pixel overlay staged by /api/pixels, drained on the loop (P0.1).
@@ -409,7 +427,11 @@ private:
 
     // show() rate — the rate the 16-bit pipeline + dither actually run at, which
     // is what the dither strategy depends on (needs several hundred Hz or the
-    // bottom codes shimmer). Distinct from actualFps (the gated render rate).
+    // bottom codes shimmer). NOTE: that budget only exists on shorter strips —
+    // a WS2812B line costs ~30 µs/pixel of blocking show() time, so ~160 px
+    // allows ~200 Hz but 1000 px caps show() near 33 Hz on the wire alone.
+    // This counter reports the truth. Distinct from actualFps (the gated
+    // render rate).
     uint16_t showHz_;
     uint32_t showFrameCount_;
     uint32_t showRateUpdateTime_;
@@ -427,7 +449,12 @@ private:
 
     // Freeze the current canvas as the outgoing mode and start the eased blend
     // toward the incoming one (called when an effect actually changes at runtime).
-    void beginModeCrossfade();
+    // The blend is applied only to [lo, hi) — the changed segment's window — so
+    // other segments keep rendering live instead of blending against a frozen
+    // frame for the whole window. A second effect change while a fade is active
+    // widens the window to cover both (the canvas re-freezes at its current
+    // visual state, so the earlier fade continues from where it looked).
+    void beginModeCrossfade(uint16_t lo, uint16_t hi);
     // setEffect wrapper that triggers a crossfade when the id actually changes
     // from an already-rendering effect (not on first assignment or boot restore).
     void changeEffectWithCrossfade(Segment* seg, const char* effectId);
@@ -435,8 +462,9 @@ private:
     // Compose + descend the 16-bit canvas to 8-bit leds[] for one frame: per
     // pixel, dim-to-warm × master brightness (perceptual) → one-pole IIR
     // (smooth_) → gamma16 → WS2812B correction → error-diffusion dither
-    // (ditherErr_) → LED_MIN_OUTPUT floor. Runs every show(). `perceptual` is the
-    // composed master level (globalBrightness × power-fade envelope).
+    // (ditherErr_). No low-end floor — the dither carries the bottom codes.
+    // Runs every show(). `perceptual` is the composed master level
+    // (globalBrightness × power-fade envelope).
     void renderOutput16(uint8_t perceptual);
 };
 

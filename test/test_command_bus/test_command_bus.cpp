@@ -528,6 +528,16 @@ void test_direct_pixels_are_deferred_then_applied() {
     TEST_ASSERT_EQUAL_UINT8(0x22, leds[0].g);
     TEST_ASSERT_EQUAL_UINT8(0x44, leds[5].r);
     TEST_ASSERT_EQUAL_UINT8(0x55, leds[5].g);
+
+    // The viz readback must mirror the RAW frame while a bypass source drives
+    // leds[] — not smooth_'s stale ghost of the last native effect. Direct
+    // pixels never pass gamma/correction, so their bytes come back verbatim.
+    uint8_t px[60 * 3];
+    TEST_ASSERT_EQUAL_UINT16(60, c.copyVizPixels(px, 60));
+    TEST_ASSERT_EQUAL_UINT8(0x11, px[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x22, px[1]);
+    TEST_ASSERT_EQUAL_UINT8(0x33, px[2]);
+    TEST_ASSERT_EQUAL_UINT8(0x44, px[5 * 3 + 0]);
 }
 
 // GET /api/v2/pixels reads copyVizPixels(): the PERCEPTUAL frame (post master
@@ -717,6 +727,53 @@ void test_mode_switch_crossfades_not_snaps() {
     TEST_ASSERT_EQUAL_UINT16(0, maxChannel(c));  // arrived at the incoming black mode
 }
 
+// The crossfade must be scoped to the CHANGED segment: pixels outside its
+// window keep rendering live instead of blending against the frozen frame.
+// Recipe: two white half-strip segments; in one batch, remove segment 1 (its
+// region goes live-black via clearUncoveredLeds — no crossfade of its own)
+// and switch segment 0's effect (starts the fade). On the first post-switch
+// frame the fade fraction is still ~0 (frozen dominates): segment 0's half
+// must still be lit, while segment 1's half must already be marching to black.
+// The old whole-canvas blend re-lit segment 1's half from the frozen frame —
+// its viz/smooth state would sit pinned at white instead of stepping down.
+void test_mode_crossfade_scoped_to_changed_segment() {
+    LumeController c;
+    c.begin(60);
+    // Segment 0: [0, 30). Segment 1: [30, 60). Both whitefx.
+    EffectSpec a = {};
+    a.create = true; a.start = 0; a.length = 30;
+    a.hasEffect = true; std::strcpy(a.effectId, "whitefx");
+    c.enqueueCommand(Command::applyEffectSpec(255, a));
+    EffectSpec b = a;
+    b.start = 30;
+    c.enqueueCommand(Command::applyEffectSpec(255, b));
+    c.update();
+    c.setBrightness(255);
+    settle(c);
+
+    uint8_t px[60 * 3];
+    c.copyVizPixels(px, 60);
+    TEST_ASSERT_TRUE(px[10 * 3] > 250);           // both halves settled bright
+    TEST_ASSERT_TRUE(px[40 * 3] > 250);
+
+    // One batch: drop segment 1, switch segment 0 to blackfx (fade starts).
+    c.enqueueCommand(Command::removeSegment(1));
+    EffectSpec sw = {};
+    sw.hasEffect = true; std::strcpy(sw.effectId, "blackfx");
+    c.enqueueCommand(Command::applyEffectSpec(0, sw));
+    c.update();   // frac ~0: seg 0 shows the frozen white; seg 1 renders live black
+
+    c.copyVizPixels(px, 60);
+    // Segment 0's window: frozen white dominates → smooth barely moves.
+    TEST_ASSERT_TRUE(px[10 * 3] > 250);
+    // Outside the window: live black target → one IIR step down already
+    // (255 → ~239 at kIirShift=4). Whole-canvas blending would hold ~255.
+    TEST_ASSERT_TRUE(px[40 * 3] < 248);
+
+    settle(c);    // fade elapses; everything converges to black
+    TEST_ASSERT_EQUAL_UINT16(0, maxChannel(c));
+}
+
 // Runtime gamma still flows through the single-writer bus and clamps to
 // [LED_GAMMA_MIN, LED_GAMMA_MAX]; and a deeper gamma visibly pulls a mid level
 // further down (now observed in the composed per-pixel output, not a global set).
@@ -822,5 +879,6 @@ int main(int, char**) {
     RUN_TEST(test_reconfigure_protocols_runs_hook_on_loop);
     RUN_TEST(test_direct_pixels_are_deferred_then_applied);
     RUN_TEST(test_viz_readback_is_perceptual_pre_gamma);
+    RUN_TEST(test_mode_crossfade_scoped_to_changed_segment);
     return UNITY_END();
 }
