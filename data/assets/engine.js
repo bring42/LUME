@@ -726,6 +726,34 @@
     }
 
     /* ---- AI prompt ---- (returns a structured result the skin can present) */
+    // The device answers 202 immediately and runs the (up to ~30 s) Anthropic
+    // call on a worker task, so the POST result says nothing about the actual
+    // outcome. After the 202 we poll GET /api/prompt/status until the worker
+    // finishes and resolve with the REAL result: {ok:true} only when the spec
+    // was applied; {ok:false, reason:"ai_error", message} carries the device's
+    // own error text (no key / bad key / upstream failure). Previously the UI
+    // reported "Applied" on every 202 while failures died in the serial log.
+    var PROMPT_POLL_MS = 1000;
+    var PROMPT_POLL_TIMEOUT_MS = 40000; // upstream call caps at 30 s + slack
+    function pollPromptOutcome(deadline) {
+      return apiFetch("/api/prompt/status").then(function (s) {
+        if (s && s.busy === false) {
+          if (s.lastOk) return { ok: true };
+          return { ok: false, reason: "ai_error",
+                   message: (s.lastError && String(s.lastError)) || "AI prompt failed" };
+        }
+        if (nowMs() > deadline) return { ok: false, reason: "timeout" };
+        return new Promise(function (resolve) {
+          setTimeout(function () { resolve(pollPromptOutcome(deadline)); }, PROMPT_POLL_MS);
+        });
+      }, function () {
+        // status fetch hiccup: keep polling until the deadline, not fail hard
+        if (nowMs() > deadline) return { ok: false, reason: "timeout" };
+        return new Promise(function (resolve) {
+          setTimeout(function () { resolve(pollPromptOutcome(deadline)); }, PROMPT_POLL_MS);
+        });
+      });
+    }
     function sendPrompt(text) {
       text = String(text || "").trim();
       if (!text) return Promise.resolve({ ok: false, reason: "empty" });
@@ -735,8 +763,10 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: text })
       }).then(function () {
-        scheduleRefresh();
-        return { ok: true };
+        return pollPromptOutcome(nowMs() + PROMPT_POLL_TIMEOUT_MS).then(function (res) {
+          if (res.ok) scheduleRefresh();
+          return res;
+        });
       }, function (err) {
         var reason = "error";
         if (err.status === 429) reason = "rate_limited";

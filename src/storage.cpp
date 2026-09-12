@@ -6,6 +6,16 @@ const char* Storage::NAMESPACE_LED = "ledstate";
 
 Storage storage;
 
+void normalizeAiModel(String& model) {
+    // This feature has died twice by model retirement: claude-3-5-sonnet-20241022,
+    // then claude-3-5-haiku-20241022 (both 404 at the API today).
+    if (model.length() == 0 ||
+        model == "claude-3-5-sonnet-20241022" ||
+        model == "claude-3-5-haiku-20241022") {
+        model = AI_MODEL_DEFAULT;
+    }
+}
+
 Storage::Storage() {
     mutex_ = xSemaphoreCreateRecursiveMutex();
 }
@@ -37,7 +47,11 @@ bool Storage::loadConfig(Config& config) {
     config.wifiSSID = prefs.getString("ssid", "");
     config.wifiPassword = prefs.getString("pass", "");
     config.aiApiKey = prefs.getString("ai_apikey", "");
-    config.aiModel = prefs.getString("ai_model", "claude-3-5-haiku-20241022");
+    config.aiModel = prefs.getString("ai_model", AI_MODEL_DEFAULT);
+    // Any config save writes ALL fields, so a device that ever saved (ledCount,
+    // WiFi, ...) has the then-default model pinned in NVS; without this a new
+    // default could never heal an existing device.
+    normalizeAiModel(config.aiModel);
     config.authToken = prefs.getString("authtoken", "");
     // Clamp on load too, in case NVS holds an out-of-range value (P0.2).
     config.ledCount = constrain((int)prefs.getUShort("ledcount", 160), 1, (int)MAX_LED_COUNT);
@@ -212,6 +226,7 @@ bool Storage::configFromJson(Config& config, const JsonDocument& doc) {
     }
     if (doc["aiModel"].is<const char*>()) {
         config.aiModel = doc["aiModel"].as<String>();
+        normalizeAiModel(config.aiModel);   // empty/retired -> default now, not at next boot
     }
     if (doc["authToken"].is<const char*>()) {
         String token = doc["authToken"].as<String>();

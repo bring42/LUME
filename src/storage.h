@@ -54,7 +54,7 @@ struct Config {
         wifiSSID(""),
         wifiPassword(""),
         aiApiKey(""),
-        aiModel("claude-3-5-haiku-20241022"),
+        aiModel(AI_MODEL_DEFAULT),
         authToken(""),
         ledCount(160),
         defaultBrightness(128),
@@ -109,6 +109,12 @@ private:
     static const char* NAMESPACE_CONFIG;
     static const char* NAMESPACE_LED;
 };
+
+// Map an empty or retired AI model id to AI_MODEL_DEFAULT (in place). Applied on
+// every path a model id enters Config — NVS load, POST /api/config and the
+// dev-secrets override — so a retired id can't live on until the next reboot
+// and an empty string can't be stored and then never fall back to the default.
+void normalizeAiModel(String& model);
 
 extern Storage storage;
 
