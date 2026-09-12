@@ -1,0 +1,25 @@
+# LUME partition table — 4 MB flash (C3 boards).
+#
+# Replaces the stock Arduino default.csv to rebalance flash toward the app:
+# the web UI needs ~220 KB of LittleFS (four files + their .gz), so the stock
+# 1.375 MB spiffs partition was ~84% empty while the app slots sat at 91% full.
+# Shrinking spiffs to 384 KB frees 1 MB, split equally across BOTH OTA app
+# slots (A/B must stay the same size): 1.25 MB → 1.75 MB each.
+#
+# Layout rules honored:
+# - nvs / otadata keep their stock offsets, so device config (WiFi etc.)
+#   survives the repartition; only spiffs content needs a re-upload.
+# - app partitions stay 64 KB (0x10000) aligned.
+# - coredump keeps its stock size at the very top of flash.
+#
+# NOTE: changing this table is a USB-serial reflash event, not an OTA one —
+# a device on the old layout cannot cleanly OTA images built for this one
+# (see docs/HARDWARE.md).
+#
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+app0,     app,  ota_0,   0x10000,  0x1C0000,
+app1,     app,  ota_1,   0x1D0000, 0x1C0000,
+spiffs,   data, spiffs,  0x390000, 0x60000,
+coredump, data, coredump,0x3F0000, 0x10000,
