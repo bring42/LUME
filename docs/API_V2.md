@@ -418,7 +418,7 @@ Get device configuration (passwords/API keys masked).
   "ledCount": 160,
   "aiApiKey": "****",
   "aiApiKeySet": true,
-  "aiModel": "claude-3-5-sonnet-20241022",
+  "aiModel": "claude-haiku-4-5",
   "sacnEnabled": false,
   "mqttEnabled": false,
   "mqttBroker": "192.168.1.10",
@@ -437,7 +437,7 @@ Update device configuration.
   "wifiPassword": "newpass",
   "ledCount": 160,
   "aiApiKey": "sk-ant-...",
-  "aiModel": "claude-3-5-sonnet-20241022",
+  "aiModel": "claude-haiku-4-5",
   "sacnEnabled": true,
   "mqttEnabled": true,
   "mqttBroker": "192.168.1.10"

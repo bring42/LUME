@@ -126,6 +126,13 @@ constexpr size_t MAX_REQUEST_BODY_SIZE      = 16384;  // 16KB max POST body
 constexpr size_t   ANTHROPIC_TASK_STACK_SIZE = 16384;
 constexpr uint8_t  ANTHROPIC_TASK_PRIORITY   = 1;
 constexpr uint8_t  ANTHROPIC_TASK_CORE       = 0;
+// Default AI model — the ONE source of truth. It is both the Config struct
+// initializer (what a fresh board with no saved settings runs) and the
+// loadConfig() fallback + retired-id migration target. These were once two
+// separate literals; they drifted, and fresh boards booted the retired
+// claude-3-5-haiku-20241022 because loadConfig() returns early — before any
+// fallback or migration runs — when the NVS namespace doesn't exist yet.
+constexpr const char* AI_MODEL_DEFAULT = "claude-haiku-4-5";
 
 // Firmware updater worker (pull-based OTA from GitHub Releases). A generous
 // stack: the worker runs a TLS download + streaming SHA-256 + Update.write.

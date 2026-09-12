@@ -54,7 +54,7 @@ struct Config {
         wifiSSID(""),
         wifiPassword(""),
         aiApiKey(""),
-        aiModel("claude-3-5-haiku-20241022"),
+        aiModel(AI_MODEL_DEFAULT),
         authToken(""),
         ledCount(160),
         defaultBrightness(128),

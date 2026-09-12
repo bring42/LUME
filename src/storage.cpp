@@ -37,7 +37,7 @@ bool Storage::loadConfig(Config& config) {
     config.wifiSSID = prefs.getString("ssid", "");
     config.wifiPassword = prefs.getString("pass", "");
     config.aiApiKey = prefs.getString("ai_apikey", "");
-    config.aiModel = prefs.getString("ai_model", "claude-haiku-4-5");
+    config.aiModel = prefs.getString("ai_model", AI_MODEL_DEFAULT);
     // Migrate retired model ids persisted by older builds. Any config save
     // writes ALL fields, so a device that ever saved (ledCount, WiFi, ...)
     // has the then-default model pinned in NVS — and this feature has now
@@ -46,7 +46,7 @@ bool Storage::loadConfig(Config& config) {
     // changing the default above can never heal an existing device.
     if (config.aiModel == "claude-3-5-sonnet-20241022" ||
         config.aiModel == "claude-3-5-haiku-20241022") {
-        config.aiModel = "claude-haiku-4-5";
+        config.aiModel = AI_MODEL_DEFAULT;
     }
     config.authToken = prefs.getString("authtoken", "");
     // Clamp on load too, in case NVS holds an out-of-range value (P0.2).

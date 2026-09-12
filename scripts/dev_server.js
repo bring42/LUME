@@ -79,7 +79,7 @@ const server = http.createServer(async (req, res) => {
   if (m === "GET" && url === "/api/v2/segments") return send(res, 200, { power: dev.controller.power, brightness: dev.controller.brightness, ledCount: dev.controller.ledCount, segments: dev.segments.map(serializeSeg) });
   if (m === "GET" && url.startsWith("/api/v2/segments/")) { const id = parseInt(url.split("/").pop(), 10); const s = dev.segments.find((x) => x.id === id); return s ? send(res, 200, serializeSeg(s)) : send(res, 404, { error: "not found" }); }
   if (m === "GET" && url === "/api/status") return send(res, 200, { online: true, ip: "192.168.1.42", uptime: 384720, wifi: { ssid: "LUME-Studio", rssi: -52, connected: true }, led: { count: dev.controller.ledCount, power: dev.controller.power, brightness: dev.controller.brightness, fps: 60 }, protocols: { sacn: { enabled: false }, mqtt: { enabled: false, connected: false } } });
-  if (m === "GET" && url === "/api/config") return send(res, 200, { wifiSSID: "LUME-Studio", ledCount: dev.controller.ledCount, aiApiKey: "****7f2c", aiApiKeySet: true, aiModel: "claude-3-5-sonnet-20241022", sacnEnabled: false, sacnUniverse: 1, mqttEnabled: false, mqttBroker: "mqtt.local", mqttPort: 1883 });
+  if (m === "GET" && url === "/api/config") return send(res, 200, { wifiSSID: "LUME-Studio", ledCount: dev.controller.ledCount, aiApiKey: "****7f2c", aiApiKeySet: true, aiModel: "claude-haiku-4-5", sacnEnabled: false, sacnUniverse: 1, mqttEnabled: false, mqttBroker: "mqtt.local", mqttPort: 1883 });
   if (m === "GET" && url === "/api/nightlight") return send(res, 200, dev.nightlight);
   if (m === "GET" && url === "/api/v2/pixels") {
     // Mirrors GET /api/v2/pixels: perceptual bytes, brightness/power applied.
