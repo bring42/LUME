@@ -6,6 +6,7 @@
 #include "../protocols/sacn.h"
 #include "../protocols/mqtt.h"
 #include <WiFi.h>
+#include <esp_wifi.h>   // esp_wifi_scan_stop (cancel a diagnostic scan for a user connect)
 #include <atomic>
 
 // External globals
@@ -25,6 +26,18 @@ void requestWifiConnect() {
 // Access Point settings
 #define AP_SSID "LUME-Setup"
 #define AP_PASSWORD "ledcontrol"
+
+// Diagnostic-scan state, shared between the scan, the reconnect path and the
+// WiFi event handler. A WiFi.begin() issued while a scan runs ABORTS the scan
+// (ESP_ERR_WIFI_STATE), and the Arduino core then reports the truncated result
+// as a finished scan — which logs as "0 networks / one weak entry", the exact
+// deaf-radio signature this diagnostic exists to detect. So the scan and the
+// reconnect are gated against each other, and the IDF's own scan-done status
+// (captured in onWifiEvent) vetoes any result from a scan that didn't complete.
+static bool              diagScanPending = false;
+static unsigned long     diagScanStartMs = 0;
+static std::atomic<bool> diagScanEventSeen{false};  // SCAN_DONE arrived for this scan
+static std::atomic<bool> diagScanFailed{false};     // ...and reported non-zero status
 
 // --- WiFi observability -----------------------------------------------------
 // The IDF reports exactly why a connection attempt failed; without these logs
@@ -80,6 +93,12 @@ static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
         case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
             LOG_INFO(LogTag::WIFI, "Setup-AP client left (%u client(s) remain)",
                      (unsigned)WiFi.softAPgetStationNum());
+            break;
+        case ARDUINO_EVENT_WIFI_SCAN_DONE:
+            // status 0 = the scan completed; non-zero = aborted/failed (e.g. by a
+            // connect). Read by handleWifiDiagnosticScan() on the loop task.
+            diagScanFailed.store(info.wifi_scan_done.status != 0);
+            diagScanEventSeen.store(true);
             break;
         default:
             break;
@@ -190,14 +209,27 @@ static const char* wifiAuthModeName(wifi_auth_mode_t m) {
 }
 
 static void handleWifiDiagnosticScan() {
-    static unsigned long lastScanStart = 0;
-    static bool scanPending = false;
-
-    if (scanPending) {
+    if (diagScanPending) {
         int16_t n = WiFi.scanComplete();
-        if (n == WIFI_SCAN_RUNNING) return;
-        scanPending = false;
+        if (n == WIFI_SCAN_RUNNING || (n >= 0 && !diagScanEventSeen.load())) {
+            // Still running — or the result count was posted before the scan-done
+            // event (carrying the status) reached onWifiEvent: wait a loop. Bounded,
+            // because the reconnect path holds off while a scan is pending and a
+            // lost event must never wedge it.
+            if (millis() - diagScanStartMs > 15000) {
+                LOG_WARN(LogTag::WIFI, "Diagnostic scan timed out — results discarded");
+                WiFi.scanDelete();
+                diagScanPending = false;
+            }
+            return;
+        }
+        diagScanPending = false;
         if (n < 0) { LOG_WARN(LogTag::WIFI, "Diagnostic scan failed (%d)", n); return; }
+        if (diagScanFailed.load()) {
+            LOG_INFO(LogTag::WIFI, "Diagnostic scan was interrupted — results discarded (not a real reading)");
+            WiFi.scanDelete();
+            return;
+        }
         uint8_t matches = 0;
         for (int16_t i = 0; i < n; i++) {
             if (WiFi.SSID(i) == config.wifiSSID) {
@@ -218,8 +250,10 @@ static void handleWifiDiagnosticScan() {
             // log above cannot distinguish. Capped so a dense band can't spam.
             const int16_t kMaxListed = 8;
             for (int16_t i = 0; i < n && i < kMaxListed; i++) {
-                LOG_INFO(LogTag::WIFI, "  heard: \"%s\" ch %d rssi %d dBm",
-                         WiFi.SSID(i).c_str(), (int)WiFi.channel(i), (int)WiFi.RSSI(i));
+                String ssid = WiFi.SSID(i);
+                ssid = ssid.length() ? ("\"" + ssid + "\"") : String("(hidden)");
+                LOG_INFO(LogTag::WIFI, "  heard: %s ch %d rssi %d dBm",
+                         ssid.c_str(), (int)WiFi.channel(i), (int)WiFi.RSSI(i));
             }
         }
         WiFi.scanDelete();
@@ -228,11 +262,15 @@ static void handleWifiDiagnosticScan() {
 
     if (!wifiConnected && config.wifiSSID.length() > 0 &&
         WiFi.softAPgetStationNum() == 0 &&
-        millis() - lastScanStart > 95000) {
-        // Offset from the 30 s reconnect cadence so the scan and a begin() rarely
-        // collide (a collision just aborts the scan — retried next cycle).
-        lastScanStart = millis();
-        scanPending = true;
+        millis() - diagScanStartMs > 95000 &&
+        millis() - lastWifiAttempt > 10000) {
+        // Not while a connect attempt is still in flight (a scan disturbs it);
+        // the reconnect path in turn holds off while a scan is pending (see
+        // handleWifiMaintenance), so the two can no longer collide.
+        diagScanStartMs = millis();
+        diagScanPending = true;
+        diagScanFailed.store(false);
+        diagScanEventSeen.store(false);
         LOG_INFO(LogTag::WIFI, "Starting diagnostic scan for \"%s\"...", config.wifiSSID.c_str());
         WiFi.scanNetworks(true /*async*/, true /*include hidden*/);
     }
@@ -248,6 +286,14 @@ void handleWifiMaintenance() {
     // visibly completes. disconnect() first so a switch away from a currently
     // connected network takes effect too.
     if (staConnectRequested.exchange(false) && config.wifiSSID.length() > 0) {
+        if (diagScanPending) {
+            // A user connect outranks the diagnostic: stop the scan so begin()
+            // isn't rejected mid-scan, and drop its partial results.
+            esp_wifi_scan_stop();
+            WiFi.scanDelete();
+            diagScanPending = false;
+            LOG_INFO(LogTag::WIFI, "Diagnostic scan cancelled for a user-initiated connect");
+        }
         LOG_INFO(LogTag::WIFI, "Credentials changed; connecting to %s", config.wifiSSID.c_str());
         WiFi.disconnect();
         WiFi.begin(config.wifiSSID.c_str(), config.wifiPassword.c_str());
@@ -264,7 +310,10 @@ void handleWifiMaintenance() {
     // returns.
     if (!wifiConnected && config.wifiSSID.length() > 0 &&
         WiFi.softAPgetStationNum() == 0) {
-        if (millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS) {
+        // Hold the retry while a diagnostic scan is pending: begin() would abort
+        // it. lastWifiAttempt is not reset, so the retry fires as soon as the
+        // scan (a few seconds, bounded at 15 s) finishes.
+        if (millis() - lastWifiAttempt > WIFI_RETRY_INTERVAL_MS && !diagScanPending) {
             lastWifiAttempt = millis();
             LOG_INFO(LogTag::WIFI, "Attempting WiFi reconnection to %s...",
                      config.wifiSSID.c_str());
