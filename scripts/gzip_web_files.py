@@ -29,8 +29,12 @@ from pathlib import Path
 # Matches an /assets/ reference with OR WITHOUT an existing ?v= stamp: a
 # newly added <script src="/assets/new.js"> used to be silently skipped and
 # then served with the week-long max-age, pinning users to a stale copy.
-# Anchored on the closing quote so only whole attribute values match.
-ASSET_REF = re.compile(r"""(?P<path>/assets/[\w./-]+?)(?:\?v=[0-9a-f]+)?(?=["'])""")
+# Anchored on BOTH quotes and requiring a file extension, so only a whole
+# quoted local file path matches — not an external URL that merely contains
+# /assets/ ("https://cdn.x/assets/a.js") and not a directory ("/assets/icons/").
+# A reference inside an HTML comment still matches; if its file is gone the
+# build fails loudly ("references missing asset") instead of shipping it.
+ASSET_REF = re.compile(r"""(?<=["'])(?P<path>/assets/[\w./-]+?\.\w+)(?:\?v=[0-9a-f]+)?(?=["'])""")
 
 def stamp_asset_hashes(data_dir):
     """Rewrite ?v= stamps in data/*.html to each asset's current sha1[:8]."""
@@ -105,6 +109,15 @@ def gzip_web_files(source, target, env):
 # $BUILD_DIR/${ESP32_FS_IMAGE_NAME}.bin is the real target the espressif32
 # builder produces (platform builder main.py), and uploadfs/uploadfsota
 # depend on it too, so this one registration covers every path.
+#
+# NOTE: this works only because PlatformIO DEFERS pre: script actions. When
+# this script runs (pre:), ESP32_FS_IMAGE_NAME is not defined yet, so the
+# target first expands to ".../.bin"; PlatformIO's hook wrapper queues the raw
+# string and re-expands it after the platform script has run, when it resolves
+# to the real littlefs.bin. If that ever changes (the variable becomes defined
+# at pre-time), move this registration into a post: script — otherwise the
+# action can attach to a node with no builder and the unstamped-image bug
+# silently returns.
 if _PIO:
     env.AddPreAction("$BUILD_DIR/${ESP32_FS_IMAGE_NAME}.bin", gzip_web_files)
 else:
